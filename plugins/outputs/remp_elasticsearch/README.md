@@ -195,6 +195,16 @@ This plugin will format the events in the following way:
   template_name = "telegraf"
   ## Set to true if you want telegraf to overwrite an existing template
   overwrite_template = false
+
+  ## REMP configs
+  ## Custom ID field if you want to manage index IDs yourself
+  # id_field = "remp_pageview_id
+  ## Name of the index to be used, defaults to name of tracked metric
+  # index_name = "pageviews_time_spent"
+  ## Name of the type to be used within index, defaults to _doc
+  # type_name = "_doc"
+  ## List of fields to be updated (implicitly triggers update call instead index)
+  # updated_fields = ["timespent"]
 ```
 
 ### Required parameters:

@@ -90,6 +90,7 @@ var sampleConfig = `
   overwrite_template = false
 `
 
+// Connect connects and authenticates to Elasticsearch instance.
 func (a *Elasticsearch) Connect() error {
 	if a.URLs == nil || a.IndexName == "" {
 		return fmt.Errorf("Elasticsearch urls or index_name is not defined")
@@ -168,6 +169,7 @@ func (a *Elasticsearch) Connect() error {
 	return nil
 }
 
+// Write processes and writes metrics to Elasticsearch.
 func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 	if len(metrics) == 0 {
 		return nil
@@ -186,6 +188,13 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 		// index name has to be re-evaluated each time for telegraf
 		// to send the metric to the correct time-based index
 		indexName := a.GetIndexName(indexBase, metric.Time(), a.TagKeys, metric.Tags())
+
+		var typeName string
+		if a.TypeName != "" {
+			typeName = a.TypeName
+		} else {
+			typeName = "_doc"
+		}
 
 		m := make(map[string]interface{})
 
@@ -218,37 +227,28 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 				return fmt.Errorf("unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
 			}
 
-			log.Println("preparing update request", metric.Name())
-
 			var scriptSource string
 			scriptParams := make(map[string]interface{})
 			for _, field := range a.UpdatedFields {
 				// prepare script to increment counters
-				scriptSource = fmt.Sprintf("%s ctx._source.%s += params.%s", scriptSource, field, field)
+				scriptSource = fmt.Sprintf("%s ctx._source.%s += params.%s;", scriptSource, field, field)
 				scriptParams[field] = m[field]
 			}
 
 			updateRequest := elastic.
 				NewBulkUpdateRequest().
 				Index(indexName).
-				Type(a.TypeName).
+				Type(typeName).
 				Id(idValue).
 				Script(elastic.NewScript(scriptSource).Lang("painless").Params(scriptParams)).
 				Upsert(m)
 
-			src, err := updateRequest.Source()
-			if err != nil {
-				return err
-			}
-			log.Println("update request source", src)
-
 			bulkRequest.Add(updateRequest)
 
 		} else {
-			log.Println("preparing index request", metric.Name())
 			indexRequest := elastic.NewBulkIndexRequest().
 				Index(indexName).
-				Type(a.TypeName).
+				Type(typeName).
 				Doc(m)
 
 			if a.IDField != "" {
@@ -256,7 +256,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 				if !ok {
 					return fmt.Errorf("unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
 				}
-				log.Println("proposed id value:", idValue)
 				indexRequest = indexRequest.Id(idValue)
 			}
 
@@ -275,7 +274,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 
 	if res.Errors {
 		for id, err := range res.Failed() {
-			log.Printf("%#v'n", err.Error)
 			log.Printf("E! Elasticsearch indexing failure, id: %d, error: %s, caused by: %s, %s", id, err.Error.Reason, err.Error.CausedBy["reason"], err.Error.CausedBy["type"])
 		}
 		return fmt.Errorf("W! Elasticsearch failed to index %d metrics", len(res.Failed()))
