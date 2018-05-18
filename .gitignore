@@ -1,3 +1,7 @@
 /build
 /telegraf
 /telegraf.gz
+telegraf.tar
+.history
+.idea
+.vscode
