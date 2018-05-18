@@ -15,6 +15,7 @@ import (
 	"github.com/olivere/elastic"
 )
 
+// Elasticsearch represents elasticsearch-metric.
 type Elasticsearch struct {
 	URLs                []string `toml:"urls"`
 	IndexName           string
@@ -88,6 +89,16 @@ var sampleConfig = `
   template_name = "telegraf"
   ## Set to true if you want telegraf to overwrite an existing template
   overwrite_template = false
+
+  ## REMP configs
+  ## Custom ID field if you want to manage index IDs yourself
+  # id_field = "remp_pageview_id
+  ## Name of the index to be used, defaults to name of tracked metric
+  # index_name = "pageviews_time_spent"
+  ## Name of the type to be used within index, defaults to _doc
+  # type_name = "_doc"
+  ## List of fields to be updated (implicitly triggers update call instead index)
+  # updated_fields = ["timespent"]
 `
 
 // Connect connects and authenticates to Elasticsearch instance.
@@ -383,6 +394,7 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	return nil
 }
 
+//GetTagKeys returns list of tag keys.
 func (a *Elasticsearch) GetTagKeys(indexName string) (string, []string) {
 
 	tagKeys := []string{}
@@ -411,6 +423,7 @@ func (a *Elasticsearch) GetTagKeys(indexName string) (string, []string) {
 	return indexName, tagKeys
 }
 
+// GetIndexName returns name of the target index considering the date within provided index name.
 func (a *Elasticsearch) GetIndexName(indexName string, eventTime time.Time, tagKeys []string, metricTags map[string]string) string {
 	if strings.Contains(indexName, "%") {
 		var dateReplacer = strings.NewReplacer(
@@ -445,14 +458,17 @@ func getISOWeek(eventTime time.Time) string {
 	return strconv.Itoa(week)
 }
 
+// SampleConfig returns sample configuration structure..
 func (a *Elasticsearch) SampleConfig() string {
 	return sampleConfig
 }
 
+// Description returns plugin text description.
 func (a *Elasticsearch) Description() string {
 	return "Configuration for Elasticsearch to send metrics to."
 }
 
+// Close unsets the client instance and makes it unusable.
 func (a *Elasticsearch) Close() error {
 	a.Client = nil
 	return nil
