@@ -235,7 +235,9 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			}
 			idValue, ok := m[a.IDField].(string)
 			if !ok {
-				return fmt.Errorf("unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+				log.Printf("E! Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+				log.Printf("I! Metric content: %#v", m)
+				continue
 			}
 
 			var scriptSource string
@@ -265,7 +267,9 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			if a.IDField != "" {
 				idValue, ok := m[a.IDField].(string)
 				if !ok {
-					return fmt.Errorf("unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+					log.Printf("E! Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+					log.Printf("I! Metric content: %#v", m)
+					continue
 				}
 				indexRequest = indexRequest.Id(idValue)
 			}
