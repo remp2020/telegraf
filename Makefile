@@ -4,6 +4,8 @@ BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git rev-parse --short HEAD)
 GOFILES ?= $(shell git ls-files '*.go')
 GOFMT ?= $(shell gofmt -l $(filter-out plugins/parsers/influx/machine.go, $(GOFILES)))
+GOPATH ?= $(shell go env GOPATH)
+IMAGEVER ?= latest
 BUILDFLAGS ?=
 
 ifdef GOBIN
@@ -89,7 +91,18 @@ docker-image:
 	cp build/telegraf*$(COMMIT)*.deb .
 	docker build -f scripts/dev.docker --build-arg "package=telegraf*$(COMMIT)*.deb" -t "telegraf-dev:$(COMMIT)" .
 
+docker-telegraf:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o telegraf -installsuffix cgo -i -ldflags "$(LDFLAGS)" ./cmd/telegraf
+
+docker-push:
+	set -e; \
+	docker login
+	docker build -t remp-telegraf_builder ./docker_builder; \
+	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
+	docker build -t remp/telegraf:${IMAGEVER} ./docker_runner; \
+	docker push remp/telegraf:${IMAGEVER}
+
 plugins/parsers/influx/machine.go: plugins/parsers/influx/machine.go.rl
 	ragel -Z -G2 $^ -o $@
 
-.PHONY: deps telegraf install test test-windows lint vet test-all package clean docker-image fmtcheck uint64
+.PHONY: deps telegraf install test test-windows lint vet test-all package clean docker-image docker-telegraf docker-push fmtcheck uint64
