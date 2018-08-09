@@ -11,6 +11,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
+	tlsint "github.com/influxdata/telegraf/internal/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/olivere/elastic"
 )
@@ -38,6 +39,7 @@ type Elasticsearch struct {
 	SSLKey              string `toml:"ssl_key"`  // Path to cert key file
 	InsecureSkipVerify  bool   // Use SSL but skip chain & host verification
 	Client              *elastic.Client
+	tlsint.ClientConfig
 }
 
 var sampleConfig = `
@@ -112,7 +114,8 @@ func (a *Elasticsearch) Connect() error {
 
 	var clientOptions []elastic.ClientOptionFunc
 
-	tlsCfg, err := internal.GetTLSConfig(a.SSLCert, a.SSLKey, a.SSLCA, a.InsecureSkipVerify)
+	// Set tls config
+	tlsCfg, err := a.ClientConfig.TLSConfig()
 	if err != nil {
 		return err
 	}
@@ -241,8 +244,14 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			var scriptSource string
 			scriptParams := make(map[string]interface{})
 			for _, field := range a.UpdatedFields {
-				// prepare script to increment counters
-				scriptSource = fmt.Sprintf("%s ctx._source.%s += params.%s;", scriptSource, field, field)
+				switch m[field].(type) {
+				case string, time.Time:
+					// prepare script to update existing value
+					scriptSource = fmt.Sprintf("%s ctx._source.%s = params.%s;", scriptSource, field, field)
+				default:
+					// prepare script to increment counters
+					scriptSource = fmt.Sprintf("%s ctx._source.%s += params.%s;", scriptSource, field, field)
+				}
 				scriptParams[field] = m[field]
 			}
 
