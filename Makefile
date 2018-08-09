@@ -4,8 +4,6 @@ BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git rev-parse --short HEAD)
 GOFILES ?= $(shell git ls-files '*.go')
 GOFMT ?= $(shell gofmt -l $(filter-out plugins/parsers/influx/machine.go, $(GOFILES)))
-GOPATH ?= $(shell go env GOPATH)
-IMAGEVER ?= latest
 BUILDFLAGS ?=
 
 ifdef GOBIN
@@ -13,8 +11,6 @@ PATH := $(GOBIN):$(PATH)
 else
 PATH := $(subst :,/bin:,$(GOPATH))/bin:$(PATH)
 endif
-
-TELEGRAF := telegraf$(shell go tool dist env | grep -q 'GOOS=.windows.' && echo .exe)
 
 LDFLAGS := $(LDFLAGS) -X main.commit=$(COMMIT) -X main.branch=$(BRANCH)
 ifdef VERSION
@@ -28,10 +24,10 @@ all:
 deps:
 	go get -u github.com/golang/lint/golint
 	go get github.com/sparrc/gdm
-	gdm restore
+	gdm restore --parallel=false
 
 telegraf:
-	go build -i -o $(TELEGRAF) -ldflags "$(LDFLAGS)" ./cmd/telegraf/telegraf.go
+	go build -ldflags "$(LDFLAGS)" ./cmd/telegraf
 
 go-install:
 	go install -ldflags "-w -s $(LDFLAGS)" ./cmd/telegraf
@@ -48,7 +44,7 @@ fmt:
 
 fmtcheck:
 	@echo '[INFO] running gofmt to identify incorrectly formatted code...'
-	@if [ ! -z $(GOFMT) ]; then \
+	@if [ ! -z "$(GOFMT)" ]; then \
 		echo "[ERROR] gofmt has found errors in the following files:"  ; \
 		echo "$(GOFMT)" ; \
 		echo "" ;\
@@ -62,12 +58,13 @@ test-windows:
 	go test ./plugins/inputs/win_perf_counters/...
 	go test ./plugins/inputs/win_services/...
 	go test ./plugins/inputs/procstat/...
+	go test ./plugins/inputs/ntpq/...
 
 # vet runs the Go source code static analysis tool `vet` to find
 # any common errors.
 vet:
 	@echo 'go vet $$(go list ./... | grep -v ./plugins/parsers/influx)'
-	@go vet $$(go list ./... | grep -v ./plugins/parsers/influx) ; if [ $$? -eq 1 ]; then \
+	@go vet $$(go list ./... | grep -v ./plugins/parsers/influx) ; if [ $$? -ne 0 ]; then \
 		echo ""; \
 		echo "go vet has found suspicious constructs. Please remediate any reported errors"; \
 		echo "to fix them before submitting code for review."; \
@@ -75,7 +72,7 @@ vet:
 	fi
 
 test-ci: fmtcheck vet
-	go test -short./...
+	go test -short ./...
 
 test-all: fmtcheck vet
 	go test ./...
@@ -92,18 +89,7 @@ docker-image:
 	cp build/telegraf*$(COMMIT)*.deb .
 	docker build -f scripts/dev.docker --build-arg "package=telegraf*$(COMMIT)*.deb" -t "telegraf-dev:$(COMMIT)" .
 
-docker-telegraf:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o telegraf -installsuffix cgo -i -ldflags "$(LDFLAGS)" ./cmd/telegraf
-
-docker-push:
-	set -e; \
-	docker login
-	docker build -t remp-telegraf_builder ./docker_builder; \
-	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
-	docker build -t remp/telegraf:${IMAGEVER} ./docker_runner; \
-	docker push remp/telegraf:${IMAGEVER}
-
 plugins/parsers/influx/machine.go: plugins/parsers/influx/machine.go.rl
 	ragel -Z -G2 $^ -o $@
 
-.PHONY: deps telegraf install test test-windows lint vet test-all package clean docker-image docker-telegraf docker-push fmtcheck uint64
+.PHONY: deps telegraf install test test-windows lint vet test-all package clean docker-image fmtcheck uint64

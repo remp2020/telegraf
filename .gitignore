@@ -1,5 +1,6 @@
 /build
 /telegraf
+/telegraf.exe
 /telegraf.gz
 telegraf.tar
 .history
