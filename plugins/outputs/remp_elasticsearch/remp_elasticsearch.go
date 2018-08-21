@@ -247,7 +247,7 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			scriptParams := make(map[string]interface{})
 			for _, field := range a.UpdatedFields {
 				switch m[field].(type) {
-				case string, time.Time:
+				case string, time.Time, nil:
 					// prepare script to update existing value
 					scriptSource = fmt.Sprintf("%s ctx._source.%s = params.%s;", scriptSource, field, field)
 				default:
