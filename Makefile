@@ -94,6 +94,11 @@ docker-image:
 docker-telegraf:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o telegraf -installsuffix cgo -i -ldflags "$(LDFLAGS)" ./cmd/telegraf
 
+docker-build:
+	set -e; \
+	docker build -t remp-telegraf_builder ./docker_builder; \
+	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
+
 docker-push:
 	set -e; \
 	docker login
