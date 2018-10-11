@@ -6,3 +6,4 @@ telegraf.tar
 .history
 .idea
 .vscode
+/vendor
