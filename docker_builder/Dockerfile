@@ -1,6 +1,6 @@
-FROM golang:1.10.3
+FROM golang:1.11.1
 
-RUN go get github.com/sparrc/gdm
+RUN curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
 
 RUN mkdir -p /src/build
 

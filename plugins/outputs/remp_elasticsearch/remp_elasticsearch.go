@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -217,6 +218,7 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 		// booleans are being pushed to queue as 0/1 values (so they could be used as string tags in InfluxDB)
 		// now it's time to convert them back to what they are
 		for field, val := range metric.Tags() {
+			// legacy, so we still can parse bool values from pre _json era
 			switch val {
 			case "":
 				continue
@@ -229,6 +231,18 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			}
 		}
 		for field, val := range metric.Fields() {
+			// internal type; _json contains JSON encoded string to preserve types
+			if field == "_json" {
+				stringVal, ok := val.(string)
+				if !ok {
+					return fmt.Errorf("invalid type of [_json] field: %T", val)
+				}
+				err := json.Unmarshal([]byte(stringVal), &m)
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			m[field] = val
 		}
 
