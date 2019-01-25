@@ -25,6 +25,7 @@ type Elasticsearch struct {
 	IDField             string   `toml:"id_field"`
 	UpdateQueryField    string   `toml:"update_query_field"`
 	UpdatedFields       []string `toml:"updated_fields"`
+	IncrementedFields   []string `toml:"incremented_fields"`
 	DefaultTagValue     string
 	TagKeys             []string
 	Username            string
@@ -102,6 +103,8 @@ var sampleConfig = `
   # type_name = "_doc"
   ## List of fields to be updated (implicitly triggers update call instead index)
   # updated_fields = ["timespent"]
+  ## List of fields to be incremented (implicitly triggers update call instead index)
+  # incremented_fields = ["clicks"]
 `
 
 // Connect connects and authenticates to Elasticsearch instance.
@@ -246,28 +249,22 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			m[field] = val
 		}
 
-		if len(a.UpdatedFields) > 0 {
+		handleBulkUpdate := func(a *Elasticsearch, operator string) (bool, error) {
 			if a.IDField == "" {
-				return fmt.Errorf("unable to update Elasticsearch records, no explicit ID field provided")
+				return false, fmt.Errorf("unable to update Elasticsearch records, no explicit ID field provided")
 			}
 			idValue, ok := m[a.IDField].(string)
 			if !ok {
 				log.Printf("E! Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
 				log.Printf("I! Metric content: %#v", m)
-				continue
+				return false, nil
 			}
 
 			var scriptSource string
 			scriptParams := make(map[string]interface{})
 			for _, field := range a.UpdatedFields {
-				switch m[field].(type) {
-				case string, time.Time, nil:
-					// prepare script to update existing value
-					scriptSource = fmt.Sprintf("%s ctx._source.%s = params.%s;", scriptSource, field, field)
-				default:
-					// prepare script to increment counters
-					scriptSource = fmt.Sprintf("%s ctx._source.%s += params.%s;", scriptSource, field, field)
-				}
+				// prepare script to update existing value
+				scriptSource = fmt.Sprintf("%s ctx._source.%s %s params.%s;", scriptSource, field, operator, field)
 				scriptParams[field] = m[field]
 			}
 
@@ -280,7 +277,25 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 				Upsert(m)
 
 			bulkRequest.Add(updateRequest)
+			return true, nil
+		}
 
+		if len(a.UpdatedFields) > 0 {
+			ok, err := handleBulkUpdate(a, "=")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+		} else if len(a.IncrementedFields) > 0 {
+			ok, err := handleBulkUpdate(a, "+=")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
 		} else {
 			indexRequest := elastic.NewBulkIndexRequest().
 				Index(indexName).
