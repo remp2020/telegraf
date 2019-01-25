@@ -16,6 +16,7 @@ type Strings struct {
 	TrimRight  []converter `toml:"trim_right"`
 	TrimPrefix []converter `toml:"trim_prefix"`
 	TrimSuffix []converter `toml:"trim_suffix"`
+	Replace    []converter `toml:"replace"`
 
 	converters []converter
 	init       bool
@@ -31,6 +32,8 @@ type converter struct {
 	Cutset      string
 	Suffix      string
 	Prefix      string
+	Old         string
+	New         string
 
 	fn ConvertFunc
 }
@@ -68,6 +71,12 @@ const sampleConfig = `
   # [[processors.strings.trim_suffix]]
   #   field = "read_count"
   #   suffix = "_count"
+
+  ## Replace all non-overlapping instances of old with new
+  # [[processors.strings.replace]]
+  #   measurement = "*"
+  #   old = ":"
+  #   new = "_"
 `
 
 func (s *Strings) SampleConfig() string {
@@ -79,37 +88,53 @@ func (s *Strings) Description() string {
 }
 
 func (c *converter) convertTag(metric telegraf.Metric) {
-	tv, ok := metric.GetTag(c.Tag)
-	if !ok {
-		return
+	var tags map[string]string
+	if c.Tag == "*" {
+		tags = metric.Tags()
+	} else {
+		tags = make(map[string]string)
+		tv, ok := metric.GetTag(c.Tag)
+		if !ok {
+			return
+		}
+		tags[c.Tag] = tv
 	}
 
-	dest := c.Tag
-	if c.Dest != "" {
-		dest = c.Dest
+	for key, value := range tags {
+		dest := key
+		if c.Tag != "*" && c.Dest != "" {
+			dest = c.Dest
+		}
+		metric.AddTag(dest, c.fn(value))
 	}
-
-	metric.AddTag(dest, c.fn(tv))
 }
 
 func (c *converter) convertField(metric telegraf.Metric) {
-	fv, ok := metric.GetField(c.Field)
-	if !ok {
-		return
+	var fields map[string]interface{}
+	if c.Field == "*" {
+		fields = metric.Fields()
+	} else {
+		fields = make(map[string]interface{})
+		fv, ok := metric.GetField(c.Field)
+		if !ok {
+			return
+		}
+		fields[c.Field] = fv
 	}
 
-	dest := c.Field
-	if c.Dest != "" {
-		dest = c.Dest
-	}
-
-	if fv, ok := fv.(string); ok {
-		metric.AddField(dest, c.fn(fv))
+	for key, value := range fields {
+		dest := key
+		if c.Field != "*" && c.Dest != "" {
+			dest = c.Dest
+		}
+		if fv, ok := value.(string); ok {
+			metric.AddField(dest, c.fn(fv))
+		}
 	}
 }
 
 func (c *converter) convertMeasurement(metric telegraf.Metric) {
-	if metric.Name() != c.Measurement {
+	if metric.Name() != c.Measurement && c.Measurement != "*" {
 		return
 	}
 
@@ -145,6 +170,7 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.Trim {
+		c := c
 		if c.Cutset != "" {
 			c.fn = func(s string) string { return strings.Trim(s, c.Cutset) }
 		} else {
@@ -153,6 +179,7 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimLeft {
+		c := c
 		if c.Cutset != "" {
 			c.fn = func(s string) string { return strings.TrimLeft(s, c.Cutset) }
 		} else {
@@ -161,6 +188,7 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimRight {
+		c := c
 		if c.Cutset != "" {
 			c.fn = func(s string) string { return strings.TrimRight(s, c.Cutset) }
 		} else {
@@ -169,11 +197,25 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimPrefix {
+		c := c
 		c.fn = func(s string) string { return strings.TrimPrefix(s, c.Prefix) }
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimSuffix {
+		c := c
 		c.fn = func(s string) string { return strings.TrimSuffix(s, c.Suffix) }
+		s.converters = append(s.converters, c)
+	}
+	for _, c := range s.Replace {
+		c := c
+		c.fn = func(s string) string {
+			newString := strings.Replace(s, c.Old, c.New, -1)
+			if newString == "" {
+				return s
+			} else {
+				return newString
+			}
+		}
 		s.converters = append(s.converters, c)
 	}
 

@@ -12,9 +12,7 @@ PREFIX := /usr/local
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git rev-parse --short HEAD)
 GOFILES ?= $(shell git ls-files '*.go')
-GOFMT ?= $(shell gofmt -l $(filter-out plugins/parsers/influx/machine.go, $(GOFILES)))
-GOPATH ?= $(shell go env GOPATH)
-IMAGEVER ?= latest
+GOFMT ?= $(shell gofmt -l -s $(filter-out plugins/parsers/influx/machine.go, $(GOFILES)))
 BUILDFLAGS ?=
 
 ifdef GOBIN
@@ -57,7 +55,7 @@ test:
 
 .PHONY: fmt
 fmt:
-	@gofmt -w $(filter-out plugins/parsers/influx/machine.go, $(GOFILES))
+	@gofmt -s -w $(filter-out plugins/parsers/influx/machine.go, $(GOFILES))
 
 .PHONY: fmtcheck
 fmtcheck:
@@ -115,25 +113,7 @@ clean:
 
 .PHONY: docker-image
 docker-image:
-	./scripts/build.py --package --platform=linux --arch=amd64
-	cp build/telegraf*$(COMMIT)*.deb .
-	docker build -f scripts/dev.docker --build-arg "package=telegraf*$(COMMIT)*.deb" -t "telegraf-dev:$(COMMIT)" .
-
-docker-telegraf:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o telegraf -installsuffix cgo -i -ldflags "$(LDFLAGS)" ./cmd/telegraf
-
-docker-build:
-	set -e; \
-	docker build -t remp-telegraf_builder ./docker_builder; \
-	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
-
-docker-push:
-	set -e; \
-	docker login
-	docker build -t remp-telegraf_builder ./docker_builder; \
-	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
-	docker build -t remp/telegraf:${IMAGEVER} ./docker_runner; \
-	docker push remp/telegraf:${IMAGEVER}
+	docker build -f scripts/stretch.docker -t "telegraf:$(COMMIT)" .
 
 plugins/parsers/influx/machine.go: plugins/parsers/influx/machine.go.rl
 	ragel -Z -G2 $^ -o $@
@@ -151,10 +131,15 @@ plugin-%:
 	@echo "Starting dev environment for $${$(@)} input plugin..."
 	@docker-compose -f plugins/inputs/$${$(@)}/dev/docker-compose.yml up
 
+.PHONY: ci-1.11
+ci-1.11:
+	docker build -t quay.io/influxdb/telegraf-ci:1.11.4 - < scripts/ci-1.11.docker
+	docker push quay.io/influxdb/telegraf-ci:1.11.4
+
 .PHONY: ci-1.10
 ci-1.10:
-	docker build -t quay.io/influxdb/telegraf-ci:1.10.3 - < scripts/ci-1.10.docker
-	docker push quay.io/influxdb/telegraf-ci:1.10.3
+	docker build -t quay.io/influxdb/telegraf-ci:1.10.7 - < scripts/ci-1.10.docker
+	docker push quay.io/influxdb/telegraf-ci:1.10.7
 
 .PHONY: ci-1.9
 ci-1.9:

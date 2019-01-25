@@ -25,24 +25,6 @@ func newM1() telegraf.Metric {
 	return m1
 }
 
-func newM2() telegraf.Metric {
-	m2, _ := metric.New("IIS_log",
-		map[string]string{
-			"verb":           "GET",
-			"resp_code":      "200",
-			"s-computername": "MIXEDCASE_hostname",
-		},
-		map[string]interface{}{
-			"request":       "/mixed/CASE/paTH/?from=-1D&to=now",
-			"cs-host":       "AAAbbb",
-			"ignore_number": int64(200),
-			"ignore_bool":   true,
-		},
-		time.Now(),
-	)
-	return m2
-}
-
 func TestFieldConversions(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -53,7 +35,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should change existing field to lowercase",
 			plugin: &Strings{
 				Lowercase: []converter{
-					converter{
+					{
 						Field: "request",
 					},
 				},
@@ -68,7 +50,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should change existing field to uppercase",
 			plugin: &Strings{
 				Uppercase: []converter{
-					converter{
+					{
 						Field: "request",
 					},
 				},
@@ -83,7 +65,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should add new lowercase field",
 			plugin: &Strings{
 				Lowercase: []converter{
-					converter{
+					{
 						Field: "request",
 						Dest:  "lowercase_request",
 					},
@@ -103,7 +85,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should trim from both sides",
 			plugin: &Strings{
 				Trim: []converter{
-					converter{
+					{
 						Field:  "request",
 						Cutset: "/w",
 					},
@@ -119,13 +101,13 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should trim from both sides and make lowercase",
 			plugin: &Strings{
 				Trim: []converter{
-					converter{
+					{
 						Field:  "request",
 						Cutset: "/w",
 					},
 				},
 				Lowercase: []converter{
-					converter{
+					{
 						Field: "request",
 					},
 				},
@@ -140,7 +122,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should trim from left side",
 			plugin: &Strings{
 				TrimLeft: []converter{
-					converter{
+					{
 						Field:  "request",
 						Cutset: "/w",
 					},
@@ -156,7 +138,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should trim from right side",
 			plugin: &Strings{
 				TrimRight: []converter{
-					converter{
+					{
 						Field:  "request",
 						Cutset: "/w",
 					},
@@ -172,7 +154,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should trim prefix '/mixed'",
 			plugin: &Strings{
 				TrimPrefix: []converter{
-					converter{
+					{
 						Field:  "request",
 						Prefix: "/mixed",
 					},
@@ -188,7 +170,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Should trim suffix '-1D&to=now'",
 			plugin: &Strings{
 				TrimSuffix: []converter{
-					converter{
+					{
 						Field:  "request",
 						Suffix: "-1D&to=now",
 					},
@@ -204,7 +186,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Trim without cutset removes whitespace",
 			plugin: &Strings{
 				Trim: []converter{
-					converter{
+					{
 						Field: "whitespace",
 					},
 				},
@@ -219,7 +201,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Trim left without cutset removes whitespace",
 			plugin: &Strings{
 				TrimLeft: []converter{
-					converter{
+					{
 						Field: "whitespace",
 					},
 				},
@@ -234,7 +216,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "Trim right without cutset removes whitespace",
 			plugin: &Strings{
 				TrimRight: []converter{
-					converter{
+					{
 						Field: "whitespace",
 					},
 				},
@@ -249,7 +231,7 @@ func TestFieldConversions(t *testing.T) {
 			name: "No change if field missing",
 			plugin: &Strings{
 				Lowercase: []converter{
-					converter{
+					{
 						Field:  "xyzzy",
 						Suffix: "-1D&to=now",
 					},
@@ -281,7 +263,7 @@ func TestTagConversions(t *testing.T) {
 			name: "Should change existing tag to lowercase",
 			plugin: &Strings{
 				Lowercase: []converter{
-					converter{
+					{
 						Tag: "s-computername",
 					},
 				},
@@ -300,7 +282,7 @@ func TestTagConversions(t *testing.T) {
 			name: "Should add new lowercase tag",
 			plugin: &Strings{
 				Lowercase: []converter{
-					converter{
+					{
 						Tag:  "s-computername",
 						Dest: "s-computername_lowercase",
 					},
@@ -324,7 +306,7 @@ func TestTagConversions(t *testing.T) {
 			name: "Should add new uppercase tag",
 			plugin: &Strings{
 				Uppercase: []converter{
-					converter{
+					{
 						Tag:  "s-computername",
 						Dest: "s-computername_uppercase",
 					},
@@ -365,7 +347,7 @@ func TestMeasurementConversions(t *testing.T) {
 			name: "lowercase measurement",
 			plugin: &Strings{
 				Lowercase: []converter{
-					converter{
+					{
 						Measurement: "IIS_log",
 					},
 				},
@@ -388,25 +370,54 @@ func TestMeasurementConversions(t *testing.T) {
 func TestMultipleConversions(t *testing.T) {
 	plugin := &Strings{
 		Lowercase: []converter{
-			converter{
+			{
 				Tag: "s-computername",
 			},
-			converter{
+			{
 				Field: "request",
 			},
-			converter{
+			{
 				Field: "cs-host",
 				Dest:  "cs-host_lowercase",
 			},
 		},
 		Uppercase: []converter{
-			converter{
+			{
 				Tag: "verb",
+			},
+		},
+		Replace: []converter{
+			{
+				Tag: "foo",
+				Old: "a",
+				New: "x",
+			},
+			{
+				Tag: "bar",
+				Old: "b",
+				New: "y",
 			},
 		},
 	}
 
-	processed := plugin.Apply(newM2())
+	m, _ := metric.New("IIS_log",
+		map[string]string{
+			"verb":           "GET",
+			"resp_code":      "200",
+			"s-computername": "MIXEDCASE_hostname",
+			"foo":            "a",
+			"bar":            "b",
+		},
+		map[string]interface{}{
+			"request":       "/mixed/CASE/paTH/?from=-1D&to=now",
+			"cs-host":       "AAAbbb",
+			"ignore_number": int64(200),
+			"ignore_bool":   true,
+		},
+		time.Now(),
+	)
+
+	processed := plugin.Apply(m)
 
 	expectedFields := map[string]interface{}{
 		"request":           "/mixed/case/path/?from=-1d&to=now",
@@ -419,6 +430,8 @@ func TestMultipleConversions(t *testing.T) {
 		"verb":           "GET",
 		"resp_code":      "200",
 		"s-computername": "mixedcase_hostname",
+		"foo":            "x",
+		"bar":            "y",
 	}
 
 	assert.Equal(t, expectedFields, processed[0].Fields())
@@ -428,18 +441,18 @@ func TestMultipleConversions(t *testing.T) {
 func TestReadmeExample(t *testing.T) {
 	plugin := &Strings{
 		Lowercase: []converter{
-			converter{
+			{
 				Tag: "uri_stem",
 			},
 		},
 		TrimPrefix: []converter{
-			converter{
+			{
 				Tag:    "uri_stem",
 				Prefix: "/api/",
 			},
 		},
 		Uppercase: []converter{
-			converter{
+			{
 				Field: "cs-host",
 				Dest:  "cs-host_normalised",
 			},
@@ -480,4 +493,53 @@ func TestReadmeExample(t *testing.T) {
 
 	assert.Equal(t, expectedFields, processed[0].Fields())
 	assert.Equal(t, expectedTags, processed[0].Tags())
+}
+
+func newMetric(name string) telegraf.Metric {
+	tags := map[string]string{}
+	fields := map[string]interface{}{}
+	m, _ := metric.New(name, tags, fields, time.Now())
+	return m
+}
+
+func TestMeasurementReplace(t *testing.T) {
+	plugin := &Strings{
+		Replace: []converter{
+			{
+				Old:         "_",
+				New:         "-",
+				Measurement: "*",
+			},
+		},
+	}
+	metrics := []telegraf.Metric{
+		newMetric("foo:some_value:bar"),
+		newMetric("average:cpu:usage"),
+		newMetric("average_cpu_usage"),
+	}
+	results := plugin.Apply(metrics...)
+	assert.Equal(t, "foo:some-value:bar", results[0].Name(), "`_` was not changed to `-`")
+	assert.Equal(t, "average:cpu:usage", results[1].Name(), "Input name should have been unchanged")
+	assert.Equal(t, "average-cpu-usage", results[2].Name(), "All instances of `_` should have been changed to `-`")
+}
+
+func TestMeasurementCharDeletion(t *testing.T) {
+	plugin := &Strings{
+		Replace: []converter{
+			{
+				Old:         "foo",
+				New:         "",
+				Measurement: "*",
+			},
+		},
+	}
+	metrics := []telegraf.Metric{
+		newMetric("foo:bar:baz"),
+		newMetric("foofoofoo"),
+		newMetric("barbarbar"),
+	}
+	results := plugin.Apply(metrics...)
+	assert.Equal(t, ":bar:baz", results[0].Name(), "Should have deleted the initial `foo`")
+	assert.Equal(t, "foofoofoo", results[1].Name(), "Should have refused to delete the whole string")
+	assert.Equal(t, "barbarbar", results[2].Name(), "Should not have changed the input")
 }
