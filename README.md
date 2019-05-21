@@ -38,10 +38,7 @@ Ansible role: https://github.com/rossmcdonald/telegraf
 
 Telegraf requires golang version 1.9 or newer, the Makefile requires GNU make.
 
-Dependencies are managed with [gdm](https://github.com/sparrc/gdm),
-which is installed by the Makefile if you don't have it already.
-
-1. [Install Go](https://golang.org/doc/install) >=1.9 (1.10 recommended)
+1. [Install Go](https://golang.org/doc/install) >=1.9 (1.11 recommended)
 2. [Install dep](https://golang.github.io/dep/docs/installation.html) ==v0.5.0
 3. Download Telegraf source:
    ```
@@ -148,6 +145,7 @@ For documentation on the latest development code see the [documentation index][d
 * [ceph](./plugins/inputs/ceph)
 * [cgroup](./plugins/inputs/cgroup)
 * [chrony](./plugins/inputs/chrony)
+* [cloud_pubsub](./plugins/inputs/cloud_pubsub) Google Cloud Pub/Sub
 * [conntrack](./plugins/inputs/conntrack)
 * [consul](./plugins/inputs/consul)
 * [couchbase](./plugins/inputs/couchbase)
@@ -179,7 +177,6 @@ For documentation on the latest development code see the [documentation index][d
 * [http_response](./plugins/inputs/http_response)
 * [icinga2](./plugins/inputs/icinga2)
 * [influxdb](./plugins/inputs/influxdb)
-* [influxdb_v2](./plugins/inputs/influxdb_v2)
 * [influxdb_listener](./plugins/inputs/influxdb_listener)
 * [internal](./plugins/inputs/internal)
 * [interrupts](./plugins/inputs/interrupts)
@@ -209,18 +206,20 @@ For documentation on the latest development code see the [documentation index][d
 * [minecraft](./plugins/inputs/minecraft)
 * [mongodb](./plugins/inputs/mongodb)
 * [mqtt_consumer](./plugins/inputs/mqtt_consumer)
+* [multifile](./plugins/inputs/multifile)
 * [mysql](./plugins/inputs/mysql)
 * [nats_consumer](./plugins/inputs/nats_consumer)
 * [nats](./plugins/inputs/nats)
+* [neptune_apex](./plugins/inputs/neptune_apex)
 * [net](./plugins/inputs/net)
 * [net_response](./plugins/inputs/net_response)
 * [netstat](./plugins/inputs/net)
 * [nginx](./plugins/inputs/nginx)
-* [nginx_plus](./plugins/inputs/nginx_plus)
 * [nginx_plus_api](./plugins/inputs/nginx_plus_api)
+* [nginx_plus](./plugins/inputs/nginx_plus)
+* [nginx_upstream_check](./plugins/inputs/nginx_upstream_check)
 * [nginx_vts](./plugins/inputs/nginx_vts)
 * [nsq_consumer](./plugins/inputs/nsq_consumer)
-* [nginx_vts](./plugins/inputs/nginx_vts)
 * [nsq](./plugins/inputs/nsq)
 * [nstat](./plugins/inputs/nstat)
 * [ntpq](./plugins/inputs/ntpq)
@@ -302,6 +301,7 @@ For documentation on the latest development code see the [documentation index][d
 - [InfluxDB Line Protocol](/plugins/serializers/influx)
 - [JSON](/plugins/serializers/json)
 - [Graphite](/plugins/serializers/graphite)
+- [ServiceNow](/plugins/serializers/nowmetric)
 - [SplunkMetric](/plugins/serializers/splunkmetric)
 
 ## Processor Plugins
@@ -325,13 +325,15 @@ For documentation on the latest development code see the [documentation index][d
 
 ## Output Plugins
 
-* [influxdb](./plugins/outputs/influxdb)
+* [influxdb](./plugins/outputs/influxdb) (InfluxDB 1.x)
+* [influxdb_v2](./plugins/outputs/influxdb_v2) ([InfluxDB 2.x](https://github.com/influxdata/platform))
 * [amon](./plugins/outputs/amon)
 * [amqp](./plugins/outputs/amqp) (rabbitmq)
 * [application_insights](./plugins/outputs/application_insights)
 * [aws kinesis](./plugins/outputs/kinesis)
 * [aws cloudwatch](./plugins/outputs/cloudwatch)
 * [azure_monitor](./plugins/outputs/azure_monitor)
+* [cloud_pubsub](./plugins/outputs/cloud_pubsub) Google Cloud Pub/Sub
 * [cratedb](./plugins/outputs/cratedb)
 * [datadog](./plugins/outputs/datadog)
 * [discard](./plugins/outputs/discard)
