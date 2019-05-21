@@ -20,6 +20,7 @@ import (
 // Elasticsearch represents elasticsearch-metric.
 type Elasticsearch struct {
 	URLs                []string `toml:"urls"`
+	FieldWhitelist      []string `toml:"field_whitelist"`
 	IndexName           string
 	TypeName            string   `toml:"type_name"`
 	IDField             string   `toml:"id_field"`
@@ -105,6 +106,11 @@ var sampleConfig = `
   # updated_fields = ["timespent"]
   ## List of fields to be incremented (implicitly triggers update call instead index)
   # incremented_fields = ["clicks"]
+  ## List of fields to be included in index - mimics taginclude which doesn't work
+  ## in remp_elastic as REMP tracks JSON-encoded string to preserve types.
+  ## These fields are protected and don't need to be whitelisted:
+  ## ["category", "action", "browser_id", "user_id", "article_id", "remp_pageview_id", "remp_session_id", "url", "time"]
+  # field_whitelist = ["subscriber", "foo"]
 `
 
 // Connect connects and authenticates to Elasticsearch instance.
@@ -248,6 +254,8 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			}
 			m[field] = val
 		}
+
+		m = a.filterMetric(m)
 
 		handleBulkUpdate := func(a *Elasticsearch, operator string) (bool, error) {
 			if a.IDField == "" {
@@ -514,6 +522,39 @@ func (a *Elasticsearch) Description() string {
 func (a *Elasticsearch) Close() error {
 	a.Client = nil
 	return nil
+}
+
+// filterMetric removes tags according to FieldWhitelist definition.
+func (a *Elasticsearch) filterMetric(metric map[string]interface{}) map[string]interface{} {
+	protected := map[string]bool{
+		"category":         true,
+		"action":           true,
+		"browser_id":       true,
+		"user_id":          true,
+		"article_id":       true,
+		"remp_pageview_id": true,
+		"remp_session_id":  true,
+		"url":              true,
+		"time":             true,
+	}
+
+	include := make(map[string]bool)
+	for _, tag := range a.FieldWhitelist {
+		include[tag] = true
+	}
+
+	if len(a.FieldWhitelist) > 0 {
+		for tag := range metric {
+			if _, ok := protected[tag]; ok {
+				continue
+			}
+			if _, ok := include[tag]; !ok {
+				delete(metric, tag)
+			}
+		}
+	}
+
+	return metric
 }
 
 func init() {
