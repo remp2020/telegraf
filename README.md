@@ -29,6 +29,16 @@ There are many ways to contribute:
 - Answer questions and discuss here on github and on the [Community Site](https://community.influxdata.com/)
 - [Contribute plugins](CONTRIBUTING.md)
 
+## Minimum Requirements
+
+Telegraf shares the same [minimum requirements][] as Go:
+- Linux kernel version 2.6.23 or later
+- Windows 7 or later
+- FreeBSD 11.2 or later
+- MacOS 10.11 El Capitan or later
+
+[minimum requirements]: https://github.com/golang/go/wiki/MinimumRequirements#minimum-requirements
+
 ## Installation:
 
 You can download the binaries directly from the [downloads](https://www.influxdata.com/downloads) page
@@ -40,9 +50,9 @@ Ansible role: https://github.com/rossmcdonald/telegraf
 
 ### From Source:
 
-Telegraf requires golang version 1.9 or newer, the Makefile requires GNU make.
+Telegraf requires golang version 1.12 or newer, the Makefile requires GNU make.
 
-1. [Install Go](https://golang.org/doc/install) >=1.9 (1.11 recommended)
+1. [Install Go](https://golang.org/doc/install) >=1.12 (1.13 recommended)
 2. [Install dep](https://golang.github.io/dep/docs/installation.html) ==v0.5.0
 3. Download Telegraf source:
    ```
@@ -62,6 +72,7 @@ version.
 ### Nightly Builds
 
 These builds are generated from the master branch:
+- [telegraf-nightly_darwin_amd64.tar.gz](https://dl.influxdata.com/telegraf/nightlies/telegraf-nightly_darwin_amd64.tar.gz)
 - [telegraf_nightly_amd64.deb](https://dl.influxdata.com/telegraf/nightlies/telegraf_nightly_amd64.deb)
 - [telegraf_nightly_arm64.deb](https://dl.influxdata.com/telegraf/nightlies/telegraf_nightly_arm64.deb)
 - [telegraf-nightly.arm64.rpm](https://dl.influxdata.com/telegraf/nightlies/telegraf-nightly.arm64.rpm)
@@ -139,8 +150,10 @@ For documentation on the latest development code see the [documentation index][d
 * [aerospike](./plugins/inputs/aerospike)
 * [amqp_consumer](./plugins/inputs/amqp_consumer) (rabbitmq)
 * [apache](./plugins/inputs/apache)
+* [apcupsd](./plugins/inputs/apcupsd)
 * [aurora](./plugins/inputs/aurora)
-* [aws cloudwatch](./plugins/inputs/cloudwatch)
+* [aws cloudwatch](./plugins/inputs/cloudwatch) (Amazon Cloudwatch)
+* [azure_storage_queue](./plugins/inputs/azure_storage_queue)
 * [bcache](./plugins/inputs/bcache)
 * [beanstalkd](./plugins/inputs/beanstalkd)
 * [bind](./plugins/inputs/bind)
@@ -150,6 +163,8 @@ For documentation on the latest development code see the [documentation index][d
 * [ceph](./plugins/inputs/ceph)
 * [cgroup](./plugins/inputs/cgroup)
 * [chrony](./plugins/inputs/chrony)
+* [cisco_telemetry_gnmi](./plugins/inputs/cisco_telemetry_gnmi)
+* [cisco_telemetry_mdt](./plugins/inputs/cisco_telemetry_mdt)
 * [cloud_pubsub](./plugins/inputs/cloud_pubsub) Google Cloud Pub/Sub
 * [cloud_pubsub_push](./plugins/inputs/cloud_pubsub_push) Google Cloud Pub/Sub push endpoint
 * [conntrack](./plugins/inputs/conntrack)
@@ -164,14 +179,18 @@ For documentation on the latest development code see the [documentation index][d
 * [dmcache](./plugins/inputs/dmcache)
 * [dns query time](./plugins/inputs/dns_query)
 * [docker](./plugins/inputs/docker)
+* [docker_log](./plugins/inputs/docker_log)
 * [dovecot](./plugins/inputs/dovecot)
+* [aws ecs](./plugins/inputs/ecs) (Amazon Elastic Container Service, Fargate)
 * [elasticsearch](./plugins/inputs/elasticsearch)
+* [ethtool](./plugins/inputs/ethtool)
 * [exec](./plugins/inputs/exec) (generic executable plugin, support JSON, influx, graphite and nagios)
 * [fail2ban](./plugins/inputs/fail2ban)
 * [fibaro](./plugins/inputs/fibaro)
 * [file](./plugins/inputs/file)
 * [filestat](./plugins/inputs/filestat)
 * [filecount](./plugins/inputs/filecount)
+* [fireboard](/plugins/inputs/fireboard)
 * [fluentd](./plugins/inputs/fluentd)
 * [github](./plugins/inputs/github)
 * [graylog](./plugins/inputs/graylog)
@@ -197,7 +216,7 @@ For documentation on the latest development code see the [documentation index][d
 * [jti_openconfig_telemetry](./plugins/inputs/jti_openconfig_telemetry)
 * [kafka_consumer](./plugins/inputs/kafka_consumer)
 * [kapacitor](./plugins/inputs/kapacitor)
-* [kinesis](./plugins/inputs/kinesis_consumer)
+* [aws kinesis](./plugins/inputs/kinesis_consumer) (Amazon Kinesis)
 * [kernel](./plugins/inputs/kernel)
 * [kernel_vmstat](./plugins/inputs/kernel_vmstat)
 * [kibana](./plugins/inputs/kibana)
@@ -206,8 +225,10 @@ For documentation on the latest development code see the [documentation index][d
 * [leofs](./plugins/inputs/leofs)
 * [linux_sysctl_fs](./plugins/inputs/linux_sysctl_fs)
 * [logparser](./plugins/inputs/logparser)
+* [logstash](./plugins/inputs/logstash)
 * [lustre2](./plugins/inputs/lustre2)
 * [mailchimp](./plugins/inputs/mailchimp)
+* [marklogic](./plugins/inputs/marklogic)
 * [mcrouter](./plugins/inputs/mcrouter)
 * [memcached](./plugins/inputs/memcached)
 * [mem](./plugins/inputs/mem)
@@ -234,7 +255,9 @@ For documentation on the latest development code see the [documentation index][d
 * [ntpq](./plugins/inputs/ntpq)
 * [nvidia_smi](./plugins/inputs/nvidia_smi)
 * [openldap](./plugins/inputs/openldap)
+* [openntpd](./plugins/inputs/openntpd)
 * [opensmtpd](./plugins/inputs/opensmtpd)
+* [openweathermap](./plugins/inputs/openweathermap)
 * [pf](./plugins/inputs/pf)
 * [pgbouncer](./plugins/inputs/pgbouncer)
 * [phpfpm](./plugins/inputs/phpfpm)
@@ -259,14 +282,18 @@ For documentation on the latest development code see the [documentation index][d
 * [smart](./plugins/inputs/smart)
 * [snmp_legacy](./plugins/inputs/snmp_legacy)
 * [snmp](./plugins/inputs/snmp)
+* [snmp_trap](./plugins/inputs/snmp_trap)
 * [socket_listener](./plugins/inputs/socket_listener)
 * [solr](./plugins/inputs/solr)
 * [sql server](./plugins/inputs/sqlserver) (microsoft)
 * [stackdriver](./plugins/inputs/stackdriver)
 * [statsd](./plugins/inputs/statsd)
+* [suricata](./plugins/inputs/suricata)
 * [swap](./plugins/inputs/swap)
+* [synproxy](./plugins/inputs/synproxy)
 * [syslog](./plugins/inputs/syslog)
 * [sysstat](./plugins/inputs/sysstat)
+* [systemd_units](./plugins/inputs/systemd_units)
 * [system](./plugins/inputs/system)
 * [tail](./plugins/inputs/tail)
 * [temp](./plugins/inputs/temp)
@@ -277,6 +304,7 @@ For documentation on the latest development code see the [documentation index][d
 * [twemproxy](./plugins/inputs/twemproxy)
 * [udp_listener](./plugins/inputs/socket_listener)
 * [unbound](./plugins/inputs/unbound)
+* [uswgi](./plugins/inputs/uswgi)
 * [varnish](./plugins/inputs/varnish)
 * [vsphere](./plugins/inputs/vsphere) VMware vSphere
 * [webhooks](./plugins/inputs/webhooks)
@@ -300,6 +328,7 @@ For documentation on the latest development code see the [documentation index][d
 - [Collectd](/plugins/parsers/collectd)
 - [CSV](/plugins/parsers/csv)
 - [Dropwizard](/plugins/parsers/dropwizard)
+- [FormUrlencoded](/plugins/parser/form_urlencoded)
 - [Graphite](/plugins/parsers/graphite)
 - [Grok](/plugins/parsers/grok)
 - [JSON](/plugins/parsers/json)
@@ -320,21 +349,27 @@ For documentation on the latest development code see the [documentation index][d
 
 ## Processor Plugins
 
+* [clone](./plugins/processors/clone)
 * [converter](./plugins/processors/converter)
+* [date](./plugins/processors/date)
 * [enum](./plugins/processors/enum)
 * [override](./plugins/processors/override)
 * [parser](./plugins/processors/parser)
+* [pivot](./plugins/processors/pivot)
 * [printer](./plugins/processors/printer)
 * [regex](./plugins/processors/regex)
 * [rename](./plugins/processors/rename)
 * [strings](./plugins/processors/strings)
+* [tag_limit](./plugins/processors/tag_limit)
 * [topk](./plugins/processors/topk)
+* [unpivot](./plugins/processors/unpivot)
 
 ## Aggregator Plugins
 
 * [basicstats](./plugins/aggregators/basicstats)
 * [final](./plugins/aggregators/final)
 * [histogram](./plugins/aggregators/histogram)
+* [merge](./plugins/aggregators/merge)
 * [minmax](./plugins/aggregators/minmax)
 * [valuecounter](./plugins/aggregators/valuecounter)
 
@@ -353,9 +388,11 @@ For documentation on the latest development code see the [documentation index][d
 * [datadog](./plugins/outputs/datadog)
 * [discard](./plugins/outputs/discard)
 * [elasticsearch](./plugins/outputs/elasticsearch)
+* [exec](./plugins/outputs/exec)
 * [file](./plugins/outputs/file)
 * [graphite](./plugins/outputs/graphite)
 * [graylog](./plugins/outputs/graylog)
+* [health](./plugins/outputs/health)
 * [http](./plugins/outputs/http)
 * [instrumental](./plugins/outputs/instrumental)
 * [kafka](./plugins/outputs/kafka)

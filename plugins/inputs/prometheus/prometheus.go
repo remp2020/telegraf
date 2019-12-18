@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,7 +17,7 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-const acceptHeader = `application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,text/plain;version=0.0.4;q=0.3`
+const acceptHeader = `application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,text/plain;version=0.0.4;q=0.3,*/*;q=0.1`
 
 type Prometheus struct {
 	// An array of urls to scrape metrics from.
@@ -34,9 +33,19 @@ type Prometheus struct {
 	BearerToken       string `toml:"bearer_token"`
 	BearerTokenString string `toml:"bearer_token_string"`
 
+	// Basic authentication credentials
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+
 	ResponseTimeout internal.Duration `toml:"response_timeout"`
 
+	MetricVersion int `toml:"metric_version"`
+
+	URLTag string `toml:"url_tag"`
+
 	tls.ClientConfig
+
+	Log telegraf.Logger
 
 	client *http.Client
 
@@ -52,6 +61,18 @@ type Prometheus struct {
 var sampleConfig = `
   ## An array of urls to scrape metrics from.
   urls = ["http://localhost:9100/metrics"]
+
+  ## Metric version controls the mapping from Prometheus metrics into
+  ## Telegraf metrics.  When using the prometheus_client output, use the same
+  ## value in both plugins to ensure metrics are round-tripped without
+  ## modification.
+  ##
+  ##   example: metric_version = 1; deprecated in 1.13
+  ##            metric_version = 2; recommended version
+  # metric_version = 1
+
+  ## Url tag name (tag containing scrapped url. optional, default is "url")
+  # url_tag = "scrapeUrl"
 
   ## An array of Kubernetes services to scrape metrics from.
   # kubernetes_services = ["http://my-service-dns.my-namespace:9100/metrics"]
@@ -75,6 +96,11 @@ var sampleConfig = `
   ## OR
   # bearer_token_string = "abc_123"
 
+  ## HTTP Basic Authentication username and password. ('bearer_token' and
+  ## 'bearer_token_string' take priority)
+  # username = ""
+  # password = ""
+
   ## Specify timeout duration for slower prometheus clients (default is 3s)
   # response_timeout = "3s"
 
@@ -92,6 +118,13 @@ func (p *Prometheus) SampleConfig() string {
 
 func (p *Prometheus) Description() string {
 	return "Read metrics from one or many prometheus clients"
+}
+
+func (p *Prometheus) Init() error {
+	if p.MetricVersion != 2 {
+		p.Log.Warnf("Use of deprecated configuration: 'metric_version = 1'; please update to 'metric_version = 2'")
+	}
+	return nil
 }
 
 var ErrProtocolError = errors.New("prometheus protocol error")
@@ -127,7 +160,7 @@ func (p *Prometheus) GetAllURLs() (map[string]URLAndAddress, error) {
 	for _, u := range p.URLs {
 		URL, err := url.Parse(u)
 		if err != nil {
-			log.Printf("prometheus: Could not parse %s, skipping it. Error: %s", u, err.Error())
+			p.Log.Errorf("Could not parse %q, skipping it. Error: %s", u, err.Error())
 			continue
 		}
 		allURLs[URL.String()] = URLAndAddress{URL: URL, OriginalURL: URL}
@@ -148,7 +181,7 @@ func (p *Prometheus) GetAllURLs() (map[string]URLAndAddress, error) {
 
 		resolvedAddresses, err := net.LookupHost(URL.Hostname())
 		if err != nil {
-			log.Printf("prometheus: Could not resolve %s, skipping it. Error: %s", URL.Host, err.Error())
+			p.Log.Errorf("Could not resolve %q, skipping it. Error: %s", URL.Host, err.Error())
 			continue
 		}
 		for _, resolved := range resolvedAddresses {
@@ -214,6 +247,7 @@ func (p *Prometheus) gatherURL(u URLAndAddress, acc telegraf.Accumulator) error 
 	var req *http.Request
 	var err error
 	var uClient *http.Client
+	var metrics []telegraf.Metric
 	if u.URL.Scheme == "unix" {
 		path := u.URL.Query().Get("path")
 		if path == "" {
@@ -251,6 +285,8 @@ func (p *Prometheus) gatherURL(u URLAndAddress, acc telegraf.Accumulator) error 
 		req.Header.Set("Authorization", "Bearer "+string(token))
 	} else if p.BearerTokenString != "" {
 		req.Header.Set("Authorization", "Bearer "+p.BearerTokenString)
+	} else if p.Username != "" || p.Password != "" {
+		req.SetBasicAuth(p.Username, p.Password)
 	}
 
 	var resp *http.Response
@@ -273,7 +309,12 @@ func (p *Prometheus) gatherURL(u URLAndAddress, acc telegraf.Accumulator) error 
 		return fmt.Errorf("error reading body: %s", err)
 	}
 
-	metrics, err := Parse(body, resp.Header)
+	if p.MetricVersion == 2 {
+		metrics, err = ParseV2(body, resp.Header)
+	} else {
+		metrics, err = Parse(body, resp.Header)
+	}
+
 	if err != nil {
 		return fmt.Errorf("error reading metrics for %s: %s",
 			u.URL, err)
@@ -283,7 +324,9 @@ func (p *Prometheus) gatherURL(u URLAndAddress, acc telegraf.Accumulator) error 
 		tags := metric.Tags()
 		// strip user and password from URL
 		u.OriginalURL.User = nil
-		tags["url"] = u.OriginalURL.String()
+		if p.URLTag != "" {
+			tags[p.URLTag] = u.OriginalURL.String()
+		}
 		if u.Address != "" {
 			tags["address"] = u.Address
 		}
@@ -330,6 +373,7 @@ func init() {
 		return &Prometheus{
 			ResponseTimeout: internal.Duration{Duration: time.Second * 3},
 			kubernetesPods:  map[string]URLAndAddress{},
+			URLTag:          "url",
 		}
 	})
 }
