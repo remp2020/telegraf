@@ -13,11 +13,11 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
-	tlsint "github.com/influxdata/telegraf/internal/tls"
+	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-var zookeeperFormatRE = regexp.MustCompile(`^zk_(\w+)\s+([\w\.\-]+)`)
+var zookeeperFormatRE = regexp.MustCompile(`^zk_(\w[\w\.\-]*)\s+([\w\.\-]+)`)
 
 // Zookeeper is a zookeeper plugin
 type Zookeeper struct {

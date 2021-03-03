@@ -12,7 +12,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
-	tlsint "github.com/influxdata/telegraf/internal/tls"
+	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/olivere/elastic"
 )
@@ -41,8 +41,9 @@ type Elasticsearch struct {
 	SSLCert             string `toml:"ssl_cert"` // Path to host cert file
 	SSLKey              string `toml:"ssl_key"`  // Path to cert key file
 	InsecureSkipVerify  bool   // Use SSL but skip chain & host verification
-	Client              *elastic.Client
-	tlsint.ClientConfig
+	tls.ClientConfig
+
+	Client *elastic.Client
 }
 
 var sampleConfig = `
@@ -79,11 +80,11 @@ var sampleConfig = `
   # default_tag_value = "none"
   index_name = "telegraf-%Y.%m.%d" # required.
 
-  ## Optional SSL Config
-  # ssl_ca = "/etc/telegraf/ca.pem"
-  # ssl_cert = "/etc/telegraf/cert.pem"
-  # ssl_key = "/etc/telegraf/key.pem"
-  ## Use SSL but skip chain & host verification
+  ## Optional TLS Config
+  # tls_ca = "/etc/telegraf/ca.pem"
+  # tls_cert = "/etc/telegraf/cert.pem"
+  # tls_key = "/etc/telegraf/key.pem"
+  ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
 
   ## Template Config

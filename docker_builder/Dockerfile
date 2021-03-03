@@ -1,4 +1,4 @@
-FROM golang:1.11.5
+FROM golang:1.16
 
 RUN curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
 

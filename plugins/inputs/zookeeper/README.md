@@ -1,4 +1,4 @@
-## Zookeeper Input Plugin
+# Zookeeper Input Plugin
 
 The zookeeper plugin collects variables outputted from the 'mntr' command
 [Zookeeper Admin](https://zookeeper.apache.org/doc/current/zookeeperAdmin.html).
@@ -19,7 +19,7 @@ The zookeeper plugin collects variables outputted from the 'mntr' command
   # timeout = "5s"
 
   ## Optional TLS Config
-  # enable_ssl = true
+  # enable_tls = true
   # tls_ca = "/etc/telegraf/ca.pem"
   # tls_cert = "/etc/telegraf/cert.pem"
   # tls_key = "/etc/telegraf/key.pem"

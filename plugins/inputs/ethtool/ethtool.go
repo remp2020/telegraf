@@ -2,6 +2,8 @@ package ethtool
 
 import (
 	"net"
+
+	"github.com/influxdata/telegraf"
 )
 
 type Command interface {
@@ -18,14 +20,17 @@ type Ethtool struct {
 	// This is the list of interface names to ignore
 	InterfaceExclude []string `toml:"interface_exclude"`
 
+	Log telegraf.Logger `toml:"-"`
+
 	// the ethtool command
 	command Command
 }
 
 const (
-	pluginName    = "ethtool"
-	tagInterface  = "interface"
-	tagDriverName = "driver"
+	pluginName       = "ethtool"
+	tagInterface     = "interface"
+	tagDriverName    = "driver"
+	fieldInterfaceUp = "interface_up"
 
 	sampleConfig = `
   ## List of interfaces to pull metrics for
