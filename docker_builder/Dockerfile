@@ -1,6 +1,4 @@
-FROM golang:1.16
-
-RUN curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+FROM golang:1.18
 
 RUN mkdir -p /src/build
 

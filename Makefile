@@ -455,3 +455,21 @@ windows_i386.zip windows_amd64.zip: export EXEEXT := .exe
 %.deb %.rpm %.tar.gz %.zip: export DESTDIR = build/$(GOOS)-$(GOARCH)$(GOARM)$(cgo)-$(pkg)/telegraf-$(version)
 %.deb %.rpm %.tar.gz %.zip: export buildbin = build/$(GOOS)-$(GOARCH)$(GOARM)$(cgo)/telegraf$(EXEEXT)
 %.deb %.rpm %.tar.gz %.zip: export LDFLAGS = -w -s
+
+# REMP
+
+docker-telegraf:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o telegraf -installsuffix cgo -ldflags "$(LDFLAGS)" ./cmd/telegraf
+
+docker-build:
+	set -e; \
+	docker build -t remp-telegraf_builder ./docker_builder; \
+	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
+
+docker-push:
+	set -e; \
+	docker login
+	docker build -t remp-telegraf_builder ./docker_builder; \
+	docker run --rm -v $$PWD:/src/build -v ${GOPATH}/src:/gopath/src remp-telegraf_builder > ./docker_runner/telegraf.tar;
+	docker build -t remp/telegraf:${IMAGEVER} ./docker_runner; \
+	docker push remp/telegraf:${IMAGEVER}

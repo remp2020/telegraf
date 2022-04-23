@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/internal"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/olivere/elastic"
@@ -19,7 +18,6 @@ import (
 
 // Elasticsearch represents elasticsearch-metric.
 type Elasticsearch struct {
-	URLs                []string `toml:"urls"`
 	FieldWhitelist      []string `toml:"field_whitelist"`
 	IndexName           string
 	TypeName            string   `toml:"type_name"`
@@ -31,16 +29,18 @@ type Elasticsearch struct {
 	TagKeys             []string
 	Username            string
 	Password            string
+	Log                 telegraf.Logger `toml:"-"`
 	EnableSniffer       bool
-	Timeout             internal.Duration
-	HealthCheckInterval internal.Duration
+	Timeout             config.Duration
+	HealthCheckInterval config.Duration
 	ManageTemplate      bool
 	TemplateName        string
 	OverwriteTemplate   bool
-	SSLCA               string `toml:"ssl_ca"`   // Path to CA file
-	SSLCert             string `toml:"ssl_cert"` // Path to host cert file
-	SSLKey              string `toml:"ssl_key"`  // Path to cert key file
-	InsecureSkipVerify  bool   // Use SSL but skip chain & host verification
+	SSLCA               string   `toml:"ssl_ca"`   // Path to CA file
+	SSLCert             string   `toml:"ssl_cert"` // Path to host cert file
+	SSLKey              string   `toml:"ssl_key"`  // Path to cert key file
+	URLs                []string `toml:"urls"`
+	InsecureSkipVerify  bool     // Use SSL but skip chain & host verification
 	tls.ClientConfig
 
 	Client *elastic.Client
@@ -120,7 +120,7 @@ func (a *Elasticsearch) Connect() error {
 		return fmt.Errorf("Elasticsearch urls or index_name is not defined")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.Timeout.Duration)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.Timeout))
 	defer cancel()
 
 	var clientOptions []elastic.ClientOptionFunc
@@ -136,14 +136,14 @@ func (a *Elasticsearch) Connect() error {
 
 	httpclient := &http.Client{
 		Transport: tr,
-		Timeout:   a.Timeout.Duration,
+		Timeout:   time.Duration(a.Timeout),
 	}
 
 	clientOptions = append(clientOptions,
 		elastic.SetHttpClient(httpclient),
 		elastic.SetSniff(a.EnableSniffer),
 		elastic.SetURL(a.URLs...),
-		elastic.SetHealthcheckInterval(a.HealthCheckInterval.Duration),
+		elastic.SetHealthcheckInterval(time.Duration(a.HealthCheckInterval)),
 	)
 
 	if a.Username != "" && a.Password != "" {
@@ -152,11 +152,11 @@ func (a *Elasticsearch) Connect() error {
 		)
 	}
 
-	if a.HealthCheckInterval.Duration == 0 {
+	if time.Duration(a.HealthCheckInterval) == 0 {
 		clientOptions = append(clientOptions,
 			elastic.SetHealthcheck(false),
 		)
-		log.Printf("D! Elasticsearch output: disabling health check")
+		a.Log.Debugf("Disabling health check")
 	}
 
 	client, err := elastic.NewClient(clientOptions...)
@@ -178,7 +178,7 @@ func (a *Elasticsearch) Connect() error {
 		return fmt.Errorf("Elasticsearch version not supported: %s", esVersion)
 	}
 
-	log.Println("I! Elasticsearch version: " + esVersion)
+	a.Log.Infof("Elasticsearch version: %q", esVersion)
 
 	a.Client = client
 
@@ -264,8 +264,8 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			}
 			idValue, ok := m[a.IDField].(string)
 			if !ok {
-				log.Printf("E! Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
-				log.Printf("I! Metric content: %#v", m)
+				a.Log.Errorf("Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+				a.Log.Infof("Metric content: %#v", m)
 				return false, nil
 			}
 
@@ -314,8 +314,8 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			if a.IDField != "" {
 				idValue, ok := m[a.IDField].(string)
 				if !ok {
-					log.Printf("E! Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
-					log.Printf("I! Metric content: %#v", m)
+					a.Log.Errorf("Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+					a.Log.Infof("Metric content: %#v", m)
 					continue
 				}
 				indexRequest = indexRequest.Id(idValue)
@@ -325,7 +325,7 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.Timeout.Duration)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.Timeout))
 	defer cancel()
 
 	res, err := bulkRequest.Do(ctx)
@@ -336,7 +336,8 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 
 	if res.Errors {
 		for id, err := range res.Failed() {
-			log.Printf("E! Elasticsearch indexing failure, id: %d, error: %s, caused by: %s, %s", id, err.Error.Reason, err.Error.CausedBy["reason"], err.Error.CausedBy["type"])
+			a.Log.Errorf("Elasticsearch indexing failure, id: %d, error: %s, caused by: %s, %s", id, err.Error.Reason, err.Error.CausedBy["reason"], err.Error.CausedBy["type"])
+			break
 		}
 		return fmt.Errorf("W! Elasticsearch failed to index %d metrics", len(res.Failed()))
 	}
@@ -435,12 +436,9 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 			return fmt.Errorf("Elasticsearch failed to create index template %s : %s", a.TemplateName, errCreateTemplate)
 		}
 
-		log.Printf("D! Elasticsearch template %s created or updated\n", a.TemplateName)
-
+		a.Log.Debugf("Template %s created or updated\n", a.TemplateName)
 	} else {
-
-		log.Println("D! Found existing Elasticsearch template. Skipping template management")
-
+		a.Log.Debug("Found existing Elasticsearch template. Skipping template management")
 	}
 	return nil
 }
@@ -495,7 +493,7 @@ func (a *Elasticsearch) GetIndexName(indexName string, eventTime time.Time, tagK
 		if value, ok := metricTags[key]; ok {
 			tagValues = append(tagValues, value)
 		} else {
-			log.Printf("D! Tag '%s' not found, using '%s' on index name instead\n", key, a.DefaultTagValue)
+			a.Log.Debugf("Tag '%s' not found, using '%s' on index name instead\n", key, a.DefaultTagValue)
 			tagValues = append(tagValues, a.DefaultTagValue)
 		}
 	}
@@ -561,8 +559,8 @@ func (a *Elasticsearch) filterMetric(metric map[string]interface{}) map[string]i
 func init() {
 	outputs.Add("remp_elasticsearch", func() telegraf.Output {
 		return &Elasticsearch{
-			Timeout:             internal.Duration{Duration: time.Second * 5},
-			HealthCheckInterval: internal.Duration{Duration: time.Second * 10},
+			Timeout:             config.Duration(time.Second * 5),
+			HealthCheckInterval: config.Duration(time.Second * 10),
 		}
 	})
 }
