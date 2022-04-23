@@ -13,8 +13,18 @@ Notes:
   * The name of the measurement is always used when grouping it
   * Depending on the amount of metrics on each  bucket, more than `K` series may be returned
   * If a measurement does not have one of the selected fields, it is dropped from the aggregation
+1. Groups measurements in buckets based on their tags and name
+2. Every N seconds, for each bucket, for each selected field: aggregate all the measurements using a given aggregation function (min, sum, mean, etc) and the field.
+3. For each computed aggregation: order the buckets by the aggregation, then returns all measurements in the top `K` buckets
 
-### Configuration:
+Notes:
+
+* The deduplicates metrics
+* The name of the measurement is always used when grouping it
+* Depending on the amount of metrics on each  bucket, more than `K` series may be returned
+* If a measurement does not have one of the selected fields, it is dropped from the aggregation
+
+## Configuration
 
 ```toml
 [[processors.topk]]
@@ -22,6 +32,10 @@ Notes:
   # period = 10
 
   ## How many top buckets to return
+  ## How many top buckets to return per field
+  ## Every field specified to aggregate over will return k number of results.
+  ## For example, 1 field with k of 10 will return 10 buckets. While 2 fields
+  ## with k of 3 will return 6 buckets.
   # k = 10
 
   ## Based on which tags should the buckets be computed. Globs can be specified.
@@ -29,6 +43,11 @@ Notes:
   # group_by = ['*']
 
   ## Over which fields is the aggregation done
+  ## The field(s) to aggregate
+  ## Each field defined is used to create an independent aggregation. Each
+  ## aggregation will return k buckets. If a metric does not have a defined
+  ## field the metric will be dropped from the aggregation. Considering using
+  ## the defaults processor plugin to ensure fields are set if required.
   # fields = ["value"]
 
   ## What aggregation function to use. Options: sum, mean, min, max
@@ -60,18 +79,18 @@ Notes:
   # add_aggregate_fields = []
 ```
 
-### Tags:
+### Tags
 
 This processor does not add tags by default. But the setting `add_groupby_tag` will add a tag if set to anything other than ""
 
-
-### Fields:
+### Fields
 
 This processor does not add fields by default. But the settings `add_rank_fields` and `add_aggregation_fields` will add one or several fields if set to anything other than ""
 
-
 ### Example
-**Config**
+
+Below is an example configuration:
+
 ```toml
 [[processors.topk]]
   period = 20
@@ -80,7 +99,8 @@ This processor does not add fields by default. But the settings `add_rank_fields
   fields = ["cpu_usage"]
 ```
 
-**Output difference with topk**
+Output difference with topk:
+
 ```diff
 < procstat,pid=2088,process_name=Xorg cpu_usage=7.296576662282613 1546473820000000000
 < procstat,pid=2780,process_name=ibus-engine-simple cpu_usage=0 1546473820000000000

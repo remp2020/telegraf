@@ -3,10 +3,17 @@
 /telegraf
 /telegraf.exe
 /telegraf.gz
+/vendor
+.DS_Store
+process.yml
+/.vscode
+/*.toml
+/*.conf
+resource.syso
+versioninfo.json
+
+# remp
 telegraf.tar
 .history
 .idea
 .vscode
-/vendor
-.DS_Store
-process.yml

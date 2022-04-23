@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 //these tests must be run under administrator account
@@ -13,7 +14,7 @@ import (
 var InvalidServices = []string{"XYZ1@", "ZYZ@", "SDF_@#"}
 var KnownServices = []string{"LanmanServer", "TermService"}
 
-func TestList(t *testing.T) {
+func TestListIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -33,7 +34,7 @@ func TestList(t *testing.T) {
 	require.Equal(t, services[1], KnownServices[1])
 }
 
-func TestEmptyList(t *testing.T) {
+func TestEmptyListIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -51,7 +52,7 @@ func TestEmptyList(t *testing.T) {
 	require.Condition(t, func() bool { return len(services) > 20 }, "Too few service")
 }
 
-func TestGatherErrors(t *testing.T) {
+func TestGatherErrorsIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}

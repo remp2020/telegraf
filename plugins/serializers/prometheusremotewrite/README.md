@@ -10,12 +10,14 @@ somewhat, but not fully, mitigated by using outputs that support writing in
 use only the `prometheus_client` output.
 
 ### Configuration
+## Configuration
 
 ```toml
 [[outputs.http]]
   ## URL is the address to send metrics to
   url = "https://cortex/api/prom/push"
   
+
   ## Optional TLS Config
   tls_ca = "/etc/telegraf/ca.pem"
   tls_cert = "/etc/telegraf/cert.pem"
@@ -24,6 +26,10 @@ use only the `prometheus_client` output.
   ## Data format to output.
   data_format = "prometheusremotewrite"
   
+
+  ## Data format to output.
+  data_format = "prometheusremotewrite"
+
   [outputs.http.headers]
      Content-Type = "application/x-protobuf"
      Content-Encoding = "snappy"

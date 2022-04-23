@@ -13,9 +13,14 @@ import (
 	"time"
 
 	"github.com/go-ping/ping"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/inputs"
+)
+
+const (
+	defaultPingDataBytesSize = 56
 )
 
 // HostPinger is a function that runs the "ping" function using a list of
@@ -73,6 +78,23 @@ type Ping struct {
 
 	// Calculate the given percentiles when using native method
 	Percentiles []int
+
+	// Packet size
+	Size *int
+}
+
+type roundTripTimeStats struct {
+	min    float64
+	avg    float64
+	max    float64
+	stddev float64
+}
+
+type stats struct {
+	trans int
+	recv  int
+	ttl   int
+	roundTripTimeStats
 }
 
 func (*Ping) Description() string {
@@ -125,6 +147,10 @@ const sampleConfig = `
 
   ## Use only IPv6 addresses when resolving a hostname.
   # ipv6 = false
+
+  ## Number of data bytes to be sent. Corresponds to the "-s"
+  ## option of the ping command. This only works with the native method.
+  # size = 56
 `
 
 func (*Ping) SampleConfig() string {
@@ -163,16 +189,20 @@ func (p *Ping) nativePing(destination string) (*pingStats, error) {
 
 	pinger, err := ping.NewPinger(destination)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create new pinger: %w", err)
+		return nil, fmt.Errorf("failed to create new pinger: %w", err)
 	}
 
-	// Required for windows. Despite the method name, this should work without the need to elevate privileges and has been tested on Windows 10
-	if runtime.GOOS == "windows" {
-		pinger.SetPrivileged(true)
-	}
+	pinger.SetPrivileged(true)
 
 	if p.IPv6 {
 		pinger.SetNetwork("ip6")
+	}
+
+	if p.Method == "native" {
+		pinger.Size = defaultPingDataBytesSize
+		if p.Size != nil {
+			pinger.Size = *p.Size
+		}
 	}
 
 	pinger.Source = p.sourceAddress
@@ -193,7 +223,14 @@ func (p *Ping) nativePing(destination string) (*pingStats, error) {
 	pinger.Count = p.Count
 	err = pinger.Run()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to run pinger: %w", err)
+		if strings.Contains(err.Error(), "operation not permitted") {
+			if runtime.GOOS == "linux" {
+				return nil, fmt.Errorf("permission changes required, enable CAP_NET_RAW capabilities (refer to the ping plugin's README.md for more info)")
+			}
+
+			return nil, fmt.Errorf("permission changes required, refer to the ping plugin's README.md for more info")
+		}
+		return nil, fmt.Errorf("%w", err)
 	}
 
 	ps.Statistics = *pinger.Statistics()
@@ -202,12 +239,12 @@ func (p *Ping) nativePing(destination string) (*pingStats, error) {
 }
 
 func (p *Ping) pingToURLNative(destination string, acc telegraf.Accumulator) {
-
 	tags := map[string]string{"url": destination}
 	fields := map[string]interface{}{}
 
 	stats, err := p.nativePingFunc(destination)
 	if err != nil {
+		p.Log.Errorf("ping failed: %s", err.Error())
 		if strings.Contains(err.Error(), "unknown") {
 			fields["result_code"] = 1
 		} else {
@@ -224,12 +261,14 @@ func (p *Ping) pingToURLNative(destination string, acc telegraf.Accumulator) {
 	}
 
 	if stats.PacketsSent == 0 {
+		p.Log.Debug("no packets sent")
 		fields["result_code"] = 2
 		acc.AddFields("ping", fields, tags)
 		return
 	}
 
 	if stats.PacketsRecv == 0 {
+		p.Log.Debug("no packets received")
 		fields["result_code"] = 1
 		fields["percent_packet_loss"] = float64(100)
 		acc.AddFields("ping", fields, tags)
@@ -238,7 +277,7 @@ func (p *Ping) pingToURLNative(destination string, acc telegraf.Accumulator) {
 
 	sort.Sort(durationSlice(stats.Rtts))
 	for _, perc := range p.Percentiles {
-		var value = percentile(durationSlice(stats.Rtts), perc)
+		var value = percentile(stats.Rtts, perc)
 		var field = fmt.Sprintf("percentile%v_ms", perc)
 		fields[field] = float64(value.Nanoseconds()) / float64(time.Millisecond)
 	}
@@ -249,6 +288,7 @@ func (p *Ping) pingToURLNative(destination string, acc telegraf.Accumulator) {
 		fields["ttl"] = stats.ttl
 	}
 
+	//nolint:unconvert // Conversion may be needed for float64 https://github.com/mdempsky/unconvert/issues/40
 	fields["percent_packet_loss"] = float64(stats.PacketLoss)
 	fields["minimum_response_ms"] = float64(stats.MinRtt) / float64(time.Millisecond)
 	fields["average_response_ms"] = float64(stats.AvgRtt) / float64(time.Millisecond)
@@ -284,11 +324,11 @@ func percentile(values durationSlice, perc int) time.Duration {
 
 	if rankInteger >= count-1 {
 		return values[count-1]
-	} else {
-		upper := values[rankInteger+1]
-		lower := values[rankInteger]
-		return lower + time.Duration(rankFraction*float64(upper-lower))
 	}
+
+	upper := values[rankInteger+1]
+	lower := values[rankInteger]
+	return lower + time.Duration(rankFraction*float64(upper-lower))
 }
 
 // Init ensures the plugin is configured correctly.
@@ -318,11 +358,11 @@ func (p *Ping) Init() error {
 		} else {
 			i, err := net.InterfaceByName(p.Interface)
 			if err != nil {
-				return fmt.Errorf("Failed to get interface: %w", err)
+				return fmt.Errorf("failed to get interface: %w", err)
 			}
 			addrs, err := i.Addrs()
 			if err != nil {
-				return fmt.Errorf("Failed to get the address of interface: %w", err)
+				return fmt.Errorf("failed to get the address of interface: %w", err)
 			}
 			p.sourceAddress = addrs[0].(*net.IPNet).IP.String()
 		}

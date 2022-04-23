@@ -6,6 +6,15 @@ Key source of platform telemetry is power domain that is beneficial for MANO/Mon
 to take preventive/corrective actions based on platform busyness, CPU temperature, actual CPU utilization and power statistics. 
 
 ### Configuration:
+
+This input plugin monitors power statistics on Intel-based platforms and assumes presence of Linux based OS.
+
+Main use cases are power saving and workload migration. Telemetry frameworks allow users to monitor critical platform level metrics.
+Key source of platform telemetry is power domain that is beneficial for MANO/Monitoring&Analytics systems
+to take preventive/corrective actions based on platform busyness, CPU temperature, actual CPU utilization and power statistics.
+
+## Configuration
+
 ```toml
 # Intel PowerStat plugin enables monitoring of platform metrics (power, TDP) and per-CPU metrics like temperature, power and utilization.
 [[inputs.intel_powerstat]]
@@ -19,6 +28,11 @@ to take preventive/corrective actions based on platform busyness, CPU temperatur
 ```
 ### Example: Configuration with no per-CPU telemetry
 This configuration allows getting global metrics (processor package specific), no per-CPU metrics are collected:
+
+## Example: Configuration with no per-CPU telemetry
+
+This configuration allows getting global metrics (processor package specific), no per-CPU metrics are collected:
+
 ```toml
 [[inputs.intel_powerstat]]
   cpu_metrics = []
@@ -26,12 +40,20 @@ This configuration allows getting global metrics (processor package specific), n
 
 ### Example: Configuration with no per-CPU telemetry - equivalent case
 This configuration allows getting global metrics (processor package specific), no per-CPU metrics are collected:
+## Example: Configuration with no per-CPU telemetry - equivalent case
+
+This configuration allows getting global metrics (processor package specific), no per-CPU metrics are collected:
+
 ```toml
 [[inputs.intel_powerstat]]
 ```
 
 ### Example: Configuration for CPU Temperature and Frequency only
 This configuration allows getting global metrics plus subset of per-CPU metrics (CPU Temperature and Current Frequency):
+## Example: Configuration for CPU Temperature and Frequency only
+
+This configuration allows getting global metrics plus subset of per-CPU metrics (CPU Temperature and Current Frequency):
+
 ```toml
 [[inputs.intel_powerstat]]
   cpu_metrics = ["cpu_frequency", "cpu_temperature"]
@@ -39,6 +61,10 @@ This configuration allows getting global metrics plus subset of per-CPU metrics 
 
 ### Example: Configuration with all available metrics
 This configuration allows getting global metrics and all per-CPU metrics:
+## Example: Configuration with all available metrics
+
+This configuration allows getting global metrics and all per-CPU metrics:
+
 ```toml
 [[inputs.intel_powerstat]]
   cpu_metrics = ["cpu_frequency", "cpu_busy_frequency", "cpu_temperature", "cpu_c1_state_residency", "cpu_c6_state_residency", "cpu_busy_cycles"]
@@ -50,12 +76,22 @@ The following dependencies are expected by plugin:
 - _intel-rapl_ module which exposes Intel Runtime Power Limiting metrics over `sysfs` (`/sys/devices/virtual/powercap/intel-rapl`),
 - _msr_ kernel module that provides access to processor model specific registers over `devfs` (`/dev/cpu/cpu%d/msr`),
 - _cpufreq_ kernel module - which exposes per-CPU Frequency over `sysfs` (`/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq`). 
+## SW Dependencies
+
+Plugin is based on Linux Kernel modules that expose specific metrics over `sysfs` or `devfs` interfaces.
+The following dependencies are expected by plugin:
+
+- _intel-rapl_ module which exposes Intel Runtime Power Limiting metrics over `sysfs` (`/sys/devices/virtual/powercap/intel-rapl`),
+- _msr_ kernel module that provides access to processor model specific registers over `devfs` (`/dev/cpu/cpu%d/msr`),
+- _cpufreq_ kernel module - which exposes per-CPU Frequency over `sysfs` (`/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq`).
 
 Minimum kernel version required is 3.13 to satisfy all requirements.
 
 Please make sure that kernel modules are loaded and running. You might have to manually enable them by using `modprobe`.
 Exact commands to be executed are:
 ```
+
+```sh
 sudo modprobe cpufreq-stats
 sudo modprobe msr
 sudo modprobe intel_rapl
@@ -63,6 +99,9 @@ sudo modprobe intel_rapl
 
 **Telegraf with Intel PowerStat plugin enabled may require root access to read model specific registers (MSRs)** 
 to retrieve data for calculation of most critical per-CPU specific metrics:
+**Telegraf with Intel PowerStat plugin enabled may require root access to read model specific registers (MSRs)**
+to retrieve data for calculation of most critical per-CPU specific metrics:
+
 - `cpu_busy_frequency_mhz`
 - `cpu_temperature_celsius`
 - `cpu_c1_state_residency_percent`
@@ -74,6 +113,10 @@ To expose other Intel PowerStat metrics root access may or may not be required (
 ### HW Dependencies:
 Specific metrics require certain processor features to be present, otherwise Intel PowerStat plugin won't be able to 
 read them. When using Linux Kernel based OS, user can detect supported processor features reading `/proc/cpuinfo` file. 
+## HW Dependencies
+
+Specific metrics require certain processor features to be present, otherwise Intel PowerStat plugin won't be able to
+read them. When using Linux Kernel based OS, user can detect supported processor features reading `/proc/cpuinfo` file.
 Plugin assumes crucial properties are the same for all CPU cores in the system.
 The following processor properties are examined in more detail in this section:
 processor _cpu family_, _model_ and _flags_.
@@ -88,6 +131,17 @@ model specific registers for all features
     _powerstat_core.cpu_busy_cycles_, _powerstat_core.cpu_c1_state_residency_
     - "_dts_" shall be present to collect _powerstat_core.cpu_temperature_
 - Processor _Model number_ must be one of the following values for plugin to read _powerstat_core.cpu_c1_state_residency_ 
+
+- Processor _cpu family_ must be Intel (0x6) - since data used by the plugin assumes Intel specific
+model specific registers for all features
+- The following processor flags shall be present:
+  - "_msr_" shall be present for plugin to read platform data from processor model specific registers and collect
+    the following metrics: _powerstat_core.cpu_temperature_, _powerstat_core.cpu_busy_frequency_,
+    _powerstat_core.cpu_busy_cycles_, _powerstat_core.cpu_c1_state_residency_, _powerstat_core._cpu_c6_state_residency_
+  - "_aperfmperf_" shall be present to collect the following metrics: _powerstat_core.cpu_busy_frequency_,
+    _powerstat_core.cpu_busy_cycles_, _powerstat_core.cpu_c1_state_residency_
+  - "_dts_" shall be present to collect _powerstat_core.cpu_temperature_
+- Processor _Model number_ must be one of the following values for plugin to read _powerstat_core.cpu_c1_state_residency_
 and _powerstat_core.cpu_c6_state_residency_ metrics:
 
 | Model number | Processor name |
@@ -101,6 +155,12 @@ and _powerstat_core.cpu_c6_state_residency_ metrics:
 | 0x86 | Intel Atom® Jacobsville |
 | 0x96 | Intel Atom® Elkhart Lake | 
 | 0x9C | Intel Atom® Jasper Lake | 
+| 0x5F | Intel Atom® Denverton |
+| 0x7A | Intel Atom® Goldmont |
+| 0x4C | Intel Atom® Airmont |
+| 0x86 | Intel Atom® Jacobsville |
+| 0x96 | Intel Atom® Elkhart Lake |
+| 0x9C | Intel Atom® Jasper Lake |
 | 0x1A | Intel Nehalem-EP |
 | 0x1E | Intel Nehalem |
 | 0x1F | Intel Nehalem-G |
@@ -159,6 +219,32 @@ When starting to measure metrics, plugin skips first iteration of metrics if the
 
     - Available metrics for powerstat_core measurement 
 
+
+## Metrics
+
+All metrics collected by Intel PowerStat plugin are collected in fixed intervals.
+Metrics that reports processor C-state residency or power are calculated over elapsed intervals.
+When starting to measure metrics, plugin skips first iteration of metrics if they are based on deltas with previous value.
+
+**The following measurements are supported by Intel PowerStat plugin:**
+
+- powerstat_core
+
+  - The following Tags are returned by plugin with powerstat_core measurements:
+
+  ```text
+        | Tag | Description |
+        |-----|-------------|
+        | `package_id` | ID of platform package/socket |
+        | `core_id` | ID of physical processor core |
+        | `cpu_id` | ID of logical processor core  |
+   Measurement powerstat_core metrics are collected per-CPU (cpu_id is the key)
+   while core_id and package_id tags are additional topology information.
+   ```
+
+  - Available metrics for powerstat_core measurement
+  
+  ```text
         | Metric name (field) | Description | Units |
         |-----|-------------|-----|
         | `cpu_frequency_mhz` | Current operational frequency of CPU Core | MHz |
@@ -192,6 +278,33 @@ When starting to measure metrics, plugin skips first iteration of metrics if the
 ### Example Output:
 
 ```
+  ```
+
+- powerstat_package
+
+  - The following Tags are returned by plugin with powerstat_package measurements:
+
+  ```text
+        | Tag | Description |
+        |-----|-------------|
+        | `package_id` | ID of platform package/socket |
+   Measurement powerstat_package metrics are collected per processor package -_package_id_ tag indicates which
+   package metric refers to.
+  ```
+
+  - Available metrics for powerstat_package measurement
+
+  ```text
+        | Metric name (field) | Description | Units |
+        |-----|-------------|-----|
+        | `thermal_design_power_watts` |  Maximum Thermal Design Power (TDP) available for processor package | Watts |
+        | `current_power_consumption_watts` | Current power consumption of processor package | Watts |
+        | `current_dram_power_consumption_watts` | Current power consumption of processor package DRAM subsystem | Watts |
+  ```
+
+### Example Output
+
+```shell
 powerstat_package,host=ubuntu,package_id=0 thermal_design_power_watts=160 1606494744000000000
 powerstat_package,host=ubuntu,package_id=0 current_power_consumption_watts=35 1606494744000000000
 powerstat_package,host=ubuntu,package_id=0 current_dram_power_consumption_watts=13.94 1606494744000000000
