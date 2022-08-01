@@ -71,7 +71,7 @@ require (
 	github.com/gopcua/opcua v0.3.3
 	github.com/gophercloud/gophercloud v0.25.0
 	github.com/gorilla/mux v1.8.0
-	github.com/gorilla/websocket v1.4.2
+	github.com/gorilla/websocket v1.5.0
 	github.com/gosnmp/gosnmp v1.34.0
 	github.com/grid-x/modbus v0.0.0-20211113184042-7f2251c342c9
 	github.com/gwos/tcg/sdk v0.0.0-20211223101342-35fbd1ae683c
