@@ -170,7 +170,7 @@ SELECT
 	,REPLACE(@@SERVERNAME,''\'','':'') AS [sql_instance]
 	,DB_NAME(vfs.[database_id]) AS [database_name]
 	,COALESCE(mf.[physical_name],''RBPEX'') AS [physical_filename]	--RPBEX = Resilient Buffer Pool Extension
-	,COALESCE(mf.[name],''RBPEX'') AS [logical_filename]	--RPBEX = Resilient Buffer Pool Extension	
+	,COALESCE(mf.[name],''RBPEX'') AS [logical_filename]	--RPBEX = Resilient Buffer Pool Extension
 	,mf.[type_desc] AS [file_type]
 	,vfs.[io_stall_read_ms] AS [read_latency_ms]
 	,vfs.[num_of_reads] AS [reads]
@@ -333,6 +333,7 @@ SELECT DISTINCT
 			,'Logins/sec'
 			,'Processes blocked'
 			,'Latch Waits/sec'
+			,'Average Latch Wait Time (ms)'
 			,'Full Scans/sec'
 			,'Index Searches/sec'
 			,'Page Splits/sec'
@@ -414,6 +415,9 @@ SELECT DISTINCT
 			,'Distributed Query'
 			,'DTC calls'
 			,'Query Store CPU usage'
+			,'Query Store physical reads'
+			,'Query Store logical reads'
+			,'Query Store logical writes'
 		) OR (
 			spi.[object_name] LIKE '%User Settable%'
 			OR spi.[object_name] LIKE '%SQL Errors%'
@@ -1131,7 +1135,7 @@ END
 
 DECLARE
 	@MajorMinorVersion AS int = CAST(PARSENAME(CAST(SERVERPROPERTY('ProductVersion') AS nvarchar),4) AS int)*100 + CAST(PARSENAME(CAST(SERVERPROPERTY('ProductVersion') AS nvarchar),3) AS int)
-	
+
 IF @MajorMinorVersion >= 1050 BEGIN
 	SELECT DISTINCT
 		'sqlserver_volume_space' AS [measurement]
@@ -1333,4 +1337,51 @@ IF SERVERPROPERTY(''IsHadrEnabled'') = 1 BEGIN
 END'
 
 EXEC sp_executesql @SqlStatement
+`
+
+const sqlServerRecentBackups string = `
+IF SERVERPROPERTY('EngineEdition') NOT IN (2,3,4) BEGIN /*NOT IN Standard,Enterpris,Express*/
+	DECLARE @ErrorMessage AS nvarchar(500) = 'Telegraf - Connection string Server:'+ @@ServerName + ',Database:' + DB_NAME() +' is not a SQL Server Standard,Enterprise or Express. Check the database_type parameter in the telegraf configuration.';
+	RAISERROR (@ErrorMessage,11,1)
+	RETURN
+END;
+
+WITH MostRecentBackups AS
+(
+	SELECT
+		database_name AS [Database],
+		MAX(bus.backup_finish_date) AS LastBackupTime,
+		CASE bus.type
+			WHEN 'D' THEN 'Full'
+			WHEN 'I' THEN 'Differential'
+			WHEN 'L' THEN 'Transaction Log'
+		END AS Type
+	FROM msdb.dbo.backupset bus
+	WHERE bus.type <> 'F'
+	GROUP BY bus.database_name,bus.type
+),
+BackupsWithSize AS
+(
+	SELECT mrb.*, CAST((SELECT TOP 1 b.backup_size FROM msdb.dbo.backupset b WHERE [Database] = b.database_name AND LastBackupTime = b.backup_finish_date) AS bigint) AS [backup_size]
+	FROM MostRecentBackups mrb
+)
+
+SELECT
+	'sqlserver_recentbackup' AS [measurement],
+	REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
+	d.name AS [database_name],
+	d.database_id as [database_id],
+	d.state_desc AS [state],
+	d.recovery_model_desc AS [recovery_model],
+	DATEDIFF(SECOND,{d '1970-01-01'}, bf.LastBackupTime) AS [last_full_backup_time],
+	bf.backup_size AS [full_backup_size_bytes],
+	DATEDIFF(SECOND,{d '1970-01-01'}, bd.LastBackupTime) AS [last_differential_backup_time],
+	bd.backup_size AS [differential_backup_size_bytes],
+	DATEDIFF(SECOND,{d '1970-01-01'}, bt.LastBackupTime) AS [last_transaction_log_backup_time],
+	bt.backup_size AS [transaction_log_backup_size_bytes]
+FROM sys.databases d
+LEFT JOIN BackupsWithSize bf ON (d.name = bf.[Database] AND (bf.Type = 'Full' OR bf.Type IS NULL))
+LEFT JOIN BackupsWithSize bd ON (d.name = bd.[Database] AND (bd.Type = 'Differential' OR bd.Type IS NULL))
+LEFT JOIN BackupsWithSize bt ON (d.name = bt.[Database] AND (bt.Type = 'Transaction Log' OR bt.Type IS NULL))
+WHERE d.name <> 'tempdb' AND d.source_database_id IS NULL
 `

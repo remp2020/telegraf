@@ -4,15 +4,16 @@ The InfluxDB plugin will collect metrics on the given InfluxDB servers. Read our
 [documentation](https://docs.influxdata.com/platform/monitoring/influxdata-platform/tools/measurements-internal/) 
 for detailed information about `influxdb` metrics. 
 The InfluxDB plugin will collect metrics on the given InfluxDB servers. Read our
-[documentation](https://docs.influxdata.com/platform/monitoring/influxdata-platform/tools/measurements-internal/)
-for detailed information about `influxdb` metrics.
+[documentation][1] for detailed information about `influxdb` metrics.
 
 This plugin can also gather metrics from endpoints that expose
 InfluxDB-formatted endpoints. See below for more information.
 
+[1]: https://docs.influxdata.com/platform/monitoring/influxdata-platform/tools/measurements-internal/
+
 ## Configuration
 
-```toml
+```toml @sample.conf
 # Read InfluxDB-formatted JSON metrics from one or more HTTP endpoints
 [[inputs.influxdb]]
   ## Works with InfluxDB debug endpoints out of the box,
@@ -42,7 +43,8 @@ InfluxDB-formatted endpoints. See below for more information.
 
 ## Measurements & Fields
 
-**Note:** The measurements and fields included in this plugin are dynamically built from the InfluxDB source, and may vary between versions:
+**Note:** The measurements and fields included in this plugin are dynamically
+built from the InfluxDB source, and may vary between versions:
 
 - influxdb
   - n_shards: The total number of shards in the specified database.

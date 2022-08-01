@@ -30,11 +30,14 @@ Pull requests welcome.
 - [knot](https://github.com/x70b1/telegraf-knot) - Collect stats from Knot DNS.
 - [fritzbox](https://github.com/hdecarne-github/fritzbox-telegraf-plugin) - Gather statistics from [FRITZ!Box](https://avm.de/produkte/fritzbox/) router and repeater
 - [linux-psi-telegraf-plugin](https://github.com/gridscale/linux-psi-telegraf-plugin) - Gather pressure stall information ([PSI](https://facebookmicrosites.github.io/psi/)) from the Linux Kernel
+- [huebridge](https://github.com/hdecarne-github/huebridge-telegraf-plugin) - Gather smart home statistics from [Hue Bridge](https://www.philips-hue.com/) devices
 
 ## Outputs
 
 - [kinesis](https://github.com/morfien101/telegraf-output-kinesis) - Aggregation and compression of metrics to send Amazon Kinesis.
+- [firehose](https://github.com/muhlba91/telegraf-output-kinesis-data-firehose) - Sends metrics in batches to Amazon Kinesis Data Firehose.
 
 ## Processors
 
 - [geoip](https://github.com/a-bali/telegraf-geoip) - Add GeoIP information to IP addresses.
+- [metadata](https://github.com/lawdt/metadata) - Appends metadata gathered from Openstack to metrics.

@@ -1,8 +1,10 @@
+//go:generate ../../../tools/readme_config_includer/generator
 package groundwork
 
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,29 +19,9 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-const sampleConfig = `
-  ## URL of your groundwork instance.
-  url = "https://groundwork.example.com"
-
-  ## Agent uuid for GroundWork API Server.
-  agent_id = ""
-
-  ## Username and password to access GroundWork API.
-  username = ""
-  password = ""
-
-  ## Default display name for the host with services(metrics).
-  # default_host = "telegraf"
-
-  ## Default service state.
-  # default_service_state = "SERVICE_OK"
-
-  ## The name of the tag that contains the hostname.
-  # resource_tag = "host"
-
-  ## The name of the tag that contains the host group name.
-  # group_tag = "group"
-`
+// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
+//go:embed sample.conf
+var sampleConfig string
 
 type metricMeta struct {
 	group    string
@@ -59,7 +41,7 @@ type Groundwork struct {
 	client              clients.GWClient
 }
 
-func (g *Groundwork) SampleConfig() string {
+func (*Groundwork) SampleConfig() string {
 	return sampleConfig
 }
 
@@ -210,10 +192,6 @@ func (g *Groundwork) Write(metrics []telegraf.Metric) error {
 	}
 
 	return nil
-}
-
-func (g *Groundwork) Description() string {
-	return "Send telegraf metrics to GroundWork Monitor"
 }
 
 func init() {

@@ -1,6 +1,8 @@
+//go:generate ../../../tools/readme_config_includer/generator
 package consul_agent
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,10 @@ import (
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
+
+// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
+//go:embed sample.conf
+var sampleConfig string
 
 // consul_agent configuration object
 type ConsulAgent struct {
@@ -31,25 +37,6 @@ type ConsulAgent struct {
 
 const timeLayout = "2006-01-02 15:04:05 -0700 MST"
 
-const sampleConfig = `
-  ## URL for the Consul agent
-  # url = "http://127.0.0.1:8500"
-
-  ## Use auth token for authorization.
-  ## Only one of the options can be set. Leave empty to not use any token.
-  # token_file = "/path/to/auth/token"
-  ## OR
-  # token = "a1234567-40c7-9048-7bae-378687048181"
-
-  ## Set timeout (default 5 seconds)
-  # timeout = "5s"
-
-  ## Optional TLS Config
-  # tls_ca = /path/to/cafile
-  # tls_cert = /path/to/certfile
-  # tls_key = /path/to/keyfile
-`
-
 func init() {
 	inputs.Add("consul_agent", func() telegraf.Input {
 		return &ConsulAgent{
@@ -58,14 +45,8 @@ func init() {
 	})
 }
 
-// SampleConfig returns a sample config
-func (n *ConsulAgent) SampleConfig() string {
+func (*ConsulAgent) SampleConfig() string {
 	return sampleConfig
-}
-
-// Description returns a description of the plugin
-func (n *ConsulAgent) Description() string {
-	return "Read metrics from the Consul Agent API"
 }
 
 func (n *ConsulAgent) Init() error {
@@ -115,7 +96,7 @@ func (n *ConsulAgent) loadJSON(url string) (*AgentInfo, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "X-Consul-Token "+n.Token)
+	req.Header.Add("X-Consul-Token", n.Token)
 	req.Header.Add("Accept", "application/json")
 
 	resp, err := n.roundTripper.RoundTrip(req)

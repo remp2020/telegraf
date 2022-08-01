@@ -48,6 +48,10 @@ repo key and setup a new sources.list entry:
 ```shell
 wget -qO- https://repos.influxdata.com/influxdb.key | sudo tee /etc/apt/trusted.gpg.d/influxdata.asc >/dev/null
 echo "deb https://repos.influxdata.com/debian stable main" | sudo tee /etc/apt/sources.list.d/influxdata.list
+# influxdb.key GPG Fingerprint: 05CE15085FC09D18E99EFB22684A14CF2582E0C5
+wget -q https://repos.influxdata.com/influxdb.key
+echo '23a1c8836f0afc5ed24e0486339d7cc8f6790b83886c4c96995b88a061c5bb5d influxdb.key' | sha256sum -c && cat influxdb.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdb.gpg > /dev/null
+echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
 sudo apt-get update && sudo apt-get install telegraf
 ```
 
@@ -55,6 +59,7 @@ For RPM-based platforms (e.g. RHEL, CentOS) use the following to create a repo
 file and install telegraf:
 
 ```shell
+# influxdb.key GPG Fingerprint: 05CE15085FC09D18E99EFB22684A14CF2582E0C5
 cat <<EOF | sudo tee /etc/yum.repos.d/influxdata.repo
 [influxdata]
 name = InfluxData Repository - Stable
@@ -72,8 +77,9 @@ Telegraf requires Go version 1.14 or newer, the Makefile requires GNU make.
 
 1. [Install Go](https://golang.org/doc/install) >=1.14 (1.15 recommended)
 Telegraf requires Go version 1.17 or newer, the Makefile requires GNU make.
+Telegraf requires Go version 1.18 or newer, the Makefile requires GNU make.
 
-1. [Install Go](https://golang.org/doc/install) >=1.17 (1.17.2 recommended)
+1. [Install Go](https://golang.org/doc/install) >=1.18 (1.18.0 recommended)
 2. Clone the Telegraf repository:
 
    ```shell
