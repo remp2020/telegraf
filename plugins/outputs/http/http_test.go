@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/config/aws"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
+	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
 	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/common/oauth"
 	"github.com/influxdata/telegraf/plugins/serializers"
@@ -640,12 +640,11 @@ func TestBatchedUnbatched(t *testing.T) {
 		Method: defaultMethod,
 	}
 
-	var s = map[string]serializers.Serializer{
+	jsonSerializer, err := json.NewSerializer(time.Second, "", "")
+	require.NoError(t, err)
+	s := map[string]serializers.Serializer{
 		"influx": influx.NewSerializer(),
-		"json": func(s serializers.Serializer, err error) serializers.Serializer {
-			require.NoError(t, err)
-			return s
-		}(json.NewSerializer(time.Second, "")),
+		"json":   jsonSerializer,
 	}
 
 	for name, serializer := range s {

@@ -37,6 +37,13 @@ func IsAuthorization(err error) bool {
 	return strings.Contains(err.Error(), "not authorized")
 }
 
+func (s *Server) ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	return s.client.Ping(ctx, nil)
+}
+
 func (s *Server) authLog(err error) {
 	if IsAuthorization(err) {
 		s.Log.Debug(err.Error())
@@ -134,7 +141,7 @@ func poolStatsCommand(version string) (string, error) {
 		return "", err
 	}
 
-	if major == 5 {
+	if major >= 5 {
 		return "connPoolStats", nil
 	}
 	return "shardConnPoolStats", nil

@@ -1,5 +1,4 @@
 //go:build !freebsd
-// +build !freebsd
 
 package testutil
 
@@ -42,9 +41,15 @@ type Container struct {
 func (c *Container) Start() error {
 	c.ctx = context.Background()
 
+	var containerMounts []testcontainers.ContainerMount
+
+	for k, v := range c.BindMounts {
+		containerMounts = append(containerMounts, testcontainers.BindMount(v, testcontainers.ContainerMountTarget(k)))
+	}
+
 	req := testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			BindMounts:   c.BindMounts,
+			Mounts:       testcontainers.Mounts(containerMounts...),
 			Entrypoint:   c.Entrypoint,
 			Env:          c.Env,
 			ExposedPorts: c.ExposedPorts,

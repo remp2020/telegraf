@@ -7,13 +7,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/antchfx/jsonquery"
 	path "github.com/antchfx/xpath"
+	"github.com/doclambda/protobufquery"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/plugins/parsers"
+	"github.com/influxdata/telegraf/plugins/parsers/temporary/xpath"
 )
 
 type dataNode interface{}
@@ -33,25 +36,20 @@ type Parser struct {
 	ProtobufImportPaths []string          `toml:"xpath_protobuf_import_paths"`
 	PrintDocument       bool              `toml:"xpath_print_document"`
 	AllowEmptySelection bool              `toml:"xpath_allow_empty_selection"`
-	Configs             []Config          `toml:"xpath"`
+	NativeTypes         bool              `toml:"xpath_native_types"`
+	Configs             []xpath.Config    `toml:"xpath"`
 	DefaultMetricName   string            `toml:"-"`
 	DefaultTags         map[string]string `toml:"-"`
 	Log                 telegraf.Logger   `toml:"-"`
 
 	// Required for backward compatibility
-	ConfigsXML     []Config `toml:"xml" deprecated:"1.23.1;use 'xpath' instead"`
-	ConfigsJSON    []Config `toml:"xpath_json"`
-	ConfigsMsgPack []Config `toml:"xpath_msgpack"`
-	ConfigsProto   []Config `toml:"xpath_protobuf"`
+	ConfigsXML     []xpath.Config `toml:"xml" deprecated:"1.23.1;use 'xpath' instead"`
+	ConfigsJSON    []xpath.Config `toml:"xpath_json"`
+	ConfigsMsgPack []xpath.Config `toml:"xpath_msgpack"`
+	ConfigsProto   []xpath.Config `toml:"xpath_protobuf"`
 
 	document dataDocument
 }
-
-// Config definition
-// This should be replaced by the actual definition once
-// the compatibitlity-code is removed.
-// Please check plugins/parsers/registry.go for now.
-type Config parsers.XPathConfig
 
 func (p *Parser) Init() error {
 	switch p.Format {
@@ -147,11 +145,9 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(selectedNodes) < 1 || selectedNodes[0] == nil {
+		if (len(selectedNodes) < 1 || selectedNodes[0] == nil) && !p.AllowEmptySelection {
 			p.debugEmptyQuery("metric selection", doc, config.Selection)
-			if !p.AllowEmptySelection {
-				return metrics, fmt.Errorf("cannot parse with empty selection node")
-			}
+			return metrics, fmt.Errorf("cannot parse with empty selection node")
 		}
 		p.Log.Debugf("Number of selected metric nodes: %d", len(selectedNodes))
 
@@ -188,7 +184,7 @@ func (p *Parser) SetDefaultTags(tags map[string]string) {
 	p.DefaultTags = tags
 }
 
-func (p *Parser) parseQuery(starttime time.Time, doc, selected dataNode, config Config) (telegraf.Metric, error) {
+func (p *Parser) parseQuery(starttime time.Time, doc, selected dataNode, config xpath.Config) (telegraf.Metric, error) {
 	var timestamp time.Time
 	var metricname string
 
@@ -458,17 +454,29 @@ func (p *Parser) executeQuery(doc, selected dataNode, query string) (r interface
 	// separately. Those iterators will be returned for queries directly
 	// referencing a node (value or attribute).
 	n := expr.Evaluate(p.document.CreateXPathNavigator(root))
-	if iter, ok := n.(*path.NodeIterator); ok {
-		// We got an iterator, so take the first match and get the referenced
-		// property. This will always be a string.
-		if iter.MoveNext() {
-			r = iter.Current().Value()
+	iter, ok := n.(*path.NodeIterator)
+	if !ok {
+		return n, nil
+	}
+	// We got an iterator, so take the first match and get the referenced
+	// property. This will always be a string.
+	if iter.MoveNext() {
+		current := iter.Current()
+		// If the dataformat supports native types and if support is
+		// enabled, we should return the native type of the data
+		if p.NativeTypes {
+			switch nn := current.(type) {
+			case *jsonquery.NodeNavigator:
+				return nn.GetValue(), nil
+			case *protobufquery.NodeNavigator:
+				return nn.GetValue(), nil
+			}
 		}
-	} else {
-		r = n
+		// Fallback to get the string value representation
+		return iter.Current().Value(), nil
 	}
 
-	return r, nil
+	return nil, nil
 }
 
 func splitLastPathElement(query string) []string {
@@ -601,11 +609,8 @@ func (p *Parser) InitFromConfig(config *parsers.Config) error {
 
 	// Convert the config formats which is a one-to-one copy
 	if len(config.XPathConfig) > 0 {
-		p.Configs = make([]Config, 0, len(config.XPathConfig))
-		for _, cfg := range config.XPathConfig {
-			config := Config(cfg)
-			p.Configs = append(p.Configs, config)
-		}
+		p.Configs = make([]xpath.Config, 0, len(config.XPathConfig))
+		p.Configs = append(p.Configs, config.XPathConfig...)
 	}
 
 	return p.Init()

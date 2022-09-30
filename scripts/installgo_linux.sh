@@ -2,10 +2,10 @@
 
 set -eux
 
-GO_VERSION="1.18.4"
+GO_VERSION="1.19.1"
 GO_ARCH="linux-amd64"
 # from https://golang.org/dl
-GO_VERSION_SHA="c9b099b68d93f5c5c8a8844a89f8db07eaa58270e3a1e01804f17f4cf8df02f5"
+GO_VERSION_SHA="acc512fbab4f716a8f97a8b3fbaa9ddd39606a28be6c2515ef7c6c6311acffde"
 
 # Download Go and verify Go tarball
 setup_go () {
@@ -16,6 +16,7 @@ setup_go () {
         exit 1
     fi
 
+    sudo rm -rfv /usr/local/go
     sudo tar -C /usr/local -xzf go${GO_VERSION}.${GO_ARCH}.tar.gz
 
     echo "$PATH"

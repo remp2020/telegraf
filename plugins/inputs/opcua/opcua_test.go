@@ -136,6 +136,31 @@ func TestClient1Integration(t *testing.T) {
 			t.Errorf("Tag: %s has value: %v", o.nodes[i].tag.FieldName, v.Value)
 		}
 	}
+
+	// test unregistered reads workaround
+	o.Workarounds.UseUnregisteredReads = true
+
+	for i := range o.nodeData {
+		o.nodeData[i] = OPCData{}
+	}
+
+	err = Connect(&o)
+	if err != nil {
+		t.Fatalf("Connect Error: %s", err)
+	}
+
+	for i, v := range o.nodeData {
+		if v.Value != nil {
+			types := reflect.TypeOf(v.Value)
+			value := reflect.ValueOf(v.Value)
+			compare := fmt.Sprintf("%v", value.Interface())
+			if compare != testopctags[i].Want {
+				t.Errorf("Tag %s: Values %v for type %s  does not match record", o.nodes[i].tag.FieldName, value.Interface(), types)
+			}
+		} else if testopctags[i].Want != nil {
+			t.Errorf("Tag: %s has value: %v", o.nodes[i].tag.FieldName, v.Value)
+		}
+	}
 }
 
 func MapOPCTag(tags OPCTags) (out NodeSettings) {
@@ -206,6 +231,42 @@ additional_valid_status_codes = ["0xC0"]
 
 	require.Len(t, o.Workarounds.AdditionalValidStatusCodes, 1)
 	require.Equal(t, o.Workarounds.AdditionalValidStatusCodes[0], "0xC0")
+}
+
+func TestConfigWithMismatchedTypes(t *testing.T) {
+	toml := `
+[[inputs.opcua]]
+name = "localhost"
+endpoint = "opc.tcp://localhost:4840"
+connect_timeout = "10s"
+request_timeout = "5s"
+security_policy = "auto"
+security_mode = "auto"
+certificate = "/etc/telegraf/cert.pem"
+private_key = "/etc/telegraf/key.pem"
+auth_method = "Anonymous"
+username = ""
+password = ""
+nodes = [
+  {name="name", namespace="1", identifier_type="s", identifier="one"},
+  {name="name2", namespace="2", identifier_type="i", identifier="two"},
+]
+`
+
+	c := config.NewConfig()
+	err := c.LoadConfigData([]byte(toml))
+	require.NoError(t, err)
+
+	require.Len(t, c.Inputs, 1)
+
+	o, ok := c.Inputs[0].Input.(*OpcUA)
+	require.True(t, ok)
+
+	require.Len(t, o.RootNodes, 2)
+	require.Equal(t, o.RootNodes[0].FieldName, "name")
+	require.Equal(t, o.RootNodes[1].FieldName, "name2")
+
+	require.Error(t, o.InitNodes())
 }
 
 func TestTagsSliceToMap(t *testing.T) {

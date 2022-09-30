@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -114,6 +113,7 @@ func (o *OpenTSDB) WriteHTTP(metrics []telegraf.Metric, u *url.URL) error {
 		BatchSize: o.HTTPBatchSize,
 		Path:      o.HTTPPath,
 		Debug:     o.Debug,
+		log:       o.Log,
 	}
 
 	for _, m := range metrics {
@@ -218,7 +218,7 @@ func buildValue(v interface{}) (string, error) {
 	case uint64:
 		retv = UIntToString(p)
 	case float64:
-		retv = FloatToString(float64(p))
+		retv = FloatToString(p)
 	default:
 		return retv, fmt.Errorf("unexpected type %T with value %v for OpenTSDB", v, v)
 	}

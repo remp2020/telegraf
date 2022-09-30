@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,13 +25,12 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
-	"github.com/influxdata/telegraf/internal/choice"
 	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/plugins/aggregators"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/parsers"
-	"github.com/influxdata/telegraf/plugins/parsers/json_v2"
+	"github.com/influxdata/telegraf/plugins/parsers/temporary/json_v2"
 	"github.com/influxdata/telegraf/plugins/processors"
 	"github.com/influxdata/telegraf/plugins/serializers"
 	"github.com/influxdata/toml"
@@ -38,17 +38,6 @@ import (
 )
 
 var (
-	// Default sections
-	sectionDefaults = []string{"global_tags", "agent", "outputs",
-		"processors", "aggregators", "inputs"}
-
-	// Default input plugins
-	inputDefaults = []string{"cpu", "mem", "swap", "system", "kernel",
-		"processes", "disk", "diskio"}
-
-	// Default output plugins
-	outputDefaults = []string{"influxdb"}
-
 	// envVarRe is a regex to find environment variables in the config file
 	envVarRe = regexp.MustCompile(`\$\{(\w+)\}|\$(\w+)`)
 
@@ -80,10 +69,11 @@ type Config struct {
 	Inputs      []*models.RunningInput
 	Outputs     []*models.RunningOutput
 	Aggregators []*models.RunningAggregator
-	Parsers     []*models.RunningParser
 	// Processors have a slice wrapper type because they need to be sorted
 	Processors    models.RunningProcessors
 	AggProcessors models.RunningProcessors
+	// Parsers are created by their inputs during gather. Config doesn't keep track of them
+	// like the other plugins because they need to be garbage collected (See issue #11809)
 
 	Deprecations map[string][]int64
 	version      *semver.Version
@@ -109,7 +99,6 @@ func NewConfig() *Config {
 		Tags:          make(map[string]string),
 		Inputs:        make([]*models.RunningInput, 0),
 		Outputs:       make([]*models.RunningOutput, 0),
-		Parsers:       make([]*models.RunningParser, 0),
 		Processors:    make([]*models.RunningProcessor, 0),
 		AggProcessors: make([]*models.RunningProcessor, 0),
 		InputFilters:  make([]string, 0),
@@ -118,7 +107,7 @@ func NewConfig() *Config {
 	}
 
 	// Handle unknown version
-	version := internal.Version()
+	version := internal.Version
 	if version == "" || version == "unknown" {
 		version = "0.0.0-unknown"
 	}
@@ -253,15 +242,6 @@ func (c *Config) AggregatorNames() []string {
 	return PluginNameCounts(name)
 }
 
-// ParserNames returns a list of strings of the configured parsers.
-func (c *Config) ParserNames() []string {
-	var name []string
-	for _, parser := range c.Parsers {
-		name = append(name, parser.Config.DataFormat)
-	}
-	return PluginNameCounts(name)
-}
-
 // ProcessorNames returns a list of strings of the configured processors.
 func (c *Config) ProcessorNames() []string {
 	var name []string
@@ -314,309 +294,6 @@ func (c *Config) ListTags() string {
 	return strings.Join(tags, " ")
 }
 
-var header = `# Telegraf Configuration
-#
-# Telegraf is entirely plugin driven. All metrics are gathered from the
-# declared inputs, and sent to the declared outputs.
-#
-# Plugins must be declared in here to be active.
-# To deactivate a plugin, comment out the name and any variables.
-#
-# Use 'telegraf -config telegraf.conf -test' to see what metrics a config
-# file would generate.
-#
-# Environment variables can be used anywhere in this config file, simply surround
-# them with ${}. For strings the variable must be within quotes (ie, "${STR_VAR}"),
-# for numbers and booleans they should be plain (ie, ${INT_VAR}, ${BOOL_VAR})
-
-`
-var globalTagsConfig = `
-# Global tags can be specified here in key="value" format.
-[global_tags]
-  # dc = "us-east-1" # will tag all metrics with dc=us-east-1
-  # rack = "1a"
-  ## Environment variables can be used as tags, and throughout the config file
-  # user = "$USER"
-
-`
-
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the agentConfig data.
-//go:embed agent.conf
-var agentConfig string
-
-var outputHeader = `
-###############################################################################
-#                            OUTPUT PLUGINS                                   #
-###############################################################################
-
-`
-
-var processorHeader = `
-###############################################################################
-#                            PROCESSOR PLUGINS                                #
-###############################################################################
-
-`
-
-var aggregatorHeader = `
-###############################################################################
-#                            AGGREGATOR PLUGINS                               #
-###############################################################################
-
-`
-
-var inputHeader = `
-###############################################################################
-#                            INPUT PLUGINS                                    #
-###############################################################################
-
-`
-
-var serviceInputHeader = `
-###############################################################################
-#                            SERVICE INPUT PLUGINS                            #
-###############################################################################
-
-`
-
-// PrintSampleConfig prints the sample config
-func PrintSampleConfig(
-	sectionFilters []string,
-	inputFilters []string,
-	outputFilters []string,
-	aggregatorFilters []string,
-	processorFilters []string,
-) {
-	// print headers
-	fmt.Print(header)
-
-	if len(sectionFilters) == 0 {
-		sectionFilters = sectionDefaults
-	}
-	printFilteredGlobalSections(sectionFilters)
-
-	// print output plugins
-	if sliceContains("outputs", sectionFilters) {
-		if len(outputFilters) != 0 {
-			if len(outputFilters) >= 3 && outputFilters[1] != "none" {
-				fmt.Print(outputHeader)
-			}
-			printFilteredOutputs(outputFilters, false)
-		} else {
-			fmt.Print(outputHeader)
-			printFilteredOutputs(outputDefaults, false)
-			// Print non-default outputs, commented
-			var pnames []string
-			for pname := range outputs.Outputs {
-				if !sliceContains(pname, outputDefaults) {
-					pnames = append(pnames, pname)
-				}
-			}
-			sort.Strings(pnames)
-			printFilteredOutputs(pnames, true)
-		}
-	}
-
-	// print processor plugins
-	if sliceContains("processors", sectionFilters) {
-		if len(processorFilters) != 0 {
-			if len(processorFilters) >= 3 && processorFilters[1] != "none" {
-				fmt.Print(processorHeader)
-			}
-			printFilteredProcessors(processorFilters, false)
-		} else {
-			fmt.Print(processorHeader)
-			pnames := []string{}
-			for pname := range processors.Processors {
-				pnames = append(pnames, pname)
-			}
-			sort.Strings(pnames)
-			printFilteredProcessors(pnames, true)
-		}
-	}
-
-	// print aggregator plugins
-	if sliceContains("aggregators", sectionFilters) {
-		if len(aggregatorFilters) != 0 {
-			if len(aggregatorFilters) >= 3 && aggregatorFilters[1] != "none" {
-				fmt.Print(aggregatorHeader)
-			}
-			printFilteredAggregators(aggregatorFilters, false)
-		} else {
-			fmt.Print(aggregatorHeader)
-			pnames := []string{}
-			for pname := range aggregators.Aggregators {
-				pnames = append(pnames, pname)
-			}
-			sort.Strings(pnames)
-			printFilteredAggregators(pnames, true)
-		}
-	}
-
-	// print input plugins
-	if sliceContains("inputs", sectionFilters) {
-		if len(inputFilters) != 0 {
-			if len(inputFilters) >= 3 && inputFilters[1] != "none" {
-				fmt.Print(inputHeader)
-			}
-			printFilteredInputs(inputFilters, false)
-		} else {
-			fmt.Print(inputHeader)
-			printFilteredInputs(inputDefaults, false)
-			// Print non-default inputs, commented
-			var pnames []string
-			for pname := range inputs.Inputs {
-				if !sliceContains(pname, inputDefaults) {
-					pnames = append(pnames, pname)
-				}
-			}
-			sort.Strings(pnames)
-			printFilteredInputs(pnames, true)
-		}
-	}
-}
-
-func printFilteredProcessors(processorFilters []string, commented bool) {
-	// Filter processors
-	var pnames []string
-	for pname := range processors.Processors {
-		if sliceContains(pname, processorFilters) {
-			pnames = append(pnames, pname)
-		}
-	}
-	sort.Strings(pnames)
-
-	// Print Outputs
-	for _, pname := range pnames {
-		creator := processors.Processors[pname]
-		output := creator()
-		printConfig(pname, output, "processors", commented, processors.Deprecations[pname])
-	}
-}
-
-func printFilteredAggregators(aggregatorFilters []string, commented bool) {
-	// Filter outputs
-	var anames []string
-	for aname := range aggregators.Aggregators {
-		if sliceContains(aname, aggregatorFilters) {
-			anames = append(anames, aname)
-		}
-	}
-	sort.Strings(anames)
-
-	// Print Outputs
-	for _, aname := range anames {
-		creator := aggregators.Aggregators[aname]
-		output := creator()
-		printConfig(aname, output, "aggregators", commented, aggregators.Deprecations[aname])
-	}
-}
-
-func printFilteredInputs(inputFilters []string, commented bool) {
-	// Filter inputs
-	var pnames []string
-	for pname := range inputs.Inputs {
-		if sliceContains(pname, inputFilters) {
-			pnames = append(pnames, pname)
-		}
-	}
-	sort.Strings(pnames)
-
-	// cache service inputs to print them at the end
-	servInputs := make(map[string]telegraf.ServiceInput)
-	// for alphabetical looping:
-	servInputNames := []string{}
-
-	// Print Inputs
-	for _, pname := range pnames {
-		// Skip inputs that are registered twice for backward compatibility
-		switch pname {
-		case "cisco_telemetry_gnmi", "io", "KNXListener":
-			continue
-		}
-		creator := inputs.Inputs[pname]
-		input := creator()
-
-		if p, ok := input.(telegraf.ServiceInput); ok {
-			servInputs[pname] = p
-			servInputNames = append(servInputNames, pname)
-			continue
-		}
-
-		printConfig(pname, input, "inputs", commented, inputs.Deprecations[pname])
-	}
-
-	// Print Service Inputs
-	if len(servInputs) == 0 {
-		return
-	}
-	sort.Strings(servInputNames)
-
-	fmt.Print(serviceInputHeader)
-	for _, name := range servInputNames {
-		printConfig(name, servInputs[name], "inputs", commented, inputs.Deprecations[name])
-	}
-}
-
-func printFilteredOutputs(outputFilters []string, commented bool) {
-	// Filter outputs
-	var onames []string
-	for oname := range outputs.Outputs {
-		if sliceContains(oname, outputFilters) {
-			onames = append(onames, oname)
-		}
-	}
-	sort.Strings(onames)
-
-	// Print Outputs
-	for _, oname := range onames {
-		creator := outputs.Outputs[oname]
-		output := creator()
-		printConfig(oname, output, "outputs", commented, outputs.Deprecations[oname])
-	}
-}
-
-func printFilteredGlobalSections(sectionFilters []string) {
-	if sliceContains("global_tags", sectionFilters) {
-		fmt.Print(globalTagsConfig)
-	}
-
-	if sliceContains("agent", sectionFilters) {
-		fmt.Print(agentConfig)
-	}
-}
-
-func printConfig(name string, p telegraf.PluginDescriber, op string, commented bool, di telegraf.DeprecationInfo) {
-	comment := ""
-	if commented {
-		comment = "# "
-	}
-
-	if di.Since != "" {
-		removalNote := ""
-		if di.RemovalIn != "" {
-			removalNote = " and will be removed in " + di.RemovalIn
-		}
-		fmt.Printf("\n%s ## DEPRECATED: The '%s' plugin is deprecated in version %s%s, %s.", comment, name, di.Since, removalNote, di.Notice)
-	}
-
-	config := p.SampleConfig()
-	if config == "" {
-		fmt.Printf("\n#[[%s.%s]]", op, name)
-		fmt.Printf("\n%s  # no configuration\n\n", comment)
-	} else {
-		lines := strings.Split(config, "\n")
-		fmt.Print("\n")
-		for i, line := range lines {
-			if i == len(lines)-1 {
-				fmt.Print("\n")
-				continue
-			}
-			fmt.Print(strings.TrimRight(comment+line, " ") + "\n")
-		}
-	}
-}
-
 func sliceContains(name string, list []string) bool {
 	for _, b := range list {
 		if b == name {
@@ -624,28 +301,6 @@ func sliceContains(name string, list []string) bool {
 		}
 	}
 	return false
-}
-
-// PrintInputConfig prints the config usage of a single input.
-func PrintInputConfig(name string) error {
-	creator, ok := inputs.Inputs[name]
-	if !ok {
-		return fmt.Errorf("input %s not found", name)
-	}
-
-	printConfig(name, creator(), "inputs", false, inputs.Deprecations[name])
-	return nil
-}
-
-// PrintOutputConfig prints the config usage of a single output.
-func PrintOutputConfig(name string) error {
-	creator, ok := outputs.Outputs[name]
-	if !ok {
-		return fmt.Errorf("output %s not found", name)
-	}
-
-	printConfig(name, creator(), "outputs", false, outputs.Deprecations[name])
-	return nil
 }
 
 // LoadDirectory loads all toml config files found in the specified path, recursively.
@@ -678,10 +333,9 @@ func (c *Config) LoadDirectory(path string) error {
 }
 
 // Try to find a default config file at these locations (in order):
-//   1. $TELEGRAF_CONFIG_PATH
-//   2. $HOME/.telegraf/telegraf.conf
-//   3. /etc/telegraf/telegraf.conf
-//
+//  1. $TELEGRAF_CONFIG_PATH
+//  2. $HOME/.telegraf/telegraf.conf
+//  3. /etc/telegraf/telegraf.conf
 func getDefaultConfigPath() (string, error) {
 	envfile := os.Getenv("TELEGRAF_CONFIG_PATH")
 	homefile := os.ExpandEnv("${HOME}/.telegraf/telegraf.conf")
@@ -723,7 +377,7 @@ func (c *Config) LoadConfig(path string) error {
 			return err
 		}
 	}
-	data, err := loadConfig(path)
+	data, err := LoadConfigFile(path)
 	if err != nil {
 		return fmt.Errorf("Error loading config file %s: %w", path, err)
 	}
@@ -902,7 +556,7 @@ func escapeEnv(value string) string {
 	return envVarEscaper.Replace(value)
 }
 
-func loadConfig(config string) ([]byte, error) {
+func LoadConfigFile(config string) ([]byte, error) {
 	if fetchURLRe.MatchString(config) {
 		u, err := url.Parse(config)
 		if err != nil {
@@ -918,7 +572,17 @@ func loadConfig(config string) ([]byte, error) {
 	}
 
 	// If it isn't a https scheme, try it as a file
-	return os.ReadFile(config)
+	buffer, err := os.ReadFile(config)
+	if err != nil {
+		return nil, err
+	}
+
+	mimeType := http.DetectContentType(buffer)
+	if !strings.Contains(mimeType, "text/plain") {
+		return nil, fmt.Errorf("provided config is not a TOML file: %s", config)
+	}
+
+	return buffer, nil
 }
 
 func fetchConfig(u *url.URL) ([]byte, error) {
@@ -1023,9 +687,23 @@ func (c *Config) probeParser(table *ast.Table) bool {
 	return ok
 }
 
-func (c *Config) addParser(parentname string, table *ast.Table) (*models.RunningParser, error) {
+func (c *Config) addParser(parentcategory, parentname string, table *ast.Table) (*models.RunningParser, error) {
 	var dataformat string
 	c.getFieldString(table, "data_format", &dataformat)
+
+	if dataformat == "" {
+		if parentcategory == "inputs" && parentname == "exec" {
+			// Legacy support, exec plugin originally parsed JSON by default.
+			dataformat = "json"
+		} else {
+			dataformat = "influx"
+		}
+	}
+	var influxParserType string
+	c.getFieldString(table, "influx_parser_type", &influxParserType)
+	if dataformat == "influx" && influxParserType == "upstream" {
+		dataformat = "influx_upstream"
+	}
 
 	creator, ok := parsers.Parsers[dataformat]
 	if !ok {
@@ -1043,9 +721,8 @@ func (c *Config) addParser(parentname string, table *ast.Table) (*models.Running
 	}
 
 	running := models.NewRunningParser(parser, conf)
-	c.Parsers = append(c.Parsers, running)
-
-	return running, nil
+	err = running.Init()
+	return running, err
 }
 
 func (c *Config) addProcessor(name string, table *ast.Table) error {
@@ -1058,51 +735,82 @@ func (c *Config) addProcessor(name string, table *ast.Table) error {
 		}
 		return fmt.Errorf("Undefined but requested processor: %s", name)
 	}
+	streamingProcessor := creator()
+
+	// For processors with parsers we need to compute the set of
+	// options that is not covered by both, the parser and the processor.
+	// We achieve this by keeping a local book of missing entries
+	// that counts the number of misses. In case we have a parser
+	// for the input both need to miss the entry. We count the
+	// missing entries at the end.
+	missCount := make(map[string]int)
+	c.setLocalMissingTomlFieldTracker(missCount)
+	defer c.resetMissingTomlFieldTracker()
 
 	processorConfig, err := c.buildProcessor(name, table)
 	if err != nil {
 		return err
 	}
 
-	rf, err := c.newRunningProcessor(creator, processorConfig, table)
-	if err != nil {
+	var processor interface{}
+	processor = streamingProcessor
+	if p, ok := streamingProcessor.(unwrappable); ok {
+		processor = p.Unwrap()
+	}
+
+	// If the (underlying) processor has a SetParser or SetParserFunc function,
+	// it can accept arbitrary data-formats, so build the requested parser and
+	// set it.
+	if t, ok := processor.(telegraf.ParserPlugin); ok {
+		parser, err := c.addParser("processors", name, table)
+		if err != nil {
+			return fmt.Errorf("adding parser failed: %w", err)
+		}
+		t.SetParser(parser)
+	}
+
+	if t, ok := processor.(telegraf.ParserFuncPlugin); ok {
+		if !c.probeParser(table) {
+			return errors.New("parser not found")
+		}
+		t.SetParserFunc(func() (telegraf.Parser, error) {
+			return c.addParser("processors", name, table)
+		})
+	}
+
+	// Setup the processor
+	if err := c.setupProcessorOptions(processorConfig.Name, streamingProcessor, table); err != nil {
 		return err
 	}
+
+	rf := models.NewRunningProcessor(streamingProcessor, processorConfig)
 	c.Processors = append(c.Processors, rf)
 
-	// save a copy for the aggregator
-	rf, err = c.newRunningProcessor(creator, processorConfig, table)
-	if err != nil {
+	// Save a copy for the aggregator
+	if err := c.setupProcessorOptions(processorConfig.Name, streamingProcessor, table); err != nil {
 		return err
 	}
+
+	rf = models.NewRunningProcessor(streamingProcessor, processorConfig)
 	c.AggProcessors = append(c.AggProcessors, rf)
 
 	return nil
 }
 
-func (c *Config) newRunningProcessor(
-	creator processors.StreamingCreator,
-	processorConfig *models.ProcessorConfig,
-	table *ast.Table,
-) (*models.RunningProcessor, error) {
-	processor := creator()
-
+func (c *Config) setupProcessorOptions(name string, processor telegraf.StreamingProcessor, table *ast.Table) error {
 	if p, ok := processor.(unwrappable); ok {
-		if err := c.toml.UnmarshalTable(table, p.Unwrap()); err != nil {
-			return nil, err
+		unwrapped := p.Unwrap()
+		if err := c.toml.UnmarshalTable(table, unwrapped); err != nil {
+			return fmt.Errorf("unmarshalling unwrappable failed: %w", err)
 		}
-	} else {
-		if err := c.toml.UnmarshalTable(table, processor); err != nil {
-			return nil, err
-		}
+		return c.printUserDeprecation("processors", name, unwrapped)
 	}
 
-	if err := c.printUserDeprecation("processors", processorConfig.Name, processor); err != nil {
-		return nil, err
+	if err := c.toml.UnmarshalTable(table, processor); err != nil {
+		return fmt.Errorf("unmarshalling failed: %w", err)
 	}
 
-	rf := models.NewRunningProcessor(processor, processorConfig)
-	return rf, nil
+	return c.printUserDeprecation("processors", name, processor)
 }
 
 func (c *Config) addOutput(name string, table *ast.Table) error {
@@ -1165,7 +873,6 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 	// that counts the number of misses. In case we have a parser
 	// for the input both need to miss the entry. We count the
 	// missing entries at the end.
-	missThreshold := 0
 	missCount := make(map[string]int)
 	c.setLocalMissingTomlFieldTracker(missCount)
 	defer c.resetMissingTomlFieldTracker()
@@ -1184,93 +891,41 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 
 	// If the input has a SetParser or SetParserFunc function, it can accept
 	// arbitrary data-formats, so build the requested parser and set it.
-	if t, ok := input.(telegraf.ParserInput); ok {
-		missThreshold = 1
-		if parser, err := c.addParser(name, table); err == nil {
-			t.SetParser(parser)
-		} else {
-			missThreshold = 0
-			// Fallback to the old way of instantiating the parsers.
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			parser, err := c.buildParserOld(name, config)
-			if err != nil {
-				return err
-			}
-			t.SetParser(parser)
+	if t, ok := input.(telegraf.ParserPlugin); ok {
+		parser, err := c.addParser("inputs", name, table)
+		if err != nil {
+			return fmt.Errorf("adding parser failed: %w", err)
 		}
+		t.SetParser(parser)
 	}
 
 	// Keep the old interface for backward compatibility
 	if t, ok := input.(parsers.ParserInput); ok {
-		// DEPRECATED: Please switch your plugin to telegraf.ParserInput.
-		missThreshold = 1
-		if parser, err := c.addParser(name, table); err == nil {
-			t.SetParser(parser)
-		} else {
-			missThreshold = 0
-			// Fallback to the old way of instantiating the parsers.
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			parser, err := c.buildParserOld(name, config)
-			if err != nil {
-				return err
-			}
-			t.SetParser(parser)
+		// DEPRECATED: Please switch your plugin to telegraf.ParserPlugin.
+		parser, err := c.addParser("inputs", name, table)
+		if err != nil {
+			return fmt.Errorf("adding parser failed: %w", err)
 		}
+		t.SetParser(parser)
 	}
 
-	if t, ok := input.(telegraf.ParserFuncInput); ok {
-		missThreshold = 1
-		if c.probeParser(table) {
-			t.SetParserFunc(func() (telegraf.Parser, error) {
-				parser, err := c.addParser(name, table)
-				if err != nil {
-					return nil, err
-				}
-				err = parser.Init()
-				return parser, err
-			})
-		} else {
-			missThreshold = 0
-			// Fallback to the old way
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			t.SetParserFunc(func() (telegraf.Parser, error) {
-				return c.buildParserOld(name, config)
-			})
+	if t, ok := input.(telegraf.ParserFuncPlugin); ok {
+		if !c.probeParser(table) {
+			return errors.New("parser not found")
 		}
+		t.SetParserFunc(func() (telegraf.Parser, error) {
+			return c.addParser("inputs", name, table)
+		})
 	}
 
 	if t, ok := input.(parsers.ParserFuncInput); ok {
-		// DEPRECATED: Please switch your plugin to telegraf.ParserFuncInput.
-		missThreshold = 1
-		if c.probeParser(table) {
-			t.SetParserFunc(func() (parsers.Parser, error) {
-				parser, err := c.addParser(name, table)
-				if err != nil {
-					return nil, err
-				}
-				err = parser.Init()
-				return parser, err
-			})
-		} else {
-			missThreshold = 0
-			// Fallback to the old way
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			t.SetParserFunc(func() (parsers.Parser, error) {
-				return c.buildParserOld(name, config)
-			})
+		// DEPRECATED: Please switch your plugin to telegraf.ParserFuncPlugin.
+		if !c.probeParser(table) {
+			return errors.New("parser not found")
 		}
+		t.SetParserFunc(func() (parsers.Parser, error) {
+			return c.addParser("inputs", name, table)
+		})
 	}
 
 	pluginConfig, err := c.buildInput(name, table)
@@ -1298,7 +953,7 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 
 	// Check the number of misses against the threshold
 	for key, count := range missCount {
-		if count <= missThreshold {
+		if count <= 1 {
 			continue
 		}
 		if err := c.missingTomlField(nil, key); err != nil {
@@ -1454,173 +1109,6 @@ func (c *Config) buildInput(name string, tbl *ast.Table) (*models.InputConfig, e
 	return cp, nil
 }
 
-// buildParserOld grabs the necessary entries from the ast.Table for creating
-// a parsers.Parser object, and creates it, which can then be added onto
-// an Input object.
-func (c *Config) buildParserOld(name string, config *parsers.Config) (telegraf.Parser, error) {
-	parser, err := parsers.NewParser(config)
-	if err != nil {
-		return nil, err
-	}
-	logger := models.NewLogger("parsers", config.DataFormat, name)
-	models.SetLoggerOnPlugin(parser, logger)
-	if initializer, ok := parser.(telegraf.Initializer); ok {
-		if err := initializer.Init(); err != nil {
-			return nil, err
-		}
-	}
-
-	return parser, nil
-}
-
-func (c *Config) getParserConfig(name string, tbl *ast.Table) (*parsers.Config, error) {
-	pc := &parsers.Config{
-		JSONStrict: true,
-	}
-
-	c.getFieldString(tbl, "data_format", &pc.DataFormat)
-
-	// Legacy support, exec plugin originally parsed JSON by default.
-	if name == "exec" && pc.DataFormat == "" {
-		pc.DataFormat = "json"
-	} else if pc.DataFormat == "" {
-		pc.DataFormat = "influx"
-	}
-
-	c.getFieldString(tbl, "separator", &pc.Separator)
-
-	c.getFieldStringSlice(tbl, "templates", &pc.Templates)
-	c.getFieldStringSlice(tbl, "tag_keys", &pc.TagKeys)
-	c.getFieldStringSlice(tbl, "json_string_fields", &pc.JSONStringFields)
-	c.getFieldString(tbl, "json_name_key", &pc.JSONNameKey)
-	c.getFieldString(tbl, "json_query", &pc.JSONQuery)
-	c.getFieldString(tbl, "json_time_key", &pc.JSONTimeKey)
-	c.getFieldString(tbl, "json_time_format", &pc.JSONTimeFormat)
-	c.getFieldString(tbl, "json_timezone", &pc.JSONTimezone)
-	c.getFieldBool(tbl, "json_strict", &pc.JSONStrict)
-	c.getFieldString(tbl, "data_type", &pc.DataType)
-	c.getFieldString(tbl, "collectd_auth_file", &pc.CollectdAuthFile)
-	c.getFieldString(tbl, "collectd_security_level", &pc.CollectdSecurityLevel)
-	c.getFieldString(tbl, "collectd_parse_multivalue", &pc.CollectdSplit)
-
-	c.getFieldStringSlice(tbl, "collectd_typesdb", &pc.CollectdTypesDB)
-
-	c.getFieldString(tbl, "dropwizard_metric_registry_path", &pc.DropwizardMetricRegistryPath)
-	c.getFieldString(tbl, "dropwizard_time_path", &pc.DropwizardTimePath)
-	c.getFieldString(tbl, "dropwizard_time_format", &pc.DropwizardTimeFormat)
-	c.getFieldString(tbl, "dropwizard_tags_path", &pc.DropwizardTagsPath)
-	c.getFieldStringMap(tbl, "dropwizard_tag_paths", &pc.DropwizardTagPathsMap)
-
-	//for grok data_format
-	c.getFieldStringSlice(tbl, "grok_named_patterns", &pc.GrokNamedPatterns)
-	c.getFieldStringSlice(tbl, "grok_patterns", &pc.GrokPatterns)
-	c.getFieldString(tbl, "grok_custom_patterns", &pc.GrokCustomPatterns)
-	c.getFieldStringSlice(tbl, "grok_custom_pattern_files", &pc.GrokCustomPatternFiles)
-	c.getFieldString(tbl, "grok_timezone", &pc.GrokTimezone)
-	c.getFieldString(tbl, "grok_unique_timestamp", &pc.GrokUniqueTimestamp)
-
-	c.getFieldStringSlice(tbl, "form_urlencoded_tag_keys", &pc.FormUrlencodedTagKeys)
-
-	c.getFieldString(tbl, "value_field_name", &pc.ValueFieldName)
-
-	// for influx parser
-	c.getFieldString(tbl, "influx_parser_type", &pc.InfluxParserType)
-
-	//for XPath parser family
-	if choice.Contains(pc.DataFormat, []string{"xml", "xpath_json", "xpath_msgpack", "xpath_protobuf"}) {
-		c.getFieldString(tbl, "xpath_protobuf_file", &pc.XPathProtobufFile)
-		c.getFieldString(tbl, "xpath_protobuf_type", &pc.XPathProtobufType)
-		c.getFieldStringSlice(tbl, "xpath_protobuf_import_paths", &pc.XPathProtobufImportPaths)
-		c.getFieldBool(tbl, "xpath_print_document", &pc.XPathPrintDocument)
-
-		// Determine the actual xpath configuration tables
-		node, xpathOK := tbl.Fields["xpath"]
-		if !xpathOK {
-			// Add this for backward compatibility
-			node, xpathOK = tbl.Fields[pc.DataFormat]
-		}
-		if xpathOK {
-			if subtbls, ok := node.([]*ast.Table); ok {
-				pc.XPathConfig = make([]parsers.XPathConfig, len(subtbls))
-				for i, subtbl := range subtbls {
-					subcfg := pc.XPathConfig[i]
-					c.getFieldString(subtbl, "metric_name", &subcfg.MetricQuery)
-					c.getFieldString(subtbl, "metric_selection", &subcfg.Selection)
-					c.getFieldString(subtbl, "timestamp", &subcfg.Timestamp)
-					c.getFieldString(subtbl, "timestamp_format", &subcfg.TimestampFmt)
-					c.getFieldStringMap(subtbl, "tags", &subcfg.Tags)
-					c.getFieldStringMap(subtbl, "fields", &subcfg.Fields)
-					c.getFieldStringMap(subtbl, "fields_int", &subcfg.FieldsInt)
-					c.getFieldString(subtbl, "field_selection", &subcfg.FieldSelection)
-					c.getFieldBool(subtbl, "field_name_expansion", &subcfg.FieldNameExpand)
-					c.getFieldString(subtbl, "field_name", &subcfg.FieldNameQuery)
-					c.getFieldString(subtbl, "field_value", &subcfg.FieldValueQuery)
-					c.getFieldString(subtbl, "tag_selection", &subcfg.TagSelection)
-					c.getFieldBool(subtbl, "tag_name_expansion", &subcfg.TagNameExpand)
-					c.getFieldString(subtbl, "tag_name", &subcfg.TagNameQuery)
-					c.getFieldString(subtbl, "tag_value", &subcfg.TagValueQuery)
-					pc.XPathConfig[i] = subcfg
-				}
-			}
-		}
-	}
-
-	//for JSONPath parser
-	if node, ok := tbl.Fields["json_v2"]; ok {
-		if metricConfigs, ok := node.([]*ast.Table); ok {
-			pc.JSONV2Config = make([]parsers.JSONV2Config, len(metricConfigs))
-			for i, metricConfig := range metricConfigs {
-				mc := pc.JSONV2Config[i]
-				c.getFieldString(metricConfig, "measurement_name", &mc.MeasurementName)
-				if mc.MeasurementName == "" {
-					mc.MeasurementName = name
-				}
-				c.getFieldString(metricConfig, "measurement_name_path", &mc.MeasurementNamePath)
-				c.getFieldString(metricConfig, "timestamp_path", &mc.TimestampPath)
-				c.getFieldString(metricConfig, "timestamp_format", &mc.TimestampFormat)
-				c.getFieldString(metricConfig, "timestamp_timezone", &mc.TimestampTimezone)
-
-				mc.Fields = getFieldSubtable(c, metricConfig)
-				mc.Tags = getTagSubtable(c, metricConfig)
-
-				if objectconfigs, ok := metricConfig.Fields["object"]; ok {
-					if objectconfigs, ok := objectconfigs.([]*ast.Table); ok {
-						for _, objectConfig := range objectconfigs {
-							var o json_v2.JSONObject
-							c.getFieldString(objectConfig, "path", &o.Path)
-							c.getFieldBool(objectConfig, "optional", &o.Optional)
-							c.getFieldString(objectConfig, "timestamp_key", &o.TimestampKey)
-							c.getFieldString(objectConfig, "timestamp_format", &o.TimestampFormat)
-							c.getFieldString(objectConfig, "timestamp_timezone", &o.TimestampTimezone)
-							c.getFieldBool(objectConfig, "disable_prepend_keys", &o.DisablePrependKeys)
-							c.getFieldStringSlice(objectConfig, "included_keys", &o.IncludedKeys)
-							c.getFieldStringSlice(objectConfig, "excluded_keys", &o.ExcludedKeys)
-							c.getFieldStringSlice(objectConfig, "tags", &o.Tags)
-							c.getFieldStringMap(objectConfig, "renames", &o.Renames)
-							c.getFieldStringMap(objectConfig, "fields", &o.Fields)
-
-							o.FieldPaths = getFieldSubtable(c, objectConfig)
-							o.TagPaths = getTagSubtable(c, objectConfig)
-
-							mc.JSONObjects = append(mc.JSONObjects, o)
-						}
-					}
-				}
-
-				pc.JSONV2Config[i] = mc
-			}
-		}
-	}
-
-	pc.MetricName = name
-
-	if c.hasErrs() {
-		return nil, c.firstErr()
-	}
-
-	return pc, nil
-}
-
 func getFieldSubtable(c *Config, metricConfig *ast.Table) []json_v2.DataSet {
 	var fields []json_v2.DataSet
 
@@ -1676,8 +1164,11 @@ func (c *Config) buildSerializer(tbl *ast.Table) (serializers.Serializer, error)
 	c.getFieldStringSlice(tbl, "templates", &sc.Templates)
 	c.getFieldString(tbl, "carbon2_format", &sc.Carbon2Format)
 	c.getFieldString(tbl, "carbon2_sanitize_replace_char", &sc.Carbon2SanitizeReplaceChar)
+	c.getFieldBool(tbl, "csv_column_prefix", &sc.CSVPrefix)
+	c.getFieldBool(tbl, "csv_header", &sc.CSVHeader)
+	c.getFieldString(tbl, "csv_separator", &sc.CSVSeparator)
+	c.getFieldString(tbl, "csv_timestamp_format", &sc.TimestampFormat)
 	c.getFieldInt(tbl, "influx_max_line_bytes", &sc.InfluxMaxLineBytes)
-
 	c.getFieldBool(tbl, "influx_sort_fields", &sc.InfluxSortFields)
 	c.getFieldBool(tbl, "influx_uint_support", &sc.InfluxUintSupport)
 	c.getFieldBool(tbl, "graphite_tag_support", &sc.GraphiteTagSupport)
@@ -1687,6 +1178,7 @@ func (c *Config) buildSerializer(tbl *ast.Table) (serializers.Serializer, error)
 
 	c.getFieldDuration(tbl, "json_timestamp_units", &sc.TimestampUnits)
 	c.getFieldString(tbl, "json_timestamp_format", &sc.TimestampFormat)
+	c.getFieldString(tbl, "json_transformation", &sc.Transformation)
 
 	c.getFieldBool(tbl, "splunkmetric_hec_routing", &sc.HecRouting)
 	c.getFieldBool(tbl, "splunkmetric_multimetric", &sc.SplunkmetricMultiMetric)
@@ -1698,6 +1190,7 @@ func (c *Config) buildSerializer(tbl *ast.Table) (serializers.Serializer, error)
 	c.getFieldBool(tbl, "prometheus_export_timestamp", &sc.PrometheusExportTimestamp)
 	c.getFieldBool(tbl, "prometheus_sort_metrics", &sc.PrometheusSortMetrics)
 	c.getFieldBool(tbl, "prometheus_string_as_label", &sc.PrometheusStringAsLabel)
+	c.getFieldBool(tbl, "prometheus_compact_encoding", &sc.PrometheusCompactEncoding)
 
 	if c.hasErrs() {
 		return nil, c.firstErr()
@@ -1741,25 +1234,34 @@ func (c *Config) buildOutput(name string, tbl *ast.Table) (*models.OutputConfig,
 
 func (c *Config) missingTomlField(_ reflect.Type, key string) error {
 	switch key {
-	case "alias", "carbon2_format", "carbon2_sanitize_replace_char", "collectd_auth_file",
-		"collectd_parse_multivalue", "collectd_security_level", "collectd_typesdb", "collection_jitter",
-		"collection_offset",
-		"data_format", "data_type", "delay", "drop", "drop_original", "dropwizard_metric_registry_path",
-		"dropwizard_tag_paths", "dropwizard_tags_path", "dropwizard_time_format", "dropwizard_time_path",
-		"fielddrop", "fieldpass", "flush_interval", "flush_jitter", "form_urlencoded_tag_keys",
-		"grace", "graphite_separator", "graphite_tag_sanitize_mode", "graphite_tag_support",
-		"grok_custom_pattern_files", "grok_custom_patterns", "grok_named_patterns", "grok_patterns",
-		"grok_timezone", "grok_unique_timestamp", "influx_max_line_bytes", "influx_parser_type", "influx_sort_fields",
-		"influx_uint_support", "interval", "json_name_key", "json_query", "json_strict",
-		"json_string_fields", "json_time_format", "json_time_key", "json_timestamp_format", "json_timestamp_units", "json_timezone", "json_v2",
-		"lvm", "metric_batch_size", "metric_buffer_limit", "name_override", "name_prefix",
-		"name_suffix", "namedrop", "namepass", "order", "pass", "period", "precision",
-		"prefix", "prometheus_export_timestamp", "prometheus_ignore_timestamp", "prometheus_sort_metrics", "prometheus_string_as_label",
-		"separator", "splunkmetric_hec_routing", "splunkmetric_multimetric", "tag_keys",
-		"tagdrop", "tagexclude", "taginclude", "tagpass", "tags", "template", "templates",
-		"value_field_name", "wavefront_source_override", "wavefront_use_strict", "wavefront_disable_prefix_conversion":
+	// General options to ignore
+	case "alias",
+		"collection_jitter", "collection_offset",
+		"data_format", "delay", "drop", "drop_original",
+		"fielddrop", "fieldpass", "flush_interval", "flush_jitter",
+		"grace",
+		"interval",
+		"lvm", // What is this used for?
+		"metric_batch_size", "metric_buffer_limit",
+		"name_override", "name_prefix", "name_suffix", "namedrop", "namepass",
+		"order",
+		"pass", "period", "precision",
+		"tagdrop", "tagexclude", "taginclude", "tagpass", "tags":
 
-		// ignore fields that are common to all plugins.
+	// Parser options to ignore
+	case "data_type", "influx_parser_type":
+
+	// Serializer options to ignore
+	case "prefix", "template", "templates",
+		"carbon2_format", "carbon2_sanitize_replace_char",
+		"csv_column_prefix", "csv_header", "csv_separator", "csv_timestamp_format",
+		"graphite_tag_sanitize_mode", "graphite_tag_support", "graphite_separator",
+		"influx_max_line_bytes", "influx_sort_fields", "influx_uint_support",
+		"json_timestamp_format", "json_timestamp_units", "json_transformation",
+		"prometheus_export_timestamp", "prometheus_sort_metrics", "prometheus_string_as_label",
+		"prometheus_compact_encoding",
+		"splunkmetric_hec_routing", "splunkmetric_multimetric",
+		"wavefront_disable_prefix_conversion", "wavefront_source_override", "wavefront_use_strict":
 	default:
 		c.unusedFieldsMutex.Lock()
 		c.UnusedFields[key] = true

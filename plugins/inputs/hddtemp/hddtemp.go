@@ -10,7 +10,6 @@ import (
 	gohddtemp "github.com/influxdata/telegraf/plugins/inputs/hddtemp/go-hddtemp"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -25,18 +24,6 @@ type HDDTemp struct {
 type Fetcher interface {
 	Fetch(address string) ([]gohddtemp.Disk, error)
 }
-
-var hddtempSampleConfig = `
-  ## By default, telegraf gathers temps data from all disks detected by the
-  ## hddtemp.
-  ##
-  ## Only collect temps from the selected disks.
-  ##
-  ## A * as the device name will return the temperature values of all disks.
-  ##
-  # address = "127.0.0.1:7634"
-  # devices = ["sda", "*"]
-`
 
 func (*HDDTemp) SampleConfig() string {
 	return sampleConfig

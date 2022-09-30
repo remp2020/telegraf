@@ -2,7 +2,6 @@ package snmp
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +48,7 @@ func ClearCache() {
 	cache = make(map[string]bool)
 }
 
-//will give all found folders to gosmi and load in all modules found in the folders
+// will give all found folders to gosmi and load in all modules found in the folders
 func LoadMibsFromPath(paths []string, log telegraf.Logger, loader MibLoader) error {
 	folders, err := walkPaths(paths, log)
 	if err != nil {
@@ -57,12 +56,18 @@ func LoadMibsFromPath(paths []string, log telegraf.Logger, loader MibLoader) err
 	}
 	for _, path := range folders {
 		loader.appendPath(path)
-		modules, err := ioutil.ReadDir(path)
+		modules, err := os.ReadDir(path)
 		if err != nil {
 			log.Warnf("Can't read directory %v", modules)
+			continue
 		}
 
-		for _, info := range modules {
+		for _, entry := range modules {
+			info, err := entry.Info()
+			if err != nil {
+				log.Warnf("Couldn't get info for %v: %v", entry.Name(), err)
+				continue
+			}
 			if info.Mode()&os.ModeSymlink != 0 {
 				symlink := filepath.Join(path, info.Name())
 				target, err := filepath.EvalSymlinks(symlink)
@@ -89,7 +94,7 @@ func LoadMibsFromPath(paths []string, log telegraf.Logger, loader MibLoader) err
 	return nil
 }
 
-//should walk the paths given and find all folders
+// should walk the paths given and find all folders
 func walkPaths(paths []string, log telegraf.Logger) ([]string, error) {
 	once.Do(gosmi.Init)
 	folders := []string{}

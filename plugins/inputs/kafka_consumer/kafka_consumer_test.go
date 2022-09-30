@@ -136,6 +136,20 @@ func TestInit(t *testing.T) {
 			},
 		},
 		{
+			name: "enabled tls without tls config",
+			plugin: &KafkaConsumer{
+				ReadConfig: kafka.ReadConfig{
+					Config: kafka.Config{
+						EnableTLS: func(b bool) *bool { return &b }(true),
+					},
+				},
+				Log: testutil.Logger{},
+			},
+			check: func(t *testing.T, plugin *KafkaConsumer) {
+				require.True(t, plugin.config.Net.TLS.Enable)
+			},
+		},
+		{
 			name: "default tls with a tls config",
 			plugin: &KafkaConsumer{
 				ReadConfig: kafka.ReadConfig{
@@ -271,8 +285,12 @@ func (c *FakeConsumerGroupClaim) Messages() <-chan *sarama.ConsumerMessage {
 
 func TestConsumerGroupHandler_Lifecycle(t *testing.T) {
 	acc := &testutil.Accumulator{}
-	parser := value.NewValueParser("cpu", "int", "", nil)
-	cg := NewConsumerGroupHandler(acc, 1, parser, testutil.Logger{})
+	parser := value.Parser{
+		MetricName: "cpu",
+		DataType:   "int",
+	}
+	require.NoError(t, parser.Init())
+	cg := NewConsumerGroupHandler(acc, 1, &parser, testutil.Logger{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -292,8 +310,7 @@ func TestConsumerGroupHandler_Lifecycle(t *testing.T) {
 	// err = cg.ConsumeClaim(session, &claim)
 	//require.NoError(t, err)
 	// So stick with the line below for now.
-	//nolint:errcheck
-	cg.ConsumeClaim(session, &claim)
+	_ = cg.ConsumeClaim(session, &claim)
 
 	err = cg.Cleanup(session)
 	require.NoError(t, err)
@@ -301,8 +318,12 @@ func TestConsumerGroupHandler_Lifecycle(t *testing.T) {
 
 func TestConsumerGroupHandler_ConsumeClaim(t *testing.T) {
 	acc := &testutil.Accumulator{}
-	parser := value.NewValueParser("cpu", "int", "", nil)
-	cg := NewConsumerGroupHandler(acc, 1, parser, testutil.Logger{})
+	parser := value.Parser{
+		MetricName: "cpu",
+		DataType:   "int",
+	}
+	require.NoError(t, parser.Init())
+	cg := NewConsumerGroupHandler(acc, 1, &parser, testutil.Logger{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -415,8 +436,12 @@ func TestConsumerGroupHandler_Handle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			acc := &testutil.Accumulator{}
-			parser := value.NewValueParser("cpu", "int", "", nil)
-			cg := NewConsumerGroupHandler(acc, 1, parser, testutil.Logger{})
+			parser := value.Parser{
+				MetricName: "cpu",
+				DataType:   "int",
+			}
+			require.NoError(t, parser.Init())
+			cg := NewConsumerGroupHandler(acc, 1, &parser, testutil.Logger{})
 			cg.MaxMessageLen = tt.maxMessageLen
 			cg.TopicTag = tt.topicTag
 

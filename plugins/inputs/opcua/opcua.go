@@ -21,12 +21,12 @@ import (
 	"github.com/influxdata/telegraf/selfstat"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type OpcuaWorkarounds struct {
 	AdditionalValidStatusCodes []string `toml:"additional_valid_status_codes"`
+	UseUnregisteredReads       bool     `toml:"use_unregistered_reads"`
 }
 
 // OpcUA type
@@ -205,7 +205,7 @@ func tagsSliceToMap(tags [][]string) (map[string]string, error) {
 	return m, nil
 }
 
-//InitNodes Method on OpcUA
+// InitNodes Method on OpcUA
 func (o *OpcUA) InitNodes() error {
 	for _, node := range o.RootNodes {
 		o.nodes = append(o.nodes, Node{
@@ -295,7 +295,7 @@ func newMP(n *Node) metricParts {
 
 func (o *OpcUA) validateOPCTags() error {
 	nameEncountered := map[metricParts]struct{}{}
-	for _, node := range o.nodes {
+	for i, node := range o.nodes {
 		mp := newMP(&node)
 		//check empty name
 		if node.tag.FieldName == "" {
@@ -312,16 +312,20 @@ func (o *OpcUA) validateOPCTags() error {
 
 		//search identifier type
 		switch node.tag.IdentifierType {
-		case "s", "i", "g", "b":
+		case "i":
+			if _, err := strconv.Atoi(node.tag.Identifier); err != nil {
+				return fmt.Errorf("identifier type '%s' does not match the type of identifier '%s'", node.tag.IdentifierType, node.tag.Identifier)
+			}
+		case "s", "g", "b":
 			// Valid identifier type - do nothing.
 		default:
 			return fmt.Errorf("invalid identifier type '%s' in '%s'", node.tag.IdentifierType, node.tag.FieldName)
 		}
 
-		node.idStr = BuildNodeID(node.tag)
+		o.nodes[i].idStr = BuildNodeID(node.tag)
 
 		//parse NodeIds and NodeIds errors
-		nid, niderr := ua.ParseNodeID(node.idStr)
+		nid, niderr := ua.ParseNodeID(o.nodes[i].idStr)
 		// build NodeIds and Errors
 		o.nodeIDs = append(o.nodeIDs, nid)
 		o.nodeIDerror = append(o.nodeIDerror, niderr)
@@ -362,17 +366,31 @@ func Connect(o *OpcUA) error {
 			return fmt.Errorf("error in Client Connection: %s", err)
 		}
 
-		regResp, err := o.client.RegisterNodes(&ua.RegisterNodesRequest{
-			NodesToRegister: o.nodeIDs,
-		})
-		if err != nil {
-			return fmt.Errorf("registerNodes failed: %v", err)
-		}
+		if !o.Workarounds.UseUnregisteredReads {
+			regResp, err := o.client.RegisterNodes(&ua.RegisterNodesRequest{
+				NodesToRegister: o.nodeIDs,
+			})
+			if err != nil {
+				return fmt.Errorf("registerNodes failed: %v", err)
+			}
 
-		o.req = &ua.ReadRequest{
-			MaxAge:             2000,
-			NodesToRead:        readvalues(regResp.RegisteredNodeIDs),
-			TimestampsToReturn: ua.TimestampsToReturnBoth,
+			o.req = &ua.ReadRequest{
+				MaxAge:             2000,
+				TimestampsToReturn: ua.TimestampsToReturnBoth,
+				NodesToRead:        readvalues(regResp.RegisteredNodeIDs),
+			}
+		} else {
+			var nodesToRead []*ua.ReadValueID
+
+			for _, nid := range o.nodeIDs {
+				nodesToRead = append(nodesToRead, &ua.ReadValueID{NodeID: nid})
+			}
+
+			o.req = &ua.ReadRequest{
+				MaxAge:             2000,
+				TimestampsToReturn: ua.TimestampsToReturnBoth,
+				NodesToRead:        nodesToRead,
+			}
 		}
 
 		err = o.getData()
@@ -435,7 +453,7 @@ func (o *OpcUA) getData() error {
 	resp, err := o.client.Read(o.req)
 	if err != nil {
 		o.ReadError.Incr(1)
-		return fmt.Errorf("RegisterNodes Read failed: %v", err)
+		return fmt.Errorf("Read failed: %w", err)
 	}
 	o.ReadSuccess.Incr(1)
 	for i, d := range resp.Results {

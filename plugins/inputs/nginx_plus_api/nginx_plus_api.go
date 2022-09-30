@@ -15,7 +15,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -43,8 +42,8 @@ const (
 	httpLocationZonesPath = "http/location_zones"
 	httpUpstreamsPath     = "http/upstreams"
 	httpCachesPath        = "http/caches"
-
-	resolverZonesPath = "resolvers"
+	httpLimitReqsPath     = "http/limit_reqs"
+	resolverZonesPath     = "resolvers"
 
 	streamServerZonesPath = "stream/server_zones"
 	streamUpstreamsPath   = "stream/upstreams"

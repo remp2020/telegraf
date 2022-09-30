@@ -3,7 +3,7 @@
 
 ![tiger](assets/TelegrafTiger.png "tiger")
 
-[![Contribute](https://img.shields.io/badge/Contribute%20To%20Telegraf-orange.svg?logo=influx&style=for-the-badge)](https://github.com/influxdata/telegraf/blob/master/CONTRIBUTING.md) [![Slack Status](https://img.shields.io/badge/slack-join_chat-white.svg?logo=slack&style=for-the-badge)](https://www.influxdata.com/slack) [![Circle CI](https://circleci.com/gh/influxdata/telegraf.svg?style=svg)](https://circleci.com/gh/influxdata/telegraf) [![GoDoc](https://godoc.org/github.com/influxdata/telegraf?status.svg)](https://godoc.org/github.com/influxdata/telegraf) [![Docker pulls](https://img.shields.io/docker/pulls/library/telegraf.svg)](https://hub.docker.com/_/telegraf/)
+[![Contribute](https://img.shields.io/badge/Contribute%20To%20Telegraf-orange.svg?logo=influx&style=for-the-badge)](https://github.com/influxdata/telegraf/blob/master/CONTRIBUTING.md) [![Slack Status](https://img.shields.io/badge/slack-join_chat-white.svg?logo=slack&style=for-the-badge)](https://www.influxdata.com/slack) [![Circle CI](https://circleci.com/gh/influxdata/telegraf.svg?style=svg)](https://circleci.com/gh/influxdata/telegraf) [![GoDoc](https://godoc.org/github.com/influxdata/telegraf?status.svg)](https://godoc.org/github.com/influxdata/telegraf) [![Docker pulls](https://img.shields.io/docker/pulls/library/telegraf.svg)](https://hub.docker.com/_/telegraf/) [![Go Report Card](https://goreportcard.com/badge/github.com/influxdata/telegraf)](https://goreportcard.com/report/github.com/influxdata/telegraf)
 
 Telegraf is an agent for collecting, processing, aggregating, and writing metrics. Based on a
 plugin system to enable developers in the community to easily add support for additional
@@ -79,6 +79,9 @@ Telegraf requires Go version 1.14 or newer, the Makefile requires GNU make.
 Telegraf requires Go version 1.17 or newer, the Makefile requires GNU make.
 Telegraf requires Go version 1.18 or newer, the Makefile requires GNU make.
 
+On Windows, the makefile requires the use of a bash terminal to support all makefile targets.
+An easy option to get bash for windows is using the version that comes with [git for windows](https://gitforwindows.org/).
+
 1. [Install Go](https://golang.org/doc/install) >=1.18 (1.18.0 recommended)
 2. Clone the Telegraf repository:
 
@@ -86,11 +89,11 @@ Telegraf requires Go version 1.18 or newer, the Makefile requires GNU make.
    git clone https://github.com/influxdata/telegraf.git
    ```
 
-3. Run `make` from the source directory
+3. Run `make build` from the source directory
 
    ```shell
    cd telegraf
-   make
+   make build
    ```
 
 ### Nightly Builds
@@ -125,7 +128,7 @@ telegraf config > telegraf.conf
 ### Generate config with only cpu input & influxdb output plugins defined
 
 ```shell
-telegraf --section-filter agent:inputs:outputs --input-filter cpu --output-filter influxdb config
+telegraf config --section-filter agent:inputs:outputs --input-filter cpu --output-filter influxdb
 ```
 
 ### Run a single telegraf collection, outputting metrics to stdout

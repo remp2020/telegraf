@@ -43,6 +43,12 @@ All MongoDB server versions from 2.6 and higher are supported.
   # tls_key = "/etc/telegraf/key.pem"
   ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
+
+  ## Specifies plugin behavior regarding disconnected servers
+  ## Available choices :
+  ##   - error: telegraf will return an error on startup if one the servers is unreachable
+  ##   - skip: telegraf will skip unreachable servers on both startup and gather
+  # disconnected_servers_behavior = "error"
 ```
 
 ### Permissions
@@ -159,6 +165,8 @@ by running Telegraf with the `--debug` argument.
     - repl_updates (integer)
     - repl_oplog_window_sec (integer)
     - repl_state (integer)
+    - repl_member_health (integer)
+    - repl_health_avg (float)
     - resident_megabytes (integer)
     - state (string)
     - storage_freelist_search_bucket_exhausted (integer)
