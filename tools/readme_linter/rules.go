@@ -13,6 +13,17 @@ func firstSection(t *T, root ast.Node) error {
 	var n ast.Node
 	n = root.FirstChild()
 
+	// Ignore HTML comments such as linter ignore sections
+	for {
+		if n == nil {
+			break
+		}
+		if _, ok := n.(*ast.HTMLBlock); !ok {
+			break
+		}
+		n = n.NextSibling()
+	}
+
 	t.assertKind(ast.KindHeading, n)
 	t.assertHeadingLevel(1, n)
 	t.assertFirstChildRegexp(` Plugin$`, n)
@@ -52,9 +63,9 @@ func requiredSections(t *T, root ast.Node, headings []string) error {
 		if child == nil {
 			continue
 		}
-		title := string(child.Text(t.markdown))
+		title := strings.TrimSpace(string(child.Text(t.markdown)))
 		if headingsSet.has(title) && h.Level != expectedLevel {
-			t.assertNodef(n, "has required section '%s' but wrong heading level. Expected level %d, found %d",
+			t.assertNodef(n, "has required section %q but wrong heading level. Expected level %d, found %d",
 				title, expectedLevel, h.Level)
 		}
 
@@ -63,7 +74,7 @@ func requiredSections(t *T, root ast.Node, headings []string) error {
 
 	headingsSet.forEach(func(title string) {
 		if _, exists := titleCounts[title]; !exists {
-			t.assertf("missing required section '%s'", title)
+			t.assertf("missing required section %q", title)
 		}
 	})
 
@@ -94,8 +105,6 @@ func noLongLinesInParagraphs(threshold int) func(*T, ast.Node) error {
 			for _, seg := range segs.Sliced(0, segs.Len()) {
 				line := t.line(seg.Start)
 				paraLines = append(paraLines, line)
-				// t.printFileLine(line)
-				// fmt.Printf("paragraph line\n")
 			}
 		}
 
@@ -106,8 +115,6 @@ func noLongLinesInParagraphs(threshold int) func(*T, ast.Node) error {
 			length := cur - last - 1 // -1 to exclude the newline
 			if length > threshold {
 				longLines = append(longLines, i)
-				// t.printFileLine(i)
-				// fmt.Printf("long line\n")
 			}
 			last = cur
 		}
@@ -157,7 +164,7 @@ func configSection(t *T, root ast.Node) error {
 	}
 
 	if config == nil {
-		t.assertf("missing section '%s'", expectedTitle)
+		t.assertf("missing required section %q", expectedTitle)
 		return nil
 	}
 

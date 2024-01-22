@@ -14,7 +14,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -97,7 +96,7 @@ func (r *Fireboard) Gather(acc telegraf.Accumulator) error {
 	// Decode the response JSON into a new stats struct
 	var stats []fireboardStats
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
-		return fmt.Errorf("unable to decode fireboard response: %s", err)
+		return fmt.Errorf("unable to decode fireboard response: %w", err)
 	}
 	// Range over all devices, gathering stats. Returns early in case of any error.
 	for _, s := range stats {

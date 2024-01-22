@@ -8,6 +8,15 @@ See the [Tomcat documentation][1] for details of these statistics.
 
 [1]: https://tomcat.apache.org/tomcat-9.0-doc/manager-howto.html#Server_Status
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -35,40 +44,39 @@ See the [Tomcat documentation][1] for details of these statistics.
 
 - tomcat_jvm_memory
   - free
-  - total
   - max
+  - total
 - tomcat_jvm_memorypool
-  - max_threads
-  - current_thread_count
-  - current_threads_busy
-  - max_time
-  - processing_time
-  - request_count
-  - error_count
-  - bytes_received
-  - bytes_sent
+  - committed
+  - init
+  - max
+  - used
 - tomcat_connector
-  - max_threads
-  - current_thread_count
+  - bytes_received
+  - bytes_sent
   - current_thread_busy
+  - current_thread_count
+  - error_count
+  - max_threads
   - max_time
   - processing_time
   - request_count
-  - error_count
-  - bytes_received
-  - bytes_sent
 
 ### Tags
 
+- tomcat_jvm_memory
+  - source
 - tomcat_jvm_memorypool has the following tags:
   - name
   - type
+  - source
 - tomcat_connector
   - name
+  - source
 
 ## Example Output
 
-```shell
+```text
 tomcat_jvm_memory,host=N8-MBP free=20014352i,max=127729664i,total=41459712i 1474663361000000000
 tomcat_jvm_memorypool,host=N8-MBP,name=Eden\ Space,type=Heap\ memory committed=11534336i,init=2228224i,max=35258368i,used=1941200i 1474663361000000000
 tomcat_jvm_memorypool,host=N8-MBP,name=Survivor\ Space,type=Heap\ memory committed=1376256i,init=262144i,max=4390912i,used=1376248i 1474663361000000000

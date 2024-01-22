@@ -50,14 +50,14 @@ func (s *Statsd) parseEventMessage(now time.Time, message string, defaultHostnam
 
 	titleLen, err := strconv.ParseInt(rawLen[0], 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid message format, could not parse title.length: '%s'", rawLen[0])
+		return fmt.Errorf("invalid message format, could not parse title.length: %q", rawLen[0])
 	}
 	if len(rawLen[1]) < 1 {
-		return fmt.Errorf("invalid message format, could not parse text.length: '%s'", rawLen[0])
+		return fmt.Errorf("invalid message format, could not parse text.length: %q", rawLen[0])
 	}
 	textLen, err := strconv.ParseInt(rawLen[1][:len(rawLen[1])-1], 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid message format, could not parse text.length: '%s'", rawLen[0])
+		return fmt.Errorf("invalid message format, could not parse text.length: %q", rawLen[0])
 	}
 	if titleLen+textLen+1 > int64(len(message)) {
 		return fmt.Errorf("invalid message format, title.length and text.length exceed total message length")
@@ -121,13 +121,13 @@ func (s *Statsd) parseEventMessage(now time.Time, message string, defaultHostnam
 			fields["source_type_name"] = rawMetadataFields[i][2:]
 		default:
 			if rawMetadataFields[i][0] != '#' {
-				return fmt.Errorf("unknown metadata type: '%s'", rawMetadataFields[i])
+				return fmt.Errorf("unknown metadata type: %q", rawMetadataFields[i])
 			}
 			parseDataDogTags(tags, rawMetadataFields[i][1:])
 		}
 	}
 	// Use source tag because host is reserved tag key in Telegraf.
-	// In datadog the host tag and `h:` are interchangable, so we have to chech for the host tag.
+	// In datadog the host tag and `h:` are interchangeable, so we have to check for the host tag.
 	if host, ok := tags["host"]; ok {
 		delete(tags, "host")
 		tags["source"] = host

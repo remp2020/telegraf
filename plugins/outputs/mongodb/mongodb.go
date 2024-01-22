@@ -21,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -29,12 +28,12 @@ func (s *MongoDB) getCollections(ctx context.Context) error {
 	s.collections = map[string]bson.M{}
 	collections, err := s.client.Database(s.MetricDatabase).ListCollections(ctx, bson.M{})
 	if err != nil {
-		return fmt.Errorf("unable to execute ListCollections: %v", err)
+		return fmt.Errorf("unable to execute ListCollections: %w", err)
 	}
 	for collections.Next(ctx) {
 		var collection bson.M
-		if err := collections.Decode(&collection); err != nil {
-			return fmt.Errorf("unable to decode ListCollections: %v", err)
+		if err = collections.Decode(&collection); err != nil {
+			return fmt.Errorf("unable to decode ListCollections: %w", err)
 		}
 		name, ok := collection["name"].(string)
 		if !ok {
@@ -56,8 +55,8 @@ type MongoDB struct {
 	AuthenticationType  string          `toml:"authentication"`
 	MetricDatabase      string          `toml:"database"`
 	MetricGranularity   string          `toml:"granularity"`
-	Username            string          `toml:"username"`
-	Password            string          `toml:"password"`
+	Username            config.Secret   `toml:"username"`
+	Password            config.Secret   `toml:"password"`
 	ServerSelectTimeout config.Duration `toml:"timeout"`
 	TTL                 config.Duration `toml:"ttl"`
 	Log                 telegraf.Logger `toml:"-"`
@@ -96,17 +95,28 @@ func (s *MongoDB) Init() error {
 
 	switch s.AuthenticationType {
 	case "SCRAM":
-		if s.Username == "" {
+		if s.Username.Empty() {
 			return fmt.Errorf("SCRAM authentication must specify a username")
 		}
-		if s.Password == "" {
+		if s.Password.Empty() {
 			return fmt.Errorf("SCRAM authentication must specify a password")
+		}
+		username, err := s.Username.Get()
+		if err != nil {
+			return fmt.Errorf("getting username failed: %w", err)
+		}
+		password, err := s.Password.Get()
+		if err != nil {
+			username.Destroy()
+			return fmt.Errorf("getting password failed: %w", err)
 		}
 		credential := options.Credential{
 			AuthMechanism: "SCRAM-SHA-256",
-			Username:      s.Username,
-			Password:      s.Password,
+			Username:      username.String(),
+			Password:      password.String(),
 		}
+		username.Destroy()
+		password.Destroy()
 		s.clientOptions.SetAuth(credential)
 	case "X509":
 		//format connection string to include tls/x509 options
@@ -159,7 +169,7 @@ func (s *MongoDB) createTimeSeriesCollection(databaseCollection string) error {
 		cco.SetTimeSeriesOptions(tso)
 		err := s.client.Database(s.MetricDatabase).CreateCollection(ctx, databaseCollection, cco)
 		if err != nil {
-			return fmt.Errorf("unable to create time series collection: %v", err)
+			return fmt.Errorf("unable to create time series collection: %w", err)
 		}
 		s.collections[databaseCollection] = bson.M{}
 	}
@@ -170,11 +180,11 @@ func (s *MongoDB) Connect() error {
 	ctx := context.Background()
 	client, err := mongo.Connect(ctx, s.clientOptions)
 	if err != nil {
-		return fmt.Errorf("unable to connect: %v", err)
+		return fmt.Errorf("unable to connect: %w", err)
 	}
 	s.client = client
-	if err := s.getCollections(ctx); err != nil {
-		return fmt.Errorf("unable to get collections from specified metric database: %v", err)
+	if err = s.getCollections(ctx); err != nil {
+		return fmt.Errorf("unable to get collections from specified metric database: %w", err)
 	}
 	return nil
 }
@@ -196,8 +206,10 @@ func marshalMetric(metric telegraf.Metric) bson.D {
 	for k, v := range metric.Tags() {
 		tags = append(tags, primitive.E{Key: k, Value: v})
 	}
-	bdoc = append(bdoc, primitive.E{Key: "tags", Value: tags})
-	bdoc = append(bdoc, primitive.E{Key: "timestamp", Value: metric.Time()})
+	bdoc = append(bdoc,
+		primitive.E{Key: "tags", Value: tags},
+		primitive.E{Key: "timestamp", Value: metric.Time()},
+	)
 	return bdoc
 }
 

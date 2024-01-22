@@ -12,6 +12,7 @@ supplied by SQL Server.
 - Azure SQL Database (Single)
 - Azure SQL Managed Instance
 - Azure SQL Elastic Pool
+- Azure Arc-enabled SQL Managed Instance
 
 ## Additional Setup
 
@@ -100,6 +101,32 @@ config file to use windows authentication.
   servers = ["Server=192.168.1.10;Port=1433;app name=telegraf;log=1;",]
 ```
 
+To set up a configurable timeout, add timeout to the connections string
+in your config file.
+
+```toml
+servers = [
+  "Server=192.168.1.10;Port=1433;User Id=<user>;Password=<pw>;app name=telegraf;log=1;dial timeout=30",
+]
+```
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `servers` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -109,12 +136,17 @@ config file to use windows authentication.
   ## All connection parameters are optional.
   ## By default, the host is localhost, listening on default port, TCP 1433.
   ##   for Windows, the user is the currently running AD user (SSO).
-  ##   See https://github.com/denisenkom/go-mssqldb for detailed connection
+  ##   See https://github.com/microsoft/go-mssqldb for detailed connection
   ##   parameters, in particular, tls connections can be created like so:
   ##   "encrypt=true;certificate=<cert>;hostNameInCertificate=<SqlServer host fqdn>"
   servers = [
     "Server=192.168.1.10;Port=1433;User Id=<user>;Password=<pw>;app name=telegraf;log=1;",
   ]
+
+  ## Timeout for query execution operation
+  ## Note that the timeout for queries is per query not per gather.
+  ## 0 value means no timeout
+  # query_timeout = "0s"
 
   ## Authentication method
   ## valid methods: "connection_string", "AAD"
@@ -123,7 +155,6 @@ config file to use windows authentication.
   ## "database_type" enables a specific set of queries depending on the database type. If specified, it replaces azuredb = true/false and query_version = 2
   ## In the config file, the sql server plugin section should be repeated each with a set of servers for a specific database_type.
   ## Possible values for database_type are - "SQLServer" or "AzureSQLDB" or "AzureSQLManagedInstance" or "AzureSQLPool"
-
   database_type = "SQLServer"
 
   ## A list of queries to include. If not specified, all the below listed queries are used.
@@ -149,6 +180,10 @@ config file to use windows authentication.
   ## AzureSQLPoolResourceStats, AzureSQLPoolResourceGovernance, AzureSQLPoolDatabaseIO, AzureSQLPoolWaitStats,
   ## AzureSQLPoolMemoryClerks, AzureSQLPoolPerformanceCounters, AzureSQLPoolSchedulers
 
+  ## Queries enabled by default for database_type = "AzureArcSQLManagedInstance" are -
+  ## AzureSQLMIDatabaseIO, AzureSQLMIServerProperties, AzureSQLMIOsWaitstats,
+  ## AzureSQLMIMemoryClerks, AzureSQLMIPerformanceCounters, AzureSQLMIRequests, AzureSQLMISchedulers
+
   ## Following are old config settings
   ## You may use them only if you are using the earlier flavor of queries, however it is recommended to use
   ## the new mechanism of identifying the database_type there by use it's corresponding queries
@@ -168,7 +203,7 @@ config file to use windows authentication.
   ## This setting/metric is optional and is disabled by default.
   # health_metric = false
 
-  ## Possible queries accross different versions of the collectors
+  ## Possible queries across different versions of the collectors
   ## Queries enabled by default for specific Database Type
 
   ## database_type =  AzureSQLDB  by default collects the following queries
@@ -256,7 +291,7 @@ in a connection string.
 To enable support for AAD authentication, we leverage the existing AAD
 authentication support.
 
-- Please see [SQL Server driver for Go](https://github.com/denisenkom/go-mssqldb#azure-active-directory-authentication---preview)
+- Please see [SQL Server driver for Go](https://github.com/microsoft/go-mssqldb#azure-active-directory-authentication)
 
 ### How to use AAD Auth with MSI
 
@@ -328,11 +363,11 @@ The new (version 2) metrics provide:
   - *Memory*: PLE, Page reads/sec, Page writes/sec, + more
   - *TempDB*: Free space, Version store usage, Active temp tables, temp table creation rate, + more
   - *Resource Governor*: CPU Usage, Requests/sec, Queued Requests, and Blocked tasks per workload group + more
-- *Server properties*: Number of databases in all possible states (online, offline, suspect, etc.), cpu count, physical memory, SQL Server service uptime, SQL Server SPID, and SQL Server version. In the case of Azure SQL relevant properties such as Tier, #Vcores, Memory etc.
+- *Server properties*: Number of databases in all possible states (online, offline, suspect, etc.), cpu count, total physical memory, available physical memory, SQL Server service uptime, SQL Server SPID, and SQL Server version. In the case of Azure SQL relevant properties such as Tier, #Vcores, Memory etc.
 - *Wait stats*: Wait time in ms, number of waiting tasks, resource wait time, signal wait time, max wait time in ms, wait type, and wait category. The waits are categorized using the same categories used in Query Store.
 - *Schedulers* - This captures `sys.dm_os_schedulers`.
 - *SqlRequests* - This captures a snapshot of `sys.dm_exec_requests` and `sys.dm_exec_sessions` that gives you running requests as well as wait types and
-  blocking sessions.
+  blocking sessions. Telegraf's monitoring request is omitted unless it is a heading blocker. Also includes sleeping sessions with open transactions.
 - *VolumeSpace* - uses `sys.dm_os_volume_stats` to get total, used and occupied space on every disk that contains a data or log file. (Note that even if enabled it won't get any data from Azure SQL Database or SQL Managed Instance). It is pointless to run this with high frequency (ie: every 10s), but it won't cause any problem.
 - *Cpu* - uses the buffer ring (`sys.dm_os_ring_buffers`) to get CPU data, the table is updated once per minute. (Note that even if enabled it won't get any data from Azure SQL Database or SQL Managed Instance).
 
@@ -362,7 +397,7 @@ to test,differences in DMVs:
 - *AzureSQLDBServerProperties*: Relevant Azure SQL relevant properties from  such as Tier, #Vcores, Memory etc, storage, etc.
 - *AzureSQLDBWaitstats*: Wait time in ms from `sys.dm_db_wait_stats`, number of waiting tasks, resource wait time, signal wait time, max wait time in ms, wait type, and wait category. The waits are categorized using the same categories used in Query Store. These waits are collected only as of the end of the a statement. and for a specific database only.
 - *AzureSQLOsWaitstats*: Wait time in ms from `sys.dm_os_wait_stats`, number of waiting tasks, resource wait time, signal wait time, max wait time in ms, wait type, and wait category. The waits are categorized using the same categories used in Query Store. These waits are collected as they occur and instance wide
-- *AzureSQLDBRequests: Requests which are blocked or have a wait type from `sys.dm_exec_sessions` and `sys.dm_exec_requests`
+- *AzureSQLDBRequests*: Requests which are blocked or have a wait type from `sys.dm_exec_sessions` and `sys.dm_exec_requests`. Telegraf's monitoring request is omitted unless it is a heading blocker
 - *AzureSQLDBSchedulers* - This captures `sys.dm_os_schedulers` snapshots.
 
 ### database_type = "AzureSQLManagedInstance"
@@ -377,7 +412,7 @@ in DMVs:
 - *AzureSQLMIPerformanceCounters*: A select list of performance counters from `sys.dm_os_performance_counters` including cloud specific counters for SQL Hyperscale.
 - *AzureSQLMIServerProperties*: Relevant Azure SQL relevant properties such as Tier, #Vcores, Memory etc, storage, etc.
 - *AzureSQLMIOsWaitstats*: Wait time in ms from `sys.dm_os_wait_stats`, number of waiting tasks, resource wait time, signal wait time, max wait time in ms, wait type, and wait category. The waits are categorized using the same categories used in Query Store. These waits are collected as they occur and instance wide
-- *AzureSQLMIRequests*: Requests which are blocked or have a wait type from `sys.dm_exec_sessions` and `sys.dm_exec_requests`
+- *AzureSQLMIRequests*: Requests which are blocked or have a wait type from `sys.dm_exec_sessions` and `sys.dm_exec_requests`. Telegraf's monitoring request is omitted unless it is a heading blocker
 - *AzureSQLMISchedulers*: This captures `sys.dm_os_schedulers` snapshots.
 
 ### database_type = "AzureSQLPool"
@@ -405,7 +440,7 @@ ensure to check additional setup section in this documentation.
   - *Memory*: PLE, Page reads/sec, Page writes/sec, + more
   - *TempDB*: Free space, Version store usage, Active temp tables, temp table creation rate, + more
   - *Resource Governor*: CPU Usage, Requests/sec, Queued Requests, and Blocked tasks per workload group + more
-- *SQLServerProperties*: Number of databases in all possible states (online, offline, suspect, etc.), cpu count, physical memory, SQL Server service uptime, SQL Server SPID and SQL Server version. In the case of Azure SQL relevant properties such as Tier, #Vcores, Memory etc.
+- *SQLServerProperties*: Number of databases in all possible states (online, offline, suspect, etc.), cpu count, total physical memory, available physical memory, SQL Server service uptime, SQL Server SPID and SQL Server version. In the case of Azure SQL relevant properties such as Tier, #Vcores, Memory etc.
 - *SQLServerWaitStatsCategorized*: Wait time in ms, number of waiting tasks, resource wait time, signal wait time, max wait time in ms, wait type, and wait category. The waits are categorized using the same categories used in Query Store.
 - *SQLServerSchedulers*: This captures `sys.dm_os_schedulers`.
 - *SQLServerRequests*: This captures a snapshot of `sys.dm_exec_requests` and `sys.dm_exec_sessions` that gives you running requests as well as wait types and
@@ -504,7 +539,7 @@ gathered.
 
 ## Example Output
 
-```shell
+```text
 sqlserver_cpu_other_process_cpu{host="servername",measurement_db_type="SQLServer",sql_instance="SERVERNAME:INST"} 9
 sqlserver_performance{counter="Log File(s) Size (KB)",counter_type="65792",host="servername",instance="instance_name",measurement_db_type="SQLServer",object="MSSQL$INSTANCE_NAME:Databases",sql_instance="SERVERNAME:INSTANCE_NAME"} 1.048568e+06
 ```

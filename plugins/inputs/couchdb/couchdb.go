@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -105,7 +104,7 @@ func (c *CouchDB) Gather(accumulator telegraf.Accumulator) error {
 		go func(host string) {
 			defer wg.Done()
 			if err := c.fetchAndInsertData(accumulator, host); err != nil {
-				accumulator.AddError(fmt.Errorf("[host=%s]: %s", host, err))
+				accumulator.AddError(fmt.Errorf("[host=%s]: %w", host, err))
 			}
 		}(u)
 	}

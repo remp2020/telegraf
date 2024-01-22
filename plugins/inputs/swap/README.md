@@ -1,14 +1,24 @@
 # Swap Input Plugin
 
-The swap plugin collects system swap metrics.
+The swap plugin collects system swap metrics. This plugin ONLY supports Linux.
 
 For more information on what swap memory is, read [All about Linux swap
 space](https://www.linux.com/news/all-about-linux-swap-space).
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
 ## Configuration
 
 ```toml @sample.conf
 # Read metrics about swap memory usage
+# This plugin ONLY supports Linux
 [[inputs.swap]]
   # no configuration
 ```
@@ -26,6 +36,6 @@ space](https://www.linux.com/news/all-about-linux-swap-space).
 
 ## Example Output
 
-```shell
+```text
 swap total=20855394304i,used_percent=45.43883523785713,used=9476448256i,free=1715331072i 1511894782000000000
 ```

@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/influxdata/telegraf/plugins/serializers"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/influxdata/telegraf/plugins/serializers/influx"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestConnectAndWriteIntegration(t *testing.T) {
@@ -23,17 +24,16 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 	}
 	err := container.Start()
 	require.NoError(t, err, "failed to start container")
-	defer func() {
-		require.NoError(t, container.Terminate(), "terminating container failed")
-	}()
+	defer container.Terminate()
 
 	server := []string{fmt.Sprintf("nats://%s:%s", container.Address, container.Ports[servicePort])}
-	s, _ := serializers.NewInfluxSerializer()
+	serializer := &influx.Serializer{}
+	require.NoError(t, serializer.Init())
 	n := &NATS{
 		Servers:    server,
 		Name:       "telegraf",
 		Subject:    "telegraf",
-		serializer: s,
+		serializer: serializer,
 	}
 
 	// Verify that we can connect to the NATS daemon

@@ -20,6 +20,15 @@ the remote peer or server (RMS, milliseconds);
 - jitter – Mean deviation (jitter) in the time reported for that remote peer or
 server (RMS of difference of multiple time samples, milliseconds);
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -91,7 +100,7 @@ Please use the solution you see as most appropriate.
 
 ## Example Output
 
-```shell
+```text
 openntpd,remote=194.57.169.1,stratum=2,host=localhost tl=10i,poll=1007i,
 offset=2.295,jitter=3.896,delay=53.766,next=266i,wt=1i 1514454299000000000
 ```

@@ -34,6 +34,15 @@ will be used.
 [2]: https://github.com/aws/aws-sdk-go/wiki/configuring-sdk#shared-credentials-file
 [3]: http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -69,6 +78,19 @@ will be used.
   ## Kinesis StreamName must exist prior to starting telegraf.
   streamname = "StreamName"
 
+  ## Data format to output.
+  ## Each data format has its own unique set of configuration options, read
+  ## more about them here:
+  ## https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_OUTPUT.md
+  data_format = "influx"
+
+  ## debug will show upstream aws messages.
+  debug = false
+
+  ## NOTE: Due to the way TOML is parsed, tables must be at the END of the
+  ## plugin definition, otherwise additional config options are read as part of
+  ## the table
+
   ## The partition key can be calculated using one of several methods:
   ##
   ## Use a static value for all writes:
@@ -90,16 +112,6 @@ will be used.
   #    method = "tag"
   #    key = "host"
   #    default = "mykey"
-
-
-  ## Data format to output.
-  ## Each data format has its own unique set of configuration options, read
-  ## more about them here:
-  ## https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_OUTPUT.md
-  data_format = "influx"
-
-  ## debug will show upstream aws messages.
-  debug = false
 ```
 
 For this output plugin to function correctly the following variables must be

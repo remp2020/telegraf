@@ -5,11 +5,13 @@ parameters which dictate batch size and flush timeout.
 
 Usage as follows:
 
-`./stress_test_write -batch_size=<batch_size> -max_backlog=<max_span_buffer_backlog> -batch_interval=<batch_interval_in_seconds> -span_count<number_of_spans_to_write> -zipkin_host=<zipkin_service_hostname>`
+`./stress_test_write -batch_size=<batch_size> -max_backlog=<max_span_buffer_backlog> -batch_interval=<batch_interval_in_seconds> \
+-span_count<number_of_spans_to_write> -zipkin_host=<zipkin_service_hostname>`
 
 Or with a timer:
 
-`time ./stress_test_write -batch_size=<batch_size> -max_backlog=<max_span_buffer_backlog> -batch_interval=<batch_interval_in_seconds> -span_count<number_of_spans_to_write> -zipkin_host=<zipkin_service_hostname>`
+`time ./stress_test_write -batch_size=<batch_size> -max_backlog=<max_span_buffer_backlog> -batch_interval=<batch_interval_in_seconds> \
+-span_count<number_of_spans_to_write> -zipkin_host=<zipkin_service_hostname>`
 
 However, the flag defaults work just fine for a good write stress test (and are what
 this tool has mainly been tested with), so there shouldn't be much need to
@@ -59,12 +61,12 @@ func main() {
 
 	endpoint, err := zipkin.NewEndpoint("Trivial", "127.0.0.1:0")
 	if err != nil {
-		log.Fatalf("Error: %v\n", err)
+		log.Panicf("Error: %v\n", err)
 	}
 
 	nativeTracer, err := zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(endpoint))
 	if err != nil {
-		log.Fatalf("Error: %v\n", err)
+		log.Panicf("Error: %v\n", err)
 	}
 
 	tracer := zipkinot.Wrap(nativeTracer)

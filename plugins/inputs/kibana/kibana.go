@@ -2,6 +2,7 @@
 package kibana
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -14,11 +15,10 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/plugins/common/tls"
+	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -91,15 +91,18 @@ type Kibana struct {
 	Servers  []string
 	Username string
 	Password string
-	Timeout  config.Duration
-	tls.ClientConfig
+
+	Log telegraf.Logger `toml:"-"`
 
 	client *http.Client
+	httpconfig.HTTPClientConfig
 }
 
 func NewKibana() *Kibana {
 	return &Kibana{
-		Timeout: config.Duration(time.Second * 5),
+		HTTPClientConfig: httpconfig.HTTPClientConfig{
+			Timeout: config.Duration(5 * time.Second),
+		},
 	}
 }
 
@@ -137,7 +140,7 @@ func (k *Kibana) Gather(acc telegraf.Accumulator) error {
 		go func(baseUrl string, acc telegraf.Accumulator) {
 			defer wg.Done()
 			if err := k.gatherKibanaStatus(baseUrl, acc); err != nil {
-				acc.AddError(fmt.Errorf("[url=%s]: %s", baseUrl, err))
+				acc.AddError(fmt.Errorf("[url=%s]: %w", baseUrl, err))
 				return
 			}
 		}(serv, acc)
@@ -148,19 +151,8 @@ func (k *Kibana) Gather(acc telegraf.Accumulator) error {
 }
 
 func (k *Kibana) createHTTPClient() (*http.Client, error) {
-	tlsCfg, err := k.ClientConfig.TLSConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsCfg,
-		},
-		Timeout: time.Duration(k.Timeout),
-	}
-
-	return client, nil
+	ctx := context.Background()
+	return k.HTTPClientConfig.CreateClient(ctx, k.Log)
 }
 
 func (k *Kibana) gatherKibanaStatus(baseURL string, acc telegraf.Accumulator) error {
@@ -219,7 +211,7 @@ func (k *Kibana) gatherKibanaStatus(baseURL string, acc telegraf.Accumulator) er
 func (k *Kibana) gatherJSONData(url string, v interface{}) (host string, err error) {
 	request, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", fmt.Errorf("unable to create new request '%s': %v", url, err)
+		return "", fmt.Errorf("unable to create new request %q: %w", url, err)
 	}
 
 	if (k.Username != "") || (k.Password != "") {
@@ -239,7 +231,7 @@ func (k *Kibana) gatherJSONData(url string, v interface{}) (host string, err err
 		return request.Host, fmt.Errorf("%s returned HTTP status %s: %q", url, response.Status, body)
 	}
 
-	if err = json.NewDecoder(response.Body).Decode(v); err != nil {
+	if err := json.NewDecoder(response.Body).Decode(v); err != nil {
 		return request.Host, err
 	}
 

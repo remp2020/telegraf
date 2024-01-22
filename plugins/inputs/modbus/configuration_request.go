@@ -2,11 +2,14 @@ package modbus
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"hash/maphash"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/models"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample_request.conf
 var sampleConfigPartPerRequest string
 
@@ -14,6 +17,7 @@ type requestFieldDefinition struct {
 	Address     uint16  `toml:"address"`
 	Name        string  `toml:"name"`
 	InputType   string  `toml:"type"`
+	Length      uint16  `toml:"length"`
 	Scale       float64 `toml:"scale"`
 	OutputType  string  `toml:"output"`
 	Measurement string  `toml:"measurement"`
@@ -21,16 +25,20 @@ type requestFieldDefinition struct {
 }
 
 type requestDefinition struct {
-	SlaveID      byte                     `toml:"slave_id"`
-	ByteOrder    string                   `toml:"byte_order"`
-	RegisterType string                   `toml:"register"`
-	Measurement  string                   `toml:"measurement"`
-	Fields       []requestFieldDefinition `toml:"fields"`
-	Tags         map[string]string        `toml:"tags"`
+	SlaveID           byte                     `toml:"slave_id"`
+	ByteOrder         string                   `toml:"byte_order"`
+	RegisterType      string                   `toml:"register"`
+	Measurement       string                   `toml:"measurement"`
+	Optimization      string                   `toml:"optimization"`
+	MaxExtraRegisters uint16                   `toml:"optimization_max_register_fill"`
+	Fields            []requestFieldDefinition `toml:"fields"`
+	Tags              map[string]string        `toml:"tags"`
 }
 
 type ConfigurationPerRequest struct {
-	Requests []requestDefinition `toml:"request"`
+	Requests    []requestDefinition `toml:"request"`
+	workarounds ModbusWorkarounds
+	logger      telegraf.Logger
 }
 
 func (c *ConfigurationPerRequest) SampleConfigPart() string {
@@ -59,19 +67,80 @@ func (c *ConfigurationPerRequest) Check() error {
 		default:
 			return fmt.Errorf("unknown register-type %q", def.RegisterType)
 		}
-
+		// Check for valid optimization
+		switch def.Optimization {
+		case "", "none", "shrink", "rearrange":
+		case "aggressive":
+			models.PrintOptionValueDeprecationNotice(
+				telegraf.Warn,
+				"inputs.modbus",
+				"optimization",
+				"aggressive",
+				telegraf.DeprecationInfo{
+					Since:     "1.28.2",
+					RemovalIn: "1.30.0",
+					Notice:    `use "max_insert" instead`,
+				},
+			)
+		case "max_insert":
+			switch def.RegisterType {
+			case "coil":
+				if def.MaxExtraRegisters <= 0 || def.MaxExtraRegisters > maxQuantityCoils {
+					return fmt.Errorf("optimization_max_register_fill has to be between 1 and %d", maxQuantityCoils)
+				}
+			case "discrete":
+				if def.MaxExtraRegisters <= 0 || def.MaxExtraRegisters > maxQuantityDiscreteInput {
+					return fmt.Errorf("optimization_max_register_fill has to be between 1 and %d", maxQuantityDiscreteInput)
+				}
+			case "holding":
+				if def.MaxExtraRegisters <= 0 || def.MaxExtraRegisters > maxQuantityHoldingRegisters {
+					return fmt.Errorf("optimization_max_register_fill has to be between 1 and %d", maxQuantityHoldingRegisters)
+				}
+			case "input":
+				if def.MaxExtraRegisters <= 0 || def.MaxExtraRegisters > maxQuantityInputRegisters {
+					return fmt.Errorf("optimization_max_register_fill has to be between 1 and %d", maxQuantityInputRegisters)
+				}
+			}
+		default:
+			return fmt.Errorf("unknown optimization %q", def.Optimization)
+		}
 		// Set the default for measurement if required
 		if def.Measurement == "" {
 			def.Measurement = "modbus"
+		}
+
+		// Reject any configuration without fields as it
+		// makes no sense to not define anything but a request.
+		if len(def.Fields) == 0 {
+			return errors.New("found request section without fields")
 		}
 
 		// Check the fields
 		for fidx, f := range def.Fields {
 			// Check the input type for all fields except the bit-field ones.
 			// We later need the type (even for omitted fields) to determine the length.
-			if def.RegisterType == cHoldingRegisters || def.RegisterType == cInputRegisters {
+			if def.RegisterType == "holding" || def.RegisterType == "input" {
 				switch f.InputType {
-				case "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64", "FLOAT32", "FLOAT64":
+				case "":
+				case "INT8L", "INT8H", "INT16", "INT32", "INT64",
+					"UINT8L", "UINT8H", "UINT16", "UINT32", "UINT64",
+					"FLOAT16", "FLOAT32", "FLOAT64":
+					if f.Length != 0 {
+						return fmt.Errorf("length option cannot be used for type %q of field %q", f.InputType, f.Name)
+					}
+					if f.OutputType == "STRING" {
+						return fmt.Errorf("cannot output field %q as string", f.Name)
+					}
+				case "STRING":
+					if f.Length < 1 {
+						return fmt.Errorf("missing length for string field %q", f.Name)
+					}
+					if f.Scale != 0.0 {
+						return fmt.Errorf("scale option cannot be used for string field %q", f.Name)
+					}
+					if f.OutputType != "" && f.OutputType != "STRING" {
+						return fmt.Errorf("invalid output type %q for string field %q", f.OutputType, f.Name)
+					}
 				default:
 					return fmt.Errorf("unknown register data-type %q for field %q", f.InputType, f.Name)
 				}
@@ -87,11 +156,17 @@ func (c *ConfigurationPerRequest) Check() error {
 				return fmt.Errorf("empty field name in request for slave %d", def.SlaveID)
 			}
 
-			// Check fields only relevant for non-bit register types
-			if def.RegisterType == cHoldingRegisters || def.RegisterType == cInputRegisters {
-				// Check output type
+			// Check output type
+			if def.RegisterType == "holding" || def.RegisterType == "input" {
 				switch f.OutputType {
-				case "", "INT64", "UINT64", "FLOAT64":
+				case "", "INT64", "UINT64", "FLOAT64", "STRING":
+				default:
+					return fmt.Errorf("unknown output data-type %q for field %q", f.OutputType, f.Name)
+				}
+			} else {
+				// Bit register types can only be UINT64 or BOOL
+				switch f.OutputType {
+				case "", "UINT16", "BOOL":
 				default:
 					return fmt.Errorf("unknown output data-type %q for field %q", f.OutputType, f.Name)
 				}
@@ -104,10 +179,7 @@ func (c *ConfigurationPerRequest) Check() error {
 			def.Fields[fidx] = f
 
 			// Check for duplicate field definitions
-			id, err := c.fieldID(seed, def.SlaveID, def.RegisterType, def.Measurement, f.Name)
-			if err != nil {
-				return fmt.Errorf("cannot determine field id for %q: %v", f.Name, err)
-			}
+			id := c.fieldID(seed, def, f)
 			if seenFields[id] {
 				return fmt.Errorf("field %q duplicated in measurement %q (slave %d/%q)", f.Name, f.Measurement, def.SlaveID, def.RegisterType)
 			}
@@ -145,23 +217,48 @@ func (c *ConfigurationPerRequest) Process() (map[byte]requestSet, error) {
 			}
 		}
 
+		params := groupingParams{
+			MaxExtraRegisters: def.MaxExtraRegisters,
+			Optimization:      def.Optimization,
+			Tags:              def.Tags,
+			Log:               c.logger,
+		}
 		switch def.RegisterType {
 		case "coil":
-			requests := groupFieldsToRequests(fields, def.Tags, maxQuantityCoils)
+			params.MaxBatchSize = maxQuantityCoils
+			if c.workarounds.OnRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			params.EnforceFromZero = c.workarounds.ReadCoilsStartingAtZero
+			requests := groupFieldsToRequests(fields, params)
 			set.coil = append(set.coil, requests...)
 		case "discrete":
-			requests := groupFieldsToRequests(fields, def.Tags, maxQuantityDiscreteInput)
+			params.MaxBatchSize = maxQuantityDiscreteInput
+			if c.workarounds.OnRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			requests := groupFieldsToRequests(fields, params)
 			set.discrete = append(set.discrete, requests...)
 		case "holding":
-			requests := groupFieldsToRequests(fields, def.Tags, maxQuantityHoldingRegisters)
+			params.MaxBatchSize = maxQuantityHoldingRegisters
+			if c.workarounds.OnRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			requests := groupFieldsToRequests(fields, params)
 			set.holding = append(set.holding, requests...)
 		case "input":
-			requests := groupFieldsToRequests(fields, def.Tags, maxQuantityInputRegisters)
+			params.MaxBatchSize = maxQuantityInputRegisters
+			if c.workarounds.OnRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			requests := groupFieldsToRequests(fields, params)
 			set.input = append(set.input, requests...)
 		default:
 			return nil, fmt.Errorf("unknown register type %q", def.RegisterType)
 		}
-		result[def.SlaveID] = set
+		if !set.Empty() {
+			result[def.SlaveID] = set
+		}
 	}
 
 	return result, nil
@@ -173,7 +270,7 @@ func (c *ConfigurationPerRequest) initFields(fieldDefs []requestFieldDefinition,
 	for _, def := range fieldDefs {
 		f, err := c.newFieldFromDefinition(def, typed, byteOrder)
 		if err != nil {
-			return nil, fmt.Errorf("initializing field %q failed: %v", def.Name, err)
+			return nil, fmt.Errorf("initializing field %q failed: %w", def.Name, err)
 		}
 		fields = append(fields, f)
 	}
@@ -186,7 +283,7 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 
 	fieldLength := uint16(1)
 	if typed {
-		if fieldLength, err = c.determineFieldLength(def.InputType); err != nil {
+		if fieldLength, err = c.determineFieldLength(def.InputType, def.Length); err != nil {
 			return field{}, err
 		}
 	}
@@ -198,6 +295,14 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 		address:     def.Address,
 		length:      fieldLength,
 		omit:        def.Omit,
+	}
+
+	// Handle type conversions for coil and discrete registers
+	if !typed {
+		f.converter, err = determineUntypedConverter(def.OutputType)
+		if err != nil {
+			return field{}, err
+		}
 	}
 
 	// No more processing for un-typed (coil and discrete registers) or omitted fields
@@ -215,8 +320,13 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 				return field{}, err
 			}
 		} else {
-			// For scaling cases we always want FLOAT64 by default
-			def.OutputType = "FLOAT64"
+			// For scaling cases we always want FLOAT64 by default except for
+			// string fields
+			if def.InputType != "STRING" {
+				def.OutputType = "FLOAT64"
+			} else {
+				def.OutputType = "STRING"
+			}
 		}
 	}
 
@@ -247,60 +357,59 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 	return f, nil
 }
 
-func (c *ConfigurationPerRequest) fieldID(seed maphash.Seed, slave byte, register, measurement, name string) (uint64, error) {
+func (c *ConfigurationPerRequest) fieldID(seed maphash.Seed, def requestDefinition, field requestFieldDefinition) uint64 {
 	var mh maphash.Hash
 	mh.SetSeed(seed)
 
-	if err := mh.WriteByte(slave); err != nil {
-		return 0, err
-	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
-	if _, err := mh.WriteString(register); err != nil {
-		return 0, err
-	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
-	if _, err := mh.WriteString(measurement); err != nil {
-		return 0, err
-	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
-	if _, err := mh.WriteString(name); err != nil {
-		return 0, err
-	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
+	mh.WriteByte(def.SlaveID)
+	mh.WriteByte(0)
+	mh.WriteString(def.RegisterType)
+	mh.WriteByte(0)
+	mh.WriteString(field.Measurement)
+	mh.WriteByte(0)
+	mh.WriteString(field.Name)
+	mh.WriteByte(0)
 
-	return mh.Sum64(), nil
+	// Tags
+	for k, v := range def.Tags {
+		mh.WriteString(k)
+		mh.WriteByte('=')
+		mh.WriteString(v)
+		mh.WriteByte(':')
+	}
+	mh.WriteByte(0)
+
+	return mh.Sum64()
 }
 
 func (c *ConfigurationPerRequest) determineOutputDatatype(input string) (string, error) {
 	// Handle our special types
 	switch input {
-	case "INT16", "INT32", "INT64":
+	case "INT8L", "INT8H", "INT16", "INT32", "INT64":
 		return "INT64", nil
-	case "UINT16", "UINT32", "UINT64":
+	case "UINT8L", "UINT8H", "UINT16", "UINT32", "UINT64":
 		return "UINT64", nil
-	case "FLOAT32", "FLOAT64":
+	case "FLOAT16", "FLOAT32", "FLOAT64":
 		return "FLOAT64", nil
+	case "STRING":
+		return "STRING", nil
 	}
 	return "unknown", fmt.Errorf("invalid input datatype %q for determining output", input)
 }
 
-func (c *ConfigurationPerRequest) determineFieldLength(input string) (uint16, error) {
+func (c *ConfigurationPerRequest) determineFieldLength(input string, length uint16) (uint16, error) {
 	// Handle our special types
 	switch input {
-	case "INT16", "UINT16":
+	case "INT8L", "INT8H", "UINT8L", "UINT8H":
+		return 1, nil
+	case "INT16", "UINT16", "FLOAT16":
 		return 1, nil
 	case "INT32", "UINT32", "FLOAT32":
 		return 2, nil
 	case "INT64", "UINT64", "FLOAT64":
 		return 4, nil
+	case "STRING":
+		return length, nil
 	}
 	return 0, fmt.Errorf("invalid input datatype %q for determining field length", input)
 }

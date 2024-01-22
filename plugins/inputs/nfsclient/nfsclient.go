@@ -4,6 +4,7 @@ package nfsclient
 import (
 	"bufio"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -15,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -34,7 +34,7 @@ type NFSClient struct {
 func convertToUint64(line []string) ([]uint64, error) {
 	/* A "line" of input data (a pre-split array of strings) is
 	   processed one field at a time.  Each field is converted to
-	   an uint64 value, and appened to an array of return values.
+	   an uint64 value, and appended to an array of return values.
 	   On an error, check for ErrRange, and returns an error
 	   if found.  This situation indicates a pretty major issue in
 	   the /proc/self/mountstats file, and returning faulty data
@@ -42,18 +42,18 @@ func convertToUint64(line []string) ([]uint64, error) {
 	   whatever we got in the first place (probably 0).
 	   Yes, this is ugly. */
 
-	var nline []uint64
-
 	if len(line) < 2 {
-		return nline, nil
+		return nil, nil
 	}
 
+	nline := make([]uint64, 0, len(line[1:]))
 	// Skip the first field; it's handled specially as the "first" variable
 	for _, l := range line[1:] {
 		val, err := strconv.ParseUint(l, 10, 64)
 		if err != nil {
-			if numError, ok := err.(*strconv.NumError); ok {
-				if numError.Err == strconv.ErrRange {
+			var numError *strconv.NumError
+			if errors.As(err, &numError) {
+				if errors.Is(numError.Err, strconv.ErrRange) {
 					return nil, fmt.Errorf("errrange: line:[%v] raw:[%v] -> parsed:[%v]", line, l, val)
 				}
 			}
@@ -296,9 +296,19 @@ func (*NFSClient) SampleConfig() string {
 }
 
 func (n *NFSClient) Gather(acc telegraf.Accumulator) error {
+	if _, err := os.Stat(n.mountstatsPath); os.IsNotExist(err) {
+		return err
+	}
+
+	// Attempt to read the file to see if we have permissions before opening
+	// which can lead to a panic
+	if _, err := os.ReadFile(n.mountstatsPath); err != nil {
+		return err
+	}
+
 	file, err := os.Open(n.mountstatsPath)
 	if err != nil {
-		n.Log.Errorf("Failed opening the [%s] file: %s ", file, err)
+		n.Log.Errorf("Failed opening the %q file: %v ", file.Name(), err)
 		return err
 	}
 	defer file.Close()
@@ -308,12 +318,7 @@ func (n *NFSClient) Gather(acc telegraf.Accumulator) error {
 		return err
 	}
 
-	if err := scanner.Err(); err != nil {
-		n.Log.Errorf("%s", err)
-		return err
-	}
-
-	return nil
+	return scanner.Err()
 }
 
 func (n *NFSClient) Init() error {

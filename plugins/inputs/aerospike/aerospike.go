@@ -18,7 +18,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -339,7 +338,14 @@ func (a *Aerospike) getTTLHistogram(acc telegraf.Accumulator, hostPort string, n
 	return nil
 }
 
-func (a *Aerospike) getObjectSizeLinearHistogram(acc telegraf.Accumulator, hostPort string, namespace string, set string, n *as.Node, infoPolicy *as.InfoPolicy) error {
+func (a *Aerospike) getObjectSizeLinearHistogram(
+	acc telegraf.Accumulator,
+	hostPort string,
+	namespace string,
+	set string,
+	n *as.Node,
+	infoPolicy *as.InfoPolicy,
+) error {
 	stats, err := a.getHistogram(namespace, set, "object-size-linear", n, infoPolicy)
 	if err != nil {
 		return err
@@ -432,10 +438,9 @@ func parseAerospikeValue(key string, v string) interface{} {
 		return parsed
 	} else if parsed, err := strconv.ParseFloat(v, 32); err == nil {
 		return parsed
-	} else {
-		// leave as string
-		return v
 	}
+	// leave as string
+	return v
 }
 
 func createTags(hostPort string, nodeName string, namespace string, set string) map[string]string {

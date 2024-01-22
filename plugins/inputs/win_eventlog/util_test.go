@@ -1,8 +1,8 @@
 //go:build windows
-// +build windows
 
-//revive:disable-next-line:var-naming
 // Package win_eventlog Input plugin to collect Windows Event Log messages
+//
+//revive:disable-next-line:var-naming
 package win_eventlog
 
 import (
@@ -66,7 +66,7 @@ func TestDecodeUTF16(t *testing.T) {
 
 var xmlbroken = `
 <BrokenXML>
-  <Data/>qq</Data> 
+  <Data/>qq</Data>
 </BrokenXML>
 `
 
@@ -79,9 +79,9 @@ var xmldata = `
     </CbsPackageChangeState>
   </UserData>
   <EventData>
-    <Data>2120-07-26T15:24:25Z</Data> 
-    <Data>RulesEngine</Data> 
-    <Data Name="Engine">RulesEngine</Data> 
+    <Data>2120-07-26T15:24:25Z</Data>
+    <Data>RulesEngine</Data>
+    <Data Name="Engine">RulesEngine</Data>
   </EventData>
 </Event>
 `

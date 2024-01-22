@@ -14,6 +14,15 @@ is written as the Azure Monitor metric name. All field values are written as a
 summarized set that includes: min, max, sum, count. Tags are written as a
 dimension on each Azure Monitor metric.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -145,8 +154,8 @@ plugin will deterministically dropped any dimensions that exceed the 10
 dimension limit.
 
 To convert only a subset of string-typed fields as dimensions, enable
-`strings_as_dimensions` and use the [`fieldpass` or `fielddrop`
-processors][conf-processor] to limit the string-typed fields that are sent to
+`strings_as_dimensions` and use the [`fieldinclude` or `fieldexclude`
+modifiers][conf-modifiers] to limit the string-typed fields that are sent to
 the plugin.
 
-[conf-processor]: https://docs.influxdata.com/telegraf/v1.7/administration/configuration/#processor-configuration
+[conf-modifiers]: ../../../docs/CONFIGURATION.md#modifiers

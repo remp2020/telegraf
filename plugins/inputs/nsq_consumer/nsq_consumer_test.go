@@ -14,7 +14,7 @@ import (
 	"github.com/nsqio/go-nsq"
 	"github.com/stretchr/testify/require"
 
-	"github.com/influxdata/telegraf/plugins/parsers"
+	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -49,10 +49,11 @@ func TestReadsMetricsFromNSQ(t *testing.T) {
 		Nsqd:                   []string{"127.0.0.1:4155"},
 	}
 
-	p, _ := parsers.NewInfluxParser()
+	p := &influx.Parser{}
+	require.NoError(t, p.Init())
 	consumer.SetParser(p)
 	var acc testutil.Accumulator
-	require.Len(t, acc.Metrics, 0, "There should not be any points")
+	require.Empty(t, acc.Metrics, "There should not be any points")
 	require.NoError(t, consumer.Start(&acc))
 
 	waitForPoint(&acc, t)
@@ -203,11 +204,7 @@ func (n *mockNSQD) handle(conn net.Conn) {
 				}
 				rdyCount--
 			}
-			buf, err := framedResponse(inst.frameType, inst.body)
-			if err != nil {
-				log.Print(err.Error())
-				goto exit
-			}
+			buf := framedResponse(inst.frameType, inst.body)
 			_, err = conn.Write(buf)
 			if err != nil {
 				log.Print(err.Error())
@@ -219,33 +216,24 @@ func (n *mockNSQD) handle(conn net.Conn) {
 	}
 
 exit:
-	// Ignore the returned error as we cannot do anything about it anyway
-	//nolint:errcheck,revive
 	n.tcpListener.Close()
-	//nolint:errcheck,revive
 	conn.Close()
 }
 
-func framedResponse(frameType int32, data []byte) ([]byte, error) {
+func framedResponse(frameType int32, data []byte) []byte {
 	var w bytes.Buffer
 
 	beBuf := make([]byte, 4)
 	size := uint32(len(data)) + 4
 
 	binary.BigEndian.PutUint32(beBuf, size)
-	_, err := w.Write(beBuf)
-	if err != nil {
-		return nil, err
-	}
+	w.Write(beBuf)
 
 	binary.BigEndian.PutUint32(beBuf, uint32(frameType))
-	_, err = w.Write(beBuf)
-	if err != nil {
-		return nil, err
-	}
+	w.Write(beBuf)
 
-	_, err = w.Write(data)
-	return w.Bytes(), err
+	w.Write(data)
+	return w.Bytes()
 }
 
 func frameMessage(m *nsq.Message) ([]byte, error) {

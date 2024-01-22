@@ -29,7 +29,7 @@ func (n *node) recursiveInsert(values []string, template *Template) {
 		return
 	}
 
-	// See if the the current element already exists in the tree. If so, insert the
+	// See if the current element already exists in the tree. If so, insert the
 	// into that sub-tree
 	for _, v := range n.children {
 		if v.value == values[0] {
@@ -105,16 +105,18 @@ type nodes []*node
 // less than a non-wildcard value.
 //
 // For example, the filters:
-//             "*.*"
-//             "servers.*"
-//             "servers.localhost"
-//             "*.localhost"
+//
+//	"*.*"
+//	"servers.*"
+//	"servers.localhost"
+//	"*.localhost"
 //
 // Would be sorted as:
-//             "servers.localhost"
-//             "servers.*"
-//             "*.localhost"
-//             "*.*"
+//
+//	"servers.localhost"
+//	"servers.*"
+//	"*.localhost"
+//	"*.*"
 func (n *nodes) Less(j, k int) bool {
 	if (*n)[j].value == "*" && (*n)[k].value != "*" {
 		return false

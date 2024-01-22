@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/config"
 )
 
 type MockClient struct {
@@ -63,8 +64,8 @@ func TestConnect(t *testing.T) {
 				require.Equal(t, []string{DefaultURL}, cfg.brokers)
 				require.Equal(t, "", cfg.exchange)
 				require.Equal(t, "topic", cfg.exchangeType)
-				require.Equal(t, false, cfg.exchangePassive)
-				require.Equal(t, true, cfg.exchangeDurable)
+				require.False(t, cfg.exchangePassive)
+				require.True(t, cfg.exchangeDurable)
 				require.Equal(t, amqp.Table(nil), cfg.exchangeArguments)
 				require.Equal(t, amqp.Table{
 					"database":         DefaultDatabase,
@@ -114,8 +115,8 @@ func TestConnect(t *testing.T) {
 			name: "username password",
 			output: &AMQP{
 				URL:      "amqp://foo:bar@localhost",
-				Username: "telegraf",
-				Password: "pa$$word",
+				Username: config.NewSecret([]byte("telegraf")),
+				Password: config.NewSecret([]byte("pa$$word")),
 				connect: func(_ *ClientConfig) (Client, error) {
 					return NewMockClient(), nil
 				},

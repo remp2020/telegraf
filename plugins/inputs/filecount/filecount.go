@@ -3,12 +3,13 @@ package filecount
 
 import (
 	_ "embed"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/karrick/godirwalk"
-	"github.com/pkg/errors"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
@@ -16,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -122,6 +122,8 @@ func (fc *FileCount) initFileFilters() {
 func (fc *FileCount) count(acc telegraf.Accumulator, basedir string, glob globpath.GlobPath) {
 	childCount := make(map[string]int64)
 	childSize := make(map[string]int64)
+	oldestFileTimestamp := make(map[string]int64)
+	newestFileTimestamp := make(map[string]int64)
 
 	walkFn := func(path string, de *godirwalk.Dirent) error {
 		rel, err := filepath.Rel(basedir, path)
@@ -144,6 +146,12 @@ func (fc *FileCount) count(acc telegraf.Accumulator, basedir string, glob globpa
 			parent := filepath.Dir(path)
 			childCount[parent]++
 			childSize[parent] += file.Size()
+			if oldestFileTimestamp[parent] == 0 || oldestFileTimestamp[parent] > file.ModTime().UnixNano() {
+				oldestFileTimestamp[parent] = file.ModTime().UnixNano()
+			}
+			if newestFileTimestamp[parent] == 0 || newestFileTimestamp[parent] < file.ModTime().UnixNano() {
+				newestFileTimestamp[parent] = file.ModTime().UnixNano()
+			}
 		}
 		if file.IsDir() && !fc.Recursive && !glob.HasSuperMeta {
 			return filepath.SkipDir
@@ -157,6 +165,8 @@ func (fc *FileCount) count(acc telegraf.Accumulator, basedir string, glob globpa
 				"count":      childCount[path],
 				"size_bytes": childSize[path],
 			}
+			gauge["oldest_file_timestamp"] = oldestFileTimestamp[path]
+			gauge["newest_file_timestamp"] = newestFileTimestamp[path]
 			acc.AddGauge("filecount", gauge,
 				map[string]string{
 					"directory": path,
@@ -166,9 +176,17 @@ func (fc *FileCount) count(acc telegraf.Accumulator, basedir string, glob globpa
 		if fc.Recursive {
 			childCount[parent] += childCount[path]
 			childSize[parent] += childSize[path]
+			if oldestFileTimestamp[parent] == 0 || oldestFileTimestamp[parent] > oldestFileTimestamp[path] {
+				oldestFileTimestamp[parent] = oldestFileTimestamp[path]
+			}
+			if newestFileTimestamp[parent] == 0 || newestFileTimestamp[parent] < newestFileTimestamp[path] {
+				newestFileTimestamp[parent] = newestFileTimestamp[path]
+			}
 		}
 		delete(childCount, path)
 		delete(childSize, path)
+		delete(oldestFileTimestamp, path)
+		delete(newestFileTimestamp, path)
 		return nil
 	}
 
@@ -178,7 +196,7 @@ func (fc *FileCount) count(acc telegraf.Accumulator, basedir string, glob globpa
 		Unsorted:             true,
 		FollowSymbolicLinks:  fc.FollowSymlinks,
 		ErrorCallback: func(osPathname string, err error) godirwalk.ErrorAction {
-			if os.IsPermission(errors.Cause(err)) {
+			if errors.Is(err, fs.ErrPermission) {
 				fc.Log.Debug(err)
 				return godirwalk.SkipNode
 			}
@@ -238,9 +256,9 @@ func (fc *FileCount) onlyDirectories(directories []string) []string {
 }
 
 func (fc *FileCount) getDirs() []string {
-	dirs := make([]string, len(fc.Directories))
-	for i, dir := range fc.Directories {
-		dirs[i] = filepath.Clean(dir)
+	dirs := make([]string, 0, len(fc.Directories)+1)
+	for _, dir := range fc.Directories {
+		dirs = append(dirs, filepath.Clean(dir))
 	}
 
 	if fc.Directory != "" {

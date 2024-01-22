@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGather(t *testing.T) {
@@ -369,7 +370,7 @@ func TestParseXML(t *testing.T) {
 			}
 			// No error case
 			require.NoErrorf(t, err, "expected no error but got: %v", err)
-			require.Equalf(t, len(acc.Errors) > 0, test.wantAccErr,
+			require.Equalf(t, test.wantAccErr, len(acc.Errors) > 0,
 				"Accumulator errors. got=%v, want=%t", acc.Errors, test.wantAccErr)
 
 			testutil.RequireMetricsEqual(t, acc.GetTelegrafMetrics(), test.wantMetrics)
@@ -378,6 +379,8 @@ func TestParseXML(t *testing.T) {
 }
 
 func TestSendRequest(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		statusCode int
@@ -428,6 +431,8 @@ func TestSendRequest(t *testing.T) {
 }
 
 func TestParseTime(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		input    string
@@ -474,6 +479,8 @@ func TestParseTime(t *testing.T) {
 }
 
 func TestFindProbe(t *testing.T) {
+	t.Parallel()
+
 	fakeProbes := []probe{
 		{
 			Name: "test1",
@@ -504,7 +511,7 @@ func TestFindProbe(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			index := findProbe(test.probeName, fakeProbes)
-			require.Equalf(t, index, test.wantIndex, "probe index mismatch; got=%d, want %d", index, test.wantIndex)
+			require.Equalf(t, test.wantIndex, index, "probe index mismatch; got=%d, want %d", index, test.wantIndex)
 		})
 	}
 }

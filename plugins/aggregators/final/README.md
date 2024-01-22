@@ -11,6 +11,15 @@ discrete time series such as procstat, cgroup, kubernetes etc.
 When a series has not been updated within the time defined in
 `series_timeout`, the last metric is emitted with the `_final` appended.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -20,11 +29,34 @@ When a series has not been updated within the time defined in
   period = "30s"
   ## If true, the original metric will be dropped by the
   ## aggregator and will not get sent to the output plugins.
-  drop_original = false
+  # drop_original = false
 
   ## The time that a series is not updated until considering it final.
-  series_timeout = "5m"
+  # series_timeout = "5m"
+
+  ## Output strategy, supported values:
+  ##   timeout  -- output a metric if no new input arrived for `series_timeout`;
+  ##               useful for filling gaps in input data
+  ##   periodic -- output the last received metric every `period`; useful to
+  ##               downsample the input data
+  # output_strategy = "timeout"
 ```
+
+### Output strategy
+
+By default (`output_strategy = "timeout"`) the plugin will only emit a metric
+for the period if the last received one is older than the series_timeout. This
+will not guarantee a regular output of a `final` metric e.g. if the
+series-timeout is a multiple of the gathering interval for an input. In this
+case metric sporadically arrive in the timeout phase of the period and emitting
+the `final` metric is suppressed.
+This can be helpful to fill in gaps in the data if no input arrived in time.
+
+Contrary to this, `output_strategy = "periodic"` will always output a `final`
+metric at the end of the period irrespectively of when the last metric arrived,
+the `series_timeout` is ignored.
+This is helpful if you for example want to downsample input data arriving at a
+high rate and require a periodic output of the `final` metric.
 
 ## Metrics
 

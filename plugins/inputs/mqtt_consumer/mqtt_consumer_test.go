@@ -6,10 +6,11 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/plugins/parsers"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/parsers/influx"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 type FakeClient struct {
@@ -47,8 +48,8 @@ func (c *FakeClient) Disconnect(quiesce uint) {
 type FakeParser struct {
 }
 
-// FakeParser satisfies parsers.Parser
-var _ parsers.Parser = &FakeParser{}
+// FakeParser satisfies telegraf.Parser
+var _ telegraf.Parser = &FakeParser{}
 
 func (p *FakeParser) Parse(_ []byte) ([]telegraf.Metric, error) {
 	panic("not implemented")
@@ -155,6 +156,7 @@ func TestPersistentClientIDFail(t *testing.T) {
 
 type Message struct {
 	topic string
+	qos   byte
 }
 
 func (m *Message) Duplicate() bool {
@@ -162,7 +164,7 @@ func (m *Message) Duplicate() bool {
 }
 
 func (m *Message) Qos() byte {
-	panic("not implemented")
+	return m.qos
 }
 
 func (m *Message) Retained() bool {
@@ -471,11 +473,11 @@ func TestTopicTag(t *testing.T) {
 			plugin.TopicTag = tt.topicTag()
 			plugin.TopicParsing = tt.topicParsing
 
-			parser, err := parsers.NewInfluxParser()
-			require.NoError(t, err)
+			parser := &influx.Parser{}
+			require.NoError(t, parser.Init())
 			plugin.SetParser(parser)
 
-			err = plugin.Init()
+			err := plugin.Init()
 			require.Equal(t, tt.expectedError, err)
 			if tt.expectedError != nil {
 				return
@@ -526,7 +528,7 @@ func TestAddRouteCalledForEachTopic(t *testing.T) {
 
 	plugin.Stop()
 
-	require.Equal(t, client.addRouteCallCount, 2)
+	require.Equal(t, 2, client.addRouteCallCount)
 }
 
 func TestSubscribeCalledIfNoSession(t *testing.T) {
@@ -557,7 +559,7 @@ func TestSubscribeCalledIfNoSession(t *testing.T) {
 
 	plugin.Stop()
 
-	require.Equal(t, client.subscribeCallCount, 1)
+	require.Equal(t, 1, client.subscribeCallCount)
 }
 
 func TestSubscribeNotCalledIfSession(t *testing.T) {
@@ -588,5 +590,5 @@ func TestSubscribeNotCalledIfSession(t *testing.T) {
 
 	plugin.Stop()
 
-	require.Equal(t, client.subscribeCallCount, 0)
+	require.Equal(t, 0, client.subscribeCallCount)
 }

@@ -1,12 +1,11 @@
 //go:build !windows
-// +build !windows
 
 package varnish
 
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 	"testing"
 
@@ -49,7 +48,7 @@ func TestParseFullOutput(t *testing.T) {
 	acc.HasMeasurement("varnish")
 	flat := flatten(acc.Metrics)
 	require.Len(t, acc.Metrics, 6)
-	require.Equal(t, 293, len(flat))
+	require.Len(t, flat, 293)
 }
 
 func TestFilterSomeStats(t *testing.T) {
@@ -63,7 +62,7 @@ func TestFilterSomeStats(t *testing.T) {
 	acc.HasMeasurement("varnish")
 	flat := flatten(acc.Metrics)
 	require.Len(t, acc.Metrics, 2)
-	require.Equal(t, 16, len(flat))
+	require.Len(t, flat, 16)
 }
 
 func TestFieldConfig(t *testing.T) {
@@ -84,7 +83,7 @@ func TestFieldConfig(t *testing.T) {
 
 		acc.HasMeasurement("varnish")
 		flat := flatten(acc.Metrics)
-		require.Equal(t, expected, len(flat))
+		require.Len(t, flat, expected)
 	}
 }
 
@@ -93,10 +92,7 @@ func flatten(metrics []*testutil.Metric) map[string]interface{} {
 	for _, m := range metrics {
 		buf := &bytes.Buffer{}
 		for k, v := range m.Tags {
-			_, err := buf.WriteString(fmt.Sprintf("%s=%s", k, v))
-			if err != nil {
-				return nil
-			}
+			fmt.Fprintf(buf, "%s=%s", k, v)
 		}
 		for k, v := range m.Fields {
 			flat[fmt.Sprintf("%s %s", buf.String(), k)] = v
@@ -508,13 +504,17 @@ func TestV2ParseVarnishNames(t *testing.T) {
 			activeVcl: "1111",
 		},
 		{
-			vName:     "VBE.VCL_1023_DIS_VOD_SHIELD_V1629295401194_1629295437531.goto.00000000.(111.112.113.114).(http://abc-ede.xyz.yyy.com:80).(ttl:3600.000000).is_healthy",
-			tags:      map[string]string{"section": "VBE", "serial_1": "0", "backend_1": "111.112.113.114", "server_1": "http://abc-ede.xyz.yyy.com:80", "ttl": "3600.000000"},
+			vName: "VBE.VCL_1023_DIS_VOD_SHIELD_V1629295401194_1629295437531.goto.00000000.(111.112.113.114)." +
+				"(http://abc-ede.xyz.yyy.com:80).(ttl:3600.000000).is_healthy",
+			tags: map[string]string{"section": "VBE", "serial_1": "0", "backend_1": "111.112.113.114",
+				"server_1": "http://abc-ede.xyz.yyy.com:80", "ttl": "3600.000000"},
 			field:     "is_healthy",
 			activeVcl: "VCL_1023_DIS_VOD_SHIELD_V1629295401194_1629295437531",
 			customRegexps: []string{
-				`^VBE\.(?P<_vcl>[\w\-]*)\.goto\.(?P<serial_1>[[:alnum:]])+\.\((?P<backend_1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\)\.\((?P<server_1>.*)\)\.\(ttl:(?P<ttl>\d*\.\d*.)*\)`,
-				`^VBE\.(?P<_vcl>[\w\-]*)\.goto\.(?P<serial_2>[[:alnum:]])+\.\((?P<backend_2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\)\.\((?P<server_2>.*)\)\.\(ttl:(?P<ttl>\d*\.\d*.)*\)`,
+				`^VBE\.(?P<_vcl>[\w\-]*)\.goto\.(?P<serial_1>[[:alnum:]])+\.` +
+					`\((?P<backend_1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\)\.\((?P<server_1>.*)\)\.\(ttl:(?P<ttl>\d*\.\d*.)*\)`,
+				`^VBE\.(?P<_vcl>[\w\-]*)\.goto\.(?P<serial_2>[[:alnum:]])+\.` +
+					`\((?P<backend_2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\)\.\((?P<server_2>.*)\)\.\(ttl:(?P<ttl>\d*\.\d*.)*\)`,
 			},
 		},
 	} {
@@ -533,7 +533,7 @@ func TestVersions(t *testing.T) {
 	require.NoError(t, server.Init())
 	acc := &testutil.Accumulator{}
 
-	require.Equal(t, 0, len(acc.Metrics))
+	require.Empty(t, acc.Metrics)
 
 	type testConfig struct {
 		jsonFile           string
@@ -548,13 +548,14 @@ func TestVersions(t *testing.T) {
 		{jsonFile: "varnish6.6.json", activeReloadPrefix: "boot", size: 358},
 		{jsonFile: "varnish4_4.json", activeReloadPrefix: "boot", size: 295},
 	} {
-		output, _ := ioutil.ReadFile("test_data/" + c.jsonFile)
-		err := server.processMetricsV2(c.activeReloadPrefix, acc, bytes.NewBuffer(output))
+		output, err := os.ReadFile("test_data/" + c.jsonFile)
 		require.NoError(t, err)
-		require.Equal(t, c.size, len(acc.Metrics))
+		err = server.processMetricsV2(c.activeReloadPrefix, acc, bytes.NewBuffer(output))
+		require.NoError(t, err)
+		require.Len(t, acc.Metrics, c.size)
 		for _, m := range acc.Metrics {
 			require.NotEmpty(t, m.Fields)
-			require.Equal(t, m.Measurement, "varnish")
+			require.Equal(t, "varnish", m.Measurement)
 			for field := range m.Fields {
 				require.NotContains(t, field, "reload_")
 			}
@@ -619,13 +620,15 @@ func TestJsonTypes(t *testing.T) {
 }
 
 func TestVarnishAdmJson(t *testing.T) {
-	admJSON, _ := ioutil.ReadFile("test_data/" + "varnishadm-200.json")
+	admJSON, err := os.ReadFile("test_data/" + "varnishadm-200.json")
+	require.NoError(t, err)
 	activeVcl, err := getActiveVCLJson(bytes.NewBuffer(admJSON))
 	require.NoError(t, err)
-	require.Equal(t, activeVcl, "boot-123")
+	require.Equal(t, "boot-123", activeVcl)
 
-	admJSON, _ = ioutil.ReadFile("test_data/" + "varnishadm-reload.json")
+	admJSON, err = os.ReadFile("test_data/" + "varnishadm-reload.json")
+	require.NoError(t, err)
 	activeVcl, err = getActiveVCLJson(bytes.NewBuffer(admJSON))
 	require.NoError(t, err)
-	require.Equal(t, activeVcl, "reload_20210723_091821_2056185")
+	require.Equal(t, "reload_20210723_091821_2056185", activeVcl)
 }

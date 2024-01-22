@@ -45,14 +45,12 @@ const (
 	maxPad   = 255
 )
 
-//nolint:varcheck // For having proper order
 const (
 	roleResponder = iota + 1 // only Responders are implemented.
 	roleAuthorizer
 	roleFilter
 )
 
-//nolint:varcheck // For having proper order
 const (
 	statusRequestComplete = iota
 	statusCantMultiplex
@@ -122,7 +120,7 @@ type record struct {
 }
 
 func (rec *record) read(r io.Reader) (err error) {
-	if err = binary.Read(r, binary.BigEndian, &rec.h); err != nil {
+	if err := binary.Read(r, binary.BigEndian, &rec.h); err != nil {
 		return err
 	}
 	if rec.h.Version != 1 {
@@ -148,12 +146,8 @@ func (c *conn) writeRecord(recType recType, reqID uint16, b []byte) error {
 	if err := binary.Write(&c.buf, binary.BigEndian, c.h); err != nil {
 		return err
 	}
-	if _, err := c.buf.Write(b); err != nil {
-		return err
-	}
-	if _, err := c.buf.Write(pad[:c.h.PaddingLength]); err != nil {
-		return err
-	}
+	c.buf.Write(b)
+	c.buf.Write(pad[:c.h.PaddingLength])
 	_, err := c.rwc.Write(c.buf.Bytes())
 	return err
 }
@@ -231,8 +225,6 @@ type bufWriter struct {
 
 func (w *bufWriter) Close() error {
 	if err := w.Writer.Flush(); err != nil {
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
 		w.closer.Close()
 		return err
 	}

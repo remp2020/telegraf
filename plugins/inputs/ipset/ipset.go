@@ -17,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -74,18 +73,31 @@ func (i *Ipset) Gather(acc telegraf.Accumulator) error {
 				"set":  data[1],
 				"rule": data[2],
 			}
-			packetsTotal, err := strconv.ParseUint(data[4], 10, 64)
-			if err != nil {
-				acc.AddError(err)
+
+			fields := make(map[string]interface{}, 3)
+			for i, field := range data {
+				switch field {
+				case "timeout":
+					val, err := strconv.ParseUint(data[i+1], 10, 64)
+					if err != nil {
+						acc.AddError(err)
+					}
+					fields["timeout"] = val
+				case "packets":
+					val, err := strconv.ParseUint(data[i+1], 10, 64)
+					if err != nil {
+						acc.AddError(err)
+					}
+					fields["packets_total"] = val
+				case "bytes":
+					val, err := strconv.ParseUint(data[i+1], 10, 64)
+					if err != nil {
+						acc.AddError(err)
+					}
+					fields["bytes_total"] = val
+				}
 			}
-			bytesTotal, err := strconv.ParseUint(data[6], 10, 64)
-			if err != nil {
-				acc.AddError(err)
-			}
-			fields := map[string]interface{}{
-				"packets_total": packetsTotal,
-				"bytes_total":   bytesTotal,
-			}
+
 			acc.AddCounter(measurement, fields, tags)
 		}
 	}
@@ -112,7 +124,7 @@ func setList(timeout config.Duration, useSudo bool) (*bytes.Buffer, error) {
 	cmd.Stdout = &out
 	err = internal.RunTimeout(cmd, time.Duration(timeout))
 	if err != nil {
-		return &out, fmt.Errorf("error running ipset save: %s", err)
+		return &out, fmt.Errorf("error running ipset save: %w", err)
 	}
 
 	return &out, nil

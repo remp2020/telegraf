@@ -1,25 +1,24 @@
+//go:generate ../../../tools/config_includer/generator
 //go:generate ../../../tools/readme_config_includer/generator
 package http
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
 	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -29,18 +28,18 @@ type HTTP struct {
 	Body            string   `toml:"body"`
 	ContentEncoding string   `toml:"content_encoding"`
 
-	Headers map[string]string `toml:"headers"`
+	// Basic authentication
+	Username config.Secret `toml:"username"`
+	Password config.Secret `toml:"password"`
 
-	// HTTP Basic Auth Credentials
-	Username string `toml:"username"`
-	Password string `toml:"password"`
+	// Bearer authentication
+	BearerToken string        `toml:"bearer_token" deprecated:"1.28.0;use 'token_file' instead"`
+	Token       config.Secret `toml:"token"`
+	TokenFile   string        `toml:"token_file"`
 
-	// Absolute path to file with Bearer token
-	BearerToken string `toml:"bearer_token"`
-
-	SuccessStatusCodes []int `toml:"success_status_codes"`
-
-	Log telegraf.Logger `toml:"-"`
+	Headers            map[string]string `toml:"headers"`
+	SuccessStatusCodes []int             `toml:"success_status_codes"`
+	Log                telegraf.Logger   `toml:"-"`
 
 	httpconfig.HTTPClientConfig
 
@@ -53,12 +52,24 @@ func (*HTTP) SampleConfig() string {
 }
 
 func (h *HTTP) Init() error {
+	// For backward compatibility
+	if h.TokenFile != "" && h.BearerToken != "" && h.TokenFile != h.BearerToken {
+		return fmt.Errorf("conflicting settings for 'bearer_token' and 'token_file'")
+	} else if h.TokenFile == "" && h.BearerToken != "" {
+		h.TokenFile = h.BearerToken
+	}
+
+	// We cannot use multiple sources for tokens
+	if h.TokenFile != "" && !h.Token.Empty() {
+		return fmt.Errorf("either use 'token_file' or 'token' not both")
+	}
+
+	// Create the client
 	ctx := context.Background()
 	client, err := h.HTTPClientConfig.CreateClient(ctx, h.Log)
 	if err != nil {
 		return err
 	}
-
 	h.client = client
 
 	// Set default as [200]
@@ -77,7 +88,7 @@ func (h *HTTP) Gather(acc telegraf.Accumulator) error {
 		go func(url string) {
 			defer wg.Done()
 			if err := h.gatherURL(acc, url); err != nil {
-				acc.AddError(fmt.Errorf("[url=%s]: %s", url, err))
+				acc.AddError(fmt.Errorf("[url=%s]: %w", url, err))
 			}
 		}(u)
 	}
@@ -94,27 +105,30 @@ func (h *HTTP) SetParserFunc(fn telegraf.ParserFunc) {
 
 // Gathers data from a particular URL
 // Parameters:
-//     acc    : The telegraf Accumulator to use
-//     url    : endpoint to send request to
+//
+//	acc    : The telegraf Accumulator to use
+//	url    : endpoint to send request to
 //
 // Returns:
-//     error: Any error that may have occurred
-func (h *HTTP) gatherURL(
-	acc telegraf.Accumulator,
-	url string,
-) error {
-	body, err := makeRequestBodyReader(h.ContentEncoding, h.Body)
-	if err != nil {
-		return err
-	}
-
+//
+//	error: Any error that may have occurred
+func (h *HTTP) gatherURL(acc telegraf.Accumulator, url string) error {
+	body := makeRequestBodyReader(h.ContentEncoding, h.Body)
 	request, err := http.NewRequest(h.Method, url, body)
 	if err != nil {
 		return err
 	}
 
-	if h.BearerToken != "" {
-		token, err := os.ReadFile(h.BearerToken)
+	if !h.Token.Empty() {
+		token, err := h.Token.Get()
+		if err != nil {
+			return err
+		}
+		bearer := "Bearer " + strings.TrimSpace(token.String())
+		token.Destroy()
+		request.Header.Set("Authorization", bearer)
+	} else if h.TokenFile != "" {
+		token, err := os.ReadFile(h.TokenFile)
 		if err != nil {
 			return err
 		}
@@ -127,15 +141,15 @@ func (h *HTTP) gatherURL(
 	}
 
 	for k, v := range h.Headers {
-		if strings.ToLower(k) == "host" {
+		if strings.EqualFold(k, "host") {
 			request.Host = v
 		} else {
 			request.Header.Add(k, v)
 		}
 	}
 
-	if h.Username != "" || h.Password != "" {
-		request.SetBasicAuth(h.Username, h.Password)
+	if err := h.setRequestAuth(request); err != nil {
+		return err
 	}
 
 	resp, err := h.client.Do(request)
@@ -161,17 +175,17 @@ func (h *HTTP) gatherURL(
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("reading body failed: %v", err)
+		return fmt.Errorf("reading body failed: %w", err)
 	}
 
 	// Instantiate a new parser for the new data to avoid trouble with stateful parsers
 	parser, err := h.parserFunc()
 	if err != nil {
-		return fmt.Errorf("instantiating parser failed: %v", err)
+		return fmt.Errorf("instantiating parser failed: %w", err)
 	}
 	metrics, err := parser.Parse(b)
 	if err != nil {
-		return fmt.Errorf("parsing metrics failed: %v", err)
+		return fmt.Errorf("parsing metrics failed: %w", err)
 	}
 
 	for _, metric := range metrics {
@@ -184,25 +198,39 @@ func (h *HTTP) gatherURL(
 	return nil
 }
 
-func makeRequestBodyReader(contentEncoding, body string) (io.Reader, error) {
+func (h *HTTP) setRequestAuth(request *http.Request) error {
+	if h.Username.Empty() && h.Password.Empty() {
+		return nil
+	}
+
+	username, err := h.Username.Get()
+	if err != nil {
+		return fmt.Errorf("getting username failed: %w", err)
+	}
+	defer username.Destroy()
+
+	password, err := h.Password.Get()
+	if err != nil {
+		return fmt.Errorf("getting password failed: %w", err)
+	}
+	defer password.Destroy()
+
+	request.SetBasicAuth(username.String(), password.String())
+
+	return nil
+}
+
+func makeRequestBodyReader(contentEncoding, body string) io.Reader {
 	if body == "" {
-		return nil, nil
+		return nil
 	}
 
 	var reader io.Reader = strings.NewReader(body)
 	if contentEncoding == "gzip" {
-		rc, err := internal.CompressWithGzip(reader)
-		if err != nil {
-			return nil, err
-		}
-		data, err := ioutil.ReadAll(rc)
-		if err != nil {
-			return nil, err
-		}
-		return bytes.NewReader(data), nil
+		return internal.CompressWithGzip(reader)
 	}
 
-	return reader, nil
+	return reader
 }
 
 func init() {

@@ -9,7 +9,7 @@ import (
 	"github.com/yuin/goldmark/ast"
 )
 
-//type for all linter assert methods
+// type for all linter assert methods
 type T struct {
 	filename       string
 	markdown       []byte
@@ -121,7 +121,7 @@ func (t *T) assertFirstChildRegexp(expectedPattern string, n ast.Node) {
 	actual := string(c.Text(t.markdown))
 
 	if !validRegexp.MatchString(actual) {
-		t.printFailedAssertf(n, "'%s' does not match regexp '%s'", actual, expectedPattern)
+		t.printFailedAssertf(n, "%q does not match regexp %q", actual, expectedPattern)
 		return
 	}
 }

@@ -16,15 +16,16 @@ import (
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type Execd struct {
-	Command      []string        `toml:"command"`
-	Environment  []string        `toml:"environment"`
-	RestartDelay config.Duration `toml:"restart_delay"`
-	Log          telegraf.Logger
+	Command                  []string        `toml:"command"`
+	Environment              []string        `toml:"environment"`
+	RestartDelay             config.Duration `toml:"restart_delay"`
+	IgnoreSerializationError bool            `toml:"ignore_serialization_error"`
+	UseBatchFormat           bool            `toml:"use_batch_format"`
+	Log                      telegraf.Logger
 
 	process    *process.Process
 	serializer serializers.Serializer
@@ -78,14 +79,29 @@ func (e *Execd) Close() error {
 }
 
 func (e *Execd) Write(metrics []telegraf.Metric) error {
-	for _, m := range metrics {
-		b, err := e.serializer.Serialize(m)
+	if e.UseBatchFormat {
+		b, err := e.serializer.SerializeBatch(metrics)
 		if err != nil {
-			return fmt.Errorf("error serializing metrics: %s", err)
+			return fmt.Errorf("error serializing metrics: %w", err)
 		}
 
 		if _, err = e.process.Stdin.Write(b); err != nil {
-			return fmt.Errorf("error writing metrics %s", err)
+			return fmt.Errorf("error writing metrics: %w", err)
+		}
+		return nil
+	}
+	for _, m := range metrics {
+		b, err := e.serializer.Serialize(m)
+		if err != nil {
+			if !e.IgnoreSerializationError {
+				return fmt.Errorf("error serializing metrics: %w", err)
+			}
+			e.Log.Errorf("Skipping metric due to a serialization error: %v", err)
+			continue
+		}
+
+		if _, err = e.process.Stdin.Write(b); err != nil {
+			return fmt.Errorf("error writing metrics: %w", err)
 		}
 	}
 	return nil

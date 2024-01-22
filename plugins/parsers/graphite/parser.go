@@ -12,6 +12,7 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal/templating"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
 // Minimum and maximum supported dates for timestamps.
@@ -20,45 +21,34 @@ var (
 	MaxDate = time.Date(2038, 1, 19, 0, 0, 0, 0, time.UTC)
 )
 
-type GraphiteParser struct {
-	Separator      string
-	Templates      []string
-	DefaultTags    map[string]string
+type Parser struct {
+	Separator   string            `toml:"separator"`
+	Templates   []string          `toml:"templates"`
+	DefaultTags map[string]string ` toml:"-"`
+
 	templateEngine *templating.Engine
 }
 
-func (p *GraphiteParser) SetDefaultTags(tags map[string]string) {
-	p.DefaultTags = tags
-}
-
-func NewGraphiteParser(
-	separator string,
-	templates []string,
-	defaultTags map[string]string,
-) (*GraphiteParser, error) {
-	var err error
-
-	if separator == "" {
-		separator = DefaultSeparator
-	}
-	p := &GraphiteParser{
-		Separator: separator,
-		Templates: templates,
+func (p *Parser) Init() error {
+	// Set defaults
+	if p.Separator == "" {
+		p.Separator = DefaultSeparator
 	}
 
-	if defaultTags != nil {
-		p.DefaultTags = defaultTags
-	}
-	defaultTemplate, _ := templating.NewDefaultTemplateWithPattern("measurement*")
-	p.templateEngine, err = templating.NewEngine(p.Separator, defaultTemplate, p.Templates)
-
+	defaultTemplate, err := templating.NewDefaultTemplateWithPattern("measurement*")
 	if err != nil {
-		return p, fmt.Errorf("exec input parser config is error: %s ", err.Error())
+		return fmt.Errorf("creating template failed: %w", err)
 	}
-	return p, nil
+
+	p.templateEngine, err = templating.NewEngine(p.Separator, defaultTemplate, p.Templates)
+	if err != nil {
+		return fmt.Errorf("creating template engine failed: %w ", err)
+	}
+
+	return nil
 }
 
-func (p *GraphiteParser) Parse(buf []byte) ([]telegraf.Metric, error) {
+func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 	// parse even if the buffer begins with a newline
 	if len(buf) != 0 && buf[0] == '\n' {
 		buf = buf[1:]
@@ -95,7 +85,7 @@ func (p *GraphiteParser) Parse(buf []byte) ([]telegraf.Metric, error) {
 }
 
 // ParseLine performs Graphite parsing of a single line.
-func (p *GraphiteParser) ParseLine(line string) (telegraf.Metric, error) {
+func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
 	// Break into 3 fields (name, value, timestamp).
 	fields := strings.Fields(line)
 	if len(fields) != 2 && len(fields) != 3 {
@@ -118,7 +108,7 @@ func (p *GraphiteParser) ParseLine(line string) (telegraf.Metric, error) {
 	// Parse value.
 	v, err := strconv.ParseFloat(fields[1], 64)
 	if err != nil {
-		return nil, fmt.Errorf(`field "%s" value: %s`, fields[0], err)
+		return nil, fmt.Errorf(`field %q value: %w`, fields[0], err)
 	}
 
 	fieldValues := map[string]interface{}{}
@@ -135,7 +125,7 @@ func (p *GraphiteParser) ParseLine(line string) (telegraf.Metric, error) {
 		// Parse timestamp.
 		unixTime, err := strconv.ParseFloat(fields[2], 64)
 		if err != nil {
-			return nil, fmt.Errorf(`field "%s" time: %s`, fields[0], err)
+			return nil, fmt.Errorf(`field %q time: %w`, fields[0], err)
 		}
 
 		// -1 is a special value that gets converted to current UTC time
@@ -178,7 +168,9 @@ func (p *GraphiteParser) ParseLine(line string) (telegraf.Metric, error) {
 
 // ApplyTemplate extracts the template fields from the given line and
 // returns the measurement name and tags.
-func (p *GraphiteParser) ApplyTemplate(line string) (string, map[string]string, string, error) {
+//
+//nolint:revive // This function should be eliminated anyway
+func (p *Parser) ApplyTemplate(line string) (string, map[string]string, string, error) {
 	// Break line into fields (name, value, timestamp), only name is used
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
@@ -195,4 +187,12 @@ func (p *GraphiteParser) ApplyTemplate(line string) (string, map[string]string, 
 	}
 
 	return name, tags, field, err
+}
+
+func (p *Parser) SetDefaultTags(tags map[string]string) {
+	p.DefaultTags = tags
+}
+
+func init() {
+	parsers.Add("graphite", func(_ string) telegraf.Parser { return &Parser{} })
 }

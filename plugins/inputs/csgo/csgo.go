@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -178,7 +177,6 @@ func requestServer(url string, rconPw string) (string, error) {
 		return "", err
 	} else if reqID != respReqID {
 		return "", errors.New("response/request mismatch")
-	} else {
-		return resp, nil
 	}
+	return resp, nil
 }

@@ -1,9 +1,15 @@
 # Azure Data Explorer Output Plugin
 
-This plugin writes data collected by any of the Telegraf input plugins to [Azure
-Data Explorer](https://azure.microsoft.com/en-au/services/data-explorer/).
 Azure Data Explorer is a distributed, columnar store, purpose built for any type
 of logs, metrics and time series data.
+
+This plugin writes data collected by any of the Telegraf input plugins to
+[Azure Data Explorer][data_explorer], [Azure Synapse Data Explorer][synapse],
+and [Real time analytics in Fabric][fabric].
+
+[data_explorer]: https://docs.microsoft.com/en-us/azure/data-explorer
+[synapse]: https://docs.microsoft.com/en-us/azure/synapse-analytics/data-explorer/data-explorer-overview
+[fabric]: https://learn.microsoft.com/en-us/fabric/real-time-analytics/overview
 
 ## Pre-requisites
 
@@ -12,6 +18,15 @@ of logs, metrics and time series data.
 - VM/compute or container to host Telegraf - it could be hosted locally where an
   app/service to be monitored is deployed or remotely on a dedicated monitoring
   compute/container.
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
 ## Configuration
 
@@ -41,6 +56,12 @@ of logs, metrics and time series data.
   ## Creates tables and relevant mapping if set to true(default).
   ## Skips table and mapping creation if set to false, this is useful for running Telegraf with the lowest possible permissions i.e. table ingestor role.
   # create_tables = true
+
+  ##  Ingestion method to use.
+  ##  Available options are
+  ##    - managed  --  streaming ingestion with fallback to batched ingestion or the "queued" method below
+  ##    - queued   --  queue up metrics data and process sequentially
+  # ingestion_type = "queued"
 ```
 
 ## Metrics Grouping
@@ -93,6 +114,18 @@ The corresponding table mapping would be like the following:
 **Note**: This plugin will automatically create Azure Data Explorer tables and
 corresponding table mapping as per the above mentioned commands.
 
+## Ingestion type
+
+**Note**:
+[Streaming ingestion](https://aka.ms/AAhlg6s)
+has to be enabled on ADX [configure the ADX cluster]
+in case of `managed` option.
+Refer the query below to check if streaming is enabled
+
+```kql
+.show database <DB-Name> policy streamingingestion
+```
+
 ## Authentiation
 
 ### Supported Authentication Methods
@@ -117,7 +150,7 @@ These methods are:
 3. Managed Service Identity (MSI) token
 
     - If you are running Telegraf from Azure VM or infrastructure, then this is
-      the prefered authentication method.
+      the preferred authentication method.
 
 [register]: https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app#register-an-application
 
@@ -200,7 +233,7 @@ stored as dynamic data type, multiple ways to query this data-
   ```
 
   **Note** - This approach could have performance impact in case of large
-  volumes of data, use belwo mentioned approach for such cases.
+  volumes of data, use below mentioned approach for such cases.
 
 1. Use [Update
    policy](https://docs.microsoft.com/en-us/azure/data-explorer/kusto/management/updatepolicy)**:

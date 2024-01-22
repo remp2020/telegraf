@@ -20,14 +20,13 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 // Dynatrace Configuration for the Dynatrace output plugin
 type Dynatrace struct {
 	URL               string            `toml:"url"`
-	APIToken          string            `toml:"api_token"`
+	APIToken          config.Secret     `toml:"api_token"`
 	Prefix            string            `toml:"prefix"`
 	Log               telegraf.Logger   `toml:"-"`
 	Timeout           config.Duration   `toml:"timeout"`
@@ -135,7 +134,7 @@ func (d *Dynatrace) Write(metrics []telegraf.Metric) error {
 		output := strings.Join(batch, "\n")
 		if output != "" {
 			if err := d.send(output); err != nil {
-				return fmt.Errorf("error processing data:, %s", err.Error())
+				return fmt.Errorf("error processing data: %w", err)
 			}
 		}
 	}
@@ -148,12 +147,17 @@ func (d *Dynatrace) send(msg string) error {
 	req, err := http.NewRequest("POST", d.URL, bytes.NewBufferString(msg))
 	if err != nil {
 		d.Log.Errorf("Dynatrace error: %s", err.Error())
-		return fmt.Errorf("error while creating HTTP request:, %s", err.Error())
+		return fmt.Errorf("error while creating HTTP request: %w", err)
 	}
 	req.Header.Add("Content-Type", "text/plain; charset=UTF-8")
 
-	if len(d.APIToken) != 0 {
-		req.Header.Add("Authorization", "Api-Token "+d.APIToken)
+	if !d.APIToken.Empty() {
+		token, err := d.APIToken.Get()
+		if err != nil {
+			return fmt.Errorf("getting token failed: %w", err)
+		}
+		req.Header.Add("Authorization", "Api-Token "+token.String())
+		token.Destroy()
 	}
 	// add user-agent header to identify metric source
 	req.Header.Add("User-Agent", "telegraf")
@@ -161,12 +165,12 @@ func (d *Dynatrace) send(msg string) error {
 	resp, err := d.client.Do(req)
 	if err != nil {
 		d.Log.Errorf("Dynatrace error: %s", err.Error())
-		return fmt.Errorf("error while sending HTTP request:, %s", err.Error())
+		return fmt.Errorf("error while sending HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusBadRequest {
-		return fmt.Errorf("request failed with response code:, %d", resp.StatusCode)
+		return fmt.Errorf("request failed with response code: %d", resp.StatusCode)
 	}
 
 	// print metric line results as info log
@@ -185,7 +189,7 @@ func (d *Dynatrace) Init() error {
 		d.Log.Infof("Dynatrace URL is empty, defaulting to OneAgent metrics interface")
 		d.URL = apiconstants.GetDefaultOneAgentEndpoint()
 	}
-	if d.URL != apiconstants.GetDefaultOneAgentEndpoint() && len(d.APIToken) == 0 {
+	if d.URL != apiconstants.GetDefaultOneAgentEndpoint() && d.APIToken.Empty() {
 		d.Log.Errorf("Dynatrace api_token is a required field for Dynatrace output")
 		return fmt.Errorf("api_token is a required field for Dynatrace output")
 	}

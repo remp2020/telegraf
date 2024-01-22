@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/gosnmp/gosnmp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/internal/snmp"
@@ -31,8 +31,8 @@ func TestGosmiTranslator(t *testing.T) {
 	require.NotNil(t, tr)
 }
 
-//gosmi uses the same connection struct as netsnmp but has a few
-//different test cases, so it has its own copy
+// gosmi uses the same connection struct as netsnmp but has a few
+// different test cases, so it has its own copy
 var gosmiTsc = &testSNMPConnection{
 	host: "tsc",
 	values: map[string]interface{}{
@@ -103,10 +103,10 @@ func TestFieldInitGosmi(t *testing.T) {
 	for _, txl := range translations {
 		f := Field{Oid: txl.inputOid, Name: txl.inputName, Conversion: txl.inputConversion}
 		err := f.init(tr)
-		require.NoError(t, err, "inputOid='%s' inputName='%s'", txl.inputOid, txl.inputName)
+		require.NoError(t, err, "inputOid=%q inputName=%q", txl.inputOid, txl.inputName)
 
-		assert.Equal(t, txl.expectedOid, f.Oid, "inputOid='%s' inputName='%s' inputConversion='%s'", txl.inputOid, txl.inputName, txl.inputConversion)
-		assert.Equal(t, txl.expectedName, f.Name, "inputOid='%s' inputName='%s' inputConversion='%s'", txl.inputOid, txl.inputName, txl.inputConversion)
+		require.Equal(t, txl.expectedOid, f.Oid, "inputOid=%q inputName=%q inputConversion=%q", txl.inputOid, txl.inputName, txl.inputConversion)
+		require.Equal(t, txl.expectedName, f.Name, "inputOid=%q inputName=%q inputConversion=%q", txl.inputOid, txl.inputName, txl.inputConversion)
 	}
 }
 
@@ -131,13 +131,13 @@ func TestTableInitGosmi(t *testing.T) {
 	err = s.Init()
 	require.NoError(t, err)
 
-	assert.Equal(t, "atTable", s.Tables[0].Name)
+	require.Equal(t, "atTable", s.Tables[0].Name)
 
-	assert.Len(t, s.Tables[0].Fields, 5)
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".999", Name: "foo", initialized: true})
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.1", Name: "atIfIndex", initialized: true, IsTag: true})
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.2", Name: "atPhysAddress", initialized: true, Conversion: "hwaddr"})
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.3", Name: "atNetAddress", initialized: true, IsTag: true})
+	require.Len(t, s.Tables[0].Fields, 5)
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".999", Name: "foo", initialized: true})
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.1", Name: "atIfIndex", initialized: true, IsTag: true})
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.2", Name: "atPhysAddress", initialized: true, Conversion: "hwaddr"})
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.3", Name: "atNetAddress", initialized: true, IsTag: true})
 }
 
 func TestSnmpInitGosmi(t *testing.T) {
@@ -160,12 +160,12 @@ func TestSnmpInitGosmi(t *testing.T) {
 	err = s.Init()
 	require.NoError(t, err)
 
-	assert.Len(t, s.Tables[0].Fields, 3)
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.1", Name: "atIfIndex", IsTag: true, initialized: true})
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.2", Name: "atPhysAddress", initialized: true, Conversion: "hwaddr"})
-	assert.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.3", Name: "atNetAddress", IsTag: true, initialized: true})
+	require.Len(t, s.Tables[0].Fields, 3)
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.1", Name: "atIfIndex", IsTag: true, initialized: true})
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.2", Name: "atPhysAddress", initialized: true, Conversion: "hwaddr"})
+	require.Contains(t, s.Tables[0].Fields, Field{Oid: ".1.3.6.1.2.1.3.1.1.3", Name: "atNetAddress", IsTag: true, initialized: true})
 
-	assert.Equal(t, Field{
+	require.Equal(t, Field{
 		Oid:         ".1.3.6.1.2.1.3.1.1.2",
 		Name:        "atPhysAddress",
 		Conversion:  "hwaddr",
@@ -197,36 +197,36 @@ func TestSnmpInit_noTranslateGosmi(t *testing.T) {
 	err := s.Init()
 	require.NoError(t, err)
 
-	assert.Equal(t, ".9.1.1.1.1", s.Fields[0].Oid)
-	assert.Equal(t, "one", s.Fields[0].Name)
-	assert.Equal(t, true, s.Fields[0].IsTag)
+	require.Equal(t, ".9.1.1.1.1", s.Fields[0].Oid)
+	require.Equal(t, "one", s.Fields[0].Name)
+	require.True(t, s.Fields[0].IsTag)
 
-	assert.Equal(t, ".9.1.1.1.2", s.Fields[1].Oid)
-	assert.Equal(t, "two", s.Fields[1].Name)
-	assert.Equal(t, false, s.Fields[1].IsTag)
+	require.Equal(t, ".9.1.1.1.2", s.Fields[1].Oid)
+	require.Equal(t, "two", s.Fields[1].Name)
+	require.False(t, s.Fields[1].IsTag)
 
-	assert.Equal(t, ".9.1.1.1.3", s.Fields[2].Oid)
-	assert.Equal(t, ".9.1.1.1.3", s.Fields[2].Name)
-	assert.Equal(t, false, s.Fields[2].IsTag)
+	require.Equal(t, ".9.1.1.1.3", s.Fields[2].Oid)
+	require.Equal(t, ".9.1.1.1.3", s.Fields[2].Name)
+	require.False(t, s.Fields[2].IsTag)
 
-	assert.Equal(t, ".9.1.1.1.4", s.Tables[0].Fields[0].Oid)
-	assert.Equal(t, "four", s.Tables[0].Fields[0].Name)
-	assert.Equal(t, true, s.Tables[0].Fields[0].IsTag)
+	require.Equal(t, ".9.1.1.1.4", s.Tables[0].Fields[0].Oid)
+	require.Equal(t, "four", s.Tables[0].Fields[0].Name)
+	require.True(t, s.Tables[0].Fields[0].IsTag)
 
-	assert.Equal(t, ".9.1.1.1.5", s.Tables[0].Fields[1].Oid)
-	assert.Equal(t, "five", s.Tables[0].Fields[1].Name)
-	assert.Equal(t, false, s.Tables[0].Fields[1].IsTag)
+	require.Equal(t, ".9.1.1.1.5", s.Tables[0].Fields[1].Oid)
+	require.Equal(t, "five", s.Tables[0].Fields[1].Name)
+	require.False(t, s.Tables[0].Fields[1].IsTag)
 
-	assert.Equal(t, ".9.1.1.1.6", s.Tables[0].Fields[2].Oid)
-	assert.Equal(t, ".9.1.1.1.6", s.Tables[0].Fields[2].Name)
-	assert.Equal(t, false, s.Tables[0].Fields[2].IsTag)
+	require.Equal(t, ".9.1.1.1.6", s.Tables[0].Fields[2].Oid)
+	require.Equal(t, ".9.1.1.1.6", s.Tables[0].Fields[2].Name)
+	require.False(t, s.Tables[0].Fields[2].IsTag)
 }
 
-//TestTableBuild_walk in snmp_test.go is split into two tests here,
-//noTranslate and Translate.
+// TestTableBuild_walk in snmp_test.go is split into two tests here,
+// noTranslate and Translate.
 //
-//This is only running with gosmi translator but should be valid with
-//netsnmp too.
+// This is only running with gosmi translator but should be valid with
+// netsnmp too.
 func TestTableBuild_walk_noTranslate(t *testing.T) {
 	tbl := Table{
 		Name:       "mytable",
@@ -267,7 +267,7 @@ func TestTableBuild_walk_noTranslate(t *testing.T) {
 
 	tb, err := tbl.Build(gosmiTsc, true, tr)
 	require.NoError(t, err)
-	assert.Equal(t, tb.Name, "mytable")
+	require.Equal(t, "mytable", tb.Name)
 	rtr1 := RTableRow{
 		Tags: map[string]string{
 			"myfield1": "foo",
@@ -309,11 +309,11 @@ func TestTableBuild_walk_noTranslate(t *testing.T) {
 			"myfield3": float64(9.999),
 		},
 	}
-	assert.Len(t, tb.Rows, 4)
-	assert.Contains(t, tb.Rows, rtr1)
-	assert.Contains(t, tb.Rows, rtr2)
-	assert.Contains(t, tb.Rows, rtr3)
-	assert.Contains(t, tb.Rows, rtr4)
+	require.Len(t, tb.Rows, 4)
+	require.Contains(t, tb.Rows, rtr1)
+	require.Contains(t, tb.Rows, rtr2)
+	require.Contains(t, tb.Rows, rtr3)
+	require.Contains(t, tb.Rows, rtr4)
 }
 
 func TestTableBuild_walk_Translate(t *testing.T) {
@@ -350,7 +350,7 @@ func TestTableBuild_walk_Translate(t *testing.T) {
 	tb, err := tbl.Build(gosmiTsc, true, tr)
 	require.NoError(t, err)
 
-	require.Equal(t, tb.Name, "atTable")
+	require.Equal(t, "atTable", tb.Name)
 
 	rtr1 := RTableRow{
 		Tags: map[string]string{
@@ -428,8 +428,8 @@ func TestTableBuild_noWalkGosmi(t *testing.T) {
 		Tags:   map[string]string{"myfield1": "baz", "myfield3": "234"},
 		Fields: map[string]interface{}{"myfield2": 234},
 	}
-	assert.Len(t, tb.Rows, 1)
-	assert.Contains(t, tb.Rows, rtr)
+	require.Len(t, tb.Rows, 1)
+	require.Contains(t, tb.Rows, rtr)
 }
 
 func TestGatherGosmi(t *testing.T) {
@@ -482,21 +482,21 @@ func TestGatherGosmi(t *testing.T) {
 	require.Len(t, acc.Metrics, 2)
 
 	m := acc.Metrics[0]
-	assert.Equal(t, "mytable", m.Measurement)
-	assert.Equal(t, "tsc", m.Tags[s.AgentHostTag])
-	assert.Equal(t, "baz", m.Tags["myfield1"])
-	assert.Len(t, m.Fields, 2)
-	assert.Equal(t, 234, m.Fields["myfield2"])
-	assert.Equal(t, "baz", m.Fields["myfield3"])
-	assert.False(t, tstart.After(m.Time))
-	assert.False(t, tstop.Before(m.Time))
+	require.Equal(t, "mytable", m.Measurement)
+	require.Equal(t, "tsc", m.Tags[s.AgentHostTag])
+	require.Equal(t, "baz", m.Tags["myfield1"])
+	require.Len(t, m.Fields, 2)
+	require.Equal(t, 234, m.Fields["myfield2"])
+	require.Equal(t, "baz", m.Fields["myfield3"])
+	require.False(t, tstart.After(m.Time))
+	require.False(t, tstop.Before(m.Time))
 
 	m2 := acc.Metrics[1]
-	assert.Equal(t, "myOtherTable", m2.Measurement)
-	assert.Equal(t, "tsc", m2.Tags[s.AgentHostTag])
-	assert.Equal(t, "baz", m2.Tags["myfield1"])
-	assert.Len(t, m2.Fields, 1)
-	assert.Equal(t, 123456, m2.Fields["myOtherField"])
+	require.Equal(t, "myOtherTable", m2.Measurement)
+	require.Equal(t, "tsc", m2.Tags[s.AgentHostTag])
+	require.Equal(t, "baz", m2.Tags["myfield1"])
+	require.Len(t, m2.Fields, 1)
+	require.Equal(t, 123456, m2.Fields["myOtherField"])
 }
 
 func TestGather_hostGosmi(t *testing.T) {
@@ -526,7 +526,7 @@ func TestGather_hostGosmi(t *testing.T) {
 
 	require.Len(t, acc.Metrics, 1)
 	m := acc.Metrics[0]
-	assert.Equal(t, "baz", m.Tags["host"])
+	require.Equal(t, "baz", m.Tags["host"])
 }
 
 func TestFieldConvertGosmi(t *testing.T) {
@@ -580,12 +580,14 @@ func TestFieldConvertGosmi(t *testing.T) {
 		{[]byte{0x00, 0x09, 0x3E, 0xE3, 0xF6, 0xD5, 0x3B, 0x60}, "hextoint:LittleEndian:uint64", uint64(6934371307618175232)},
 		{[]byte{0x00, 0x09, 0x3E, 0xE3}, "hextoint:LittleEndian:uint32", uint32(3812493568)},
 		{[]byte{0x00, 0x09}, "hextoint:LittleEndian:uint16", uint16(2304)},
+		{3, "enum", "testing"},
+		{3, "enum(1)", "testing(3)"},
 	}
 
 	for _, tc := range testTable {
-		act, err := fieldConvert(tc.conv, tc.input)
-		assert.NoError(t, err, "input=%T(%v) conv=%s expected=%T(%v)", tc.input, tc.input, tc.conv, tc.expected, tc.expected)
-		assert.EqualValues(t, tc.expected, act, "input=%T(%v) conv=%s expected=%T(%v)", tc.input, tc.input, tc.conv, tc.expected, tc.expected)
+		act, err := fieldConvert(getGosmiTr(t), tc.conv, gosnmp.SnmpPDU{Name: ".1.3.6.1.2.1.2.2.1.8", Value: tc.input})
+		require.NoError(t, err, "input=%T(%v) conv=%s expected=%T(%v)", tc.input, tc.input, tc.conv, tc.expected, tc.expected)
+		require.EqualValues(t, tc.expected, act, "input=%T(%v) conv=%s expected=%T(%v)", tc.input, tc.input, tc.conv, tc.expected, tc.expected)
 	}
 }
 
@@ -593,14 +595,14 @@ func TestSnmpTranslateCache_missGosmi(t *testing.T) {
 	gosmiSnmpTranslateCaches = nil
 	oid := "IF-MIB::ifPhysAddress.1"
 	mibName, oidNum, oidText, conversion, err := getGosmiTr(t).SnmpTranslate(oid)
-	assert.Len(t, gosmiSnmpTranslateCaches, 1)
+	require.Len(t, gosmiSnmpTranslateCaches, 1)
 	stc := gosmiSnmpTranslateCaches[oid]
-	assert.NotNil(t, stc)
-	assert.Equal(t, mibName, stc.mibName)
-	assert.Equal(t, oidNum, stc.oidNum)
-	assert.Equal(t, oidText, stc.oidText)
-	assert.Equal(t, conversion, stc.conversion)
-	assert.Equal(t, err, stc.err)
+	require.NotNil(t, stc)
+	require.Equal(t, mibName, stc.mibName)
+	require.Equal(t, oidNum, stc.oidNum)
+	require.Equal(t, oidText, stc.oidText)
+	require.Equal(t, conversion, stc.conversion)
+	require.Equal(t, err, stc.err)
 }
 
 func TestSnmpTranslateCache_hitGosmi(t *testing.T) {
@@ -614,11 +616,11 @@ func TestSnmpTranslateCache_hitGosmi(t *testing.T) {
 		},
 	}
 	mibName, oidNum, oidText, conversion, err := getGosmiTr(t).SnmpTranslate("foo")
-	assert.Equal(t, "a", mibName)
-	assert.Equal(t, "b", oidNum)
-	assert.Equal(t, "c", oidText)
-	assert.Equal(t, "d", conversion)
-	assert.Equal(t, fmt.Errorf("e"), err)
+	require.Equal(t, "a", mibName)
+	require.Equal(t, "b", oidNum)
+	require.Equal(t, "c", oidText)
+	require.Equal(t, "d", conversion)
+	require.Equal(t, fmt.Errorf("e"), err)
 	gosmiSnmpTranslateCaches = nil
 }
 
@@ -626,14 +628,14 @@ func TestSnmpTableCache_missGosmi(t *testing.T) {
 	gosmiSnmpTableCaches = nil
 	oid := ".1.0.0.0"
 	mibName, oidNum, oidText, fields, err := getGosmiTr(t).SnmpTable(oid)
-	assert.Len(t, gosmiSnmpTableCaches, 1)
+	require.Len(t, gosmiSnmpTableCaches, 1)
 	stc := gosmiSnmpTableCaches[oid]
-	assert.NotNil(t, stc)
-	assert.Equal(t, mibName, stc.mibName)
-	assert.Equal(t, oidNum, stc.oidNum)
-	assert.Equal(t, oidText, stc.oidText)
-	assert.Equal(t, fields, stc.fields)
-	assert.Equal(t, err, stc.err)
+	require.NotNil(t, stc)
+	require.Equal(t, mibName, stc.mibName)
+	require.Equal(t, oidNum, stc.oidNum)
+	require.Equal(t, oidText, stc.oidText)
+	require.Equal(t, fields, stc.fields)
+	require.Equal(t, err, stc.err)
 }
 
 func TestSnmpTableCache_hitGosmi(t *testing.T) {
@@ -647,11 +649,11 @@ func TestSnmpTableCache_hitGosmi(t *testing.T) {
 		},
 	}
 	mibName, oidNum, oidText, fields, err := getGosmiTr(t).SnmpTable("foo")
-	assert.Equal(t, "a", mibName)
-	assert.Equal(t, "b", oidNum)
-	assert.Equal(t, "c", oidText)
-	assert.Equal(t, []Field{{Name: "d"}}, fields)
-	assert.Equal(t, fmt.Errorf("e"), err)
+	require.Equal(t, "a", mibName)
+	require.Equal(t, "b", oidNum)
+	require.Equal(t, "c", oidText)
+	require.Equal(t, []Field{{Name: "d"}}, fields)
+	require.Equal(t, fmt.Errorf("e"), err)
 }
 
 func TestTableJoin_walkGosmi(t *testing.T) {
@@ -696,7 +698,7 @@ func TestTableJoin_walkGosmi(t *testing.T) {
 	tb, err := tbl.Build(gosmiTsc, true, tr)
 	require.NoError(t, err)
 
-	assert.Equal(t, tb.Name, "mytable")
+	require.Equal(t, "mytable", tb.Name)
 	rtr1 := RTableRow{
 		Tags: map[string]string{
 			"myfield1": "instance",
@@ -730,10 +732,10 @@ func TestTableJoin_walkGosmi(t *testing.T) {
 			"myfield3": 3,
 		},
 	}
-	assert.Len(t, tb.Rows, 3)
-	assert.Contains(t, tb.Rows, rtr1)
-	assert.Contains(t, tb.Rows, rtr2)
-	assert.Contains(t, tb.Rows, rtr3)
+	require.Len(t, tb.Rows, 3)
+	require.Contains(t, tb.Rows, rtr1)
+	require.Contains(t, tb.Rows, rtr2)
+	require.Contains(t, tb.Rows, rtr3)
 }
 
 func TestTableOuterJoin_walkGosmi(t *testing.T) {
@@ -779,7 +781,7 @@ func TestTableOuterJoin_walkGosmi(t *testing.T) {
 	tb, err := tbl.Build(gosmiTsc, true, tr)
 	require.NoError(t, err)
 
-	assert.Equal(t, tb.Name, "mytable")
+	require.Equal(t, "mytable", tb.Name)
 	rtr1 := RTableRow{
 		Tags: map[string]string{
 			"myfield1": "instance",
@@ -822,11 +824,11 @@ func TestTableOuterJoin_walkGosmi(t *testing.T) {
 			"myfield5": 1,
 		},
 	}
-	assert.Len(t, tb.Rows, 4)
-	assert.Contains(t, tb.Rows, rtr1)
-	assert.Contains(t, tb.Rows, rtr2)
-	assert.Contains(t, tb.Rows, rtr3)
-	assert.Contains(t, tb.Rows, rtr4)
+	require.Len(t, tb.Rows, 4)
+	require.Contains(t, tb.Rows, rtr1)
+	require.Contains(t, tb.Rows, rtr2)
+	require.Contains(t, tb.Rows, rtr3)
+	require.Contains(t, tb.Rows, rtr4)
 }
 
 func TestTableJoinNoIndexAsTag_walkGosmi(t *testing.T) {
@@ -871,7 +873,7 @@ func TestTableJoinNoIndexAsTag_walkGosmi(t *testing.T) {
 	tb, err := tbl.Build(gosmiTsc, true, tr)
 	require.NoError(t, err)
 
-	assert.Equal(t, tb.Name, "mytable")
+	require.Equal(t, "mytable", tb.Name)
 	rtr1 := RTableRow{
 		Tags: map[string]string{
 			"myfield1": "instance",
@@ -905,10 +907,10 @@ func TestTableJoinNoIndexAsTag_walkGosmi(t *testing.T) {
 			"myfield3": 3,
 		},
 	}
-	assert.Len(t, tb.Rows, 3)
-	assert.Contains(t, tb.Rows, rtr1)
-	assert.Contains(t, tb.Rows, rtr2)
-	assert.Contains(t, tb.Rows, rtr3)
+	require.Len(t, tb.Rows, 3)
+	require.Contains(t, tb.Rows, rtr1)
+	require.Contains(t, tb.Rows, rtr2)
+	require.Contains(t, tb.Rows, rtr3)
 }
 
 func BenchmarkMibLoading(b *testing.B) {

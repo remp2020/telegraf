@@ -139,6 +139,7 @@ type OplogStats struct {
 // ReplSetMember stores information related to a replica set member
 type ReplSetMember struct {
 	Name       string    `bson:"name"`
+	Health     int64     `bson:"health"`
 	State      int64     `bson:"state"`
 	StateStr   string    `bson:"stateStr"`
 	OptimeDate time.Time `bson:"optimeDate"`
@@ -323,12 +324,12 @@ type DurTiming struct {
 
 // DurStats stores information related to journaling statistics.
 type DurStats struct {
-	Commits            int64 `bson:"commits"`
-	JournaledMB        int64 `bson:"journaledMB"`
-	WriteToDataFilesMB int64 `bson:"writeToDataFilesMB"`
-	Compression        int64 `bson:"compression"`
-	CommitsInWriteLock int64 `bson:"commitsInWriteLock"`
-	EarlyCommits       int64 `bson:"earlyCommits"`
+	Commits            float64 `bson:"commits"`
+	JournaledMB        float64 `bson:"journaledMB"`
+	WriteToDataFilesMB float64 `bson:"writeToDataFilesMB"`
+	Compression        float64 `bson:"compression"`
+	CommitsInWriteLock float64 `bson:"commitsInWriteLock"`
+	EarlyCommits       float64 `bson:"earlyCommits"`
 	TimeMs             DurTiming
 }
 
@@ -783,9 +784,11 @@ type StatLine struct {
 	NetOut, NetOutCnt                        int64
 	NumConnections                           int64
 	ReplSetName                              string
+	ReplHealthAvg                            float64
 	NodeType                                 string
 	NodeState                                string
 	NodeStateInt                             int64
+	NodeHealthInt                            int64
 
 	// Replicated Metrics fields
 	ReplNetworkBytes                    int64
@@ -1025,7 +1028,11 @@ func NewStatLine(oldMongo, newMongo MongoStatus, key string, all bool, sampleSec
 	if newStat.Metrics != nil && oldStat.Metrics != nil {
 		if newStat.Metrics.TTL != nil && oldStat.Metrics.TTL != nil {
 			returnVal.Passes, returnVal.PassesCnt = diff(newStat.Metrics.TTL.Passes, oldStat.Metrics.TTL.Passes, sampleSecs)
-			returnVal.DeletedDocuments, returnVal.DeletedDocumentsCnt = diff(newStat.Metrics.TTL.DeletedDocuments, oldStat.Metrics.TTL.DeletedDocuments, sampleSecs)
+			returnVal.DeletedDocuments, returnVal.DeletedDocumentsCnt = diff(
+				newStat.Metrics.TTL.DeletedDocuments,
+				oldStat.Metrics.TTL.DeletedDocuments,
+				sampleSecs,
+			)
 		}
 		if newStat.Metrics.Cursor != nil && oldStat.Metrics.Cursor != nil {
 			returnVal.TimedOutC, returnVal.TimedOutCCnt = diff(newStat.Metrics.Cursor.TimedOut, oldStat.Metrics.Cursor.TimedOut, sampleSecs)
@@ -1166,7 +1173,11 @@ func NewStatLine(oldMongo, newMongo MongoStatus, key string, all bool, sampleSec
 		returnVal.DataHandlesCurrentlyActive = newStat.WiredTiger.DataHandle.DataHandlesCurrentlyActive
 	}
 	if newStat.WiredTiger != nil && oldStat.WiredTiger != nil {
-		returnVal.Flushes, returnVal.FlushesCnt = diff(newStat.WiredTiger.Transaction.TransCheckpoints, oldStat.WiredTiger.Transaction.TransCheckpoints, sampleSecs)
+		returnVal.Flushes, returnVal.FlushesCnt = diff(
+			newStat.WiredTiger.Transaction.TransCheckpoints,
+			oldStat.WiredTiger.Transaction.TransCheckpoints,
+			sampleSecs,
+		)
 	} else if newStat.BackgroundFlushing != nil && oldStat.BackgroundFlushing != nil {
 		returnVal.Flushes, returnVal.FlushesCnt = diff(newStat.BackgroundFlushing.Flushes, oldStat.BackgroundFlushing.Flushes, sampleSecs)
 	}
@@ -1211,16 +1222,18 @@ func NewStatLine(oldMongo, newMongo MongoStatus, key string, all bool, sampleSec
 		oldStat.ExtraInfo.PageFaults != nil && newStat.ExtraInfo.PageFaults != nil {
 		returnVal.Faults, returnVal.FaultsCnt = diff(*(newStat.ExtraInfo.PageFaults), *(oldStat.ExtraInfo.PageFaults), sampleSecs)
 	}
-	if !returnVal.IsMongos && oldStat.Locks != nil {
-		globalCheck, hasGlobal := oldStat.Locks["Global"]
-		if hasGlobal && globalCheck.AcquireCount != nil {
+	if !returnVal.IsMongos && oldStat.Locks != nil && newStat.Locks != nil {
+		globalCheckOld, hasGlobalOld := oldStat.Locks["Global"]
+		globalCheckNew, hasGlobalNew := newStat.Locks["Global"]
+		if hasGlobalOld && globalCheckOld.AcquireCount != nil && hasGlobalNew && globalCheckNew.AcquireCount != nil {
 			// This appears to be a 3.0+ server so the data in these fields do *not* refer to
 			// actual namespaces and thus we can't compute lock %.
 			returnVal.HighestLocked = nil
 
 			// Check if it's a 3.0+ MMAP server so we can still compute collection locks
-			collectionCheck, hasCollection := oldStat.Locks["Collection"]
-			if hasCollection && collectionCheck.AcquireWaitCount != nil {
+			collectionCheckOld, hasCollectionOld := oldStat.Locks["Collection"]
+			collectionCheckNew, hasCollectionNew := newStat.Locks["Collection"]
+			if hasCollectionOld && collectionCheckOld.AcquireWaitCount != nil && hasCollectionNew && collectionCheckNew.AcquireWaitCount != nil {
 				readWaitCountDiff := newStat.Locks["Collection"].AcquireWaitCount.Read - oldStat.Locks["Collection"].AcquireWaitCount.Read
 				readTotalCountDiff := newStat.Locks["Collection"].AcquireCount.Read - oldStat.Locks["Collection"].AcquireCount.Read
 				writeWaitCountDiff := newStat.Locks["Collection"].AcquireWaitCount.Write - oldStat.Locks["Collection"].AcquireWaitCount.Write
@@ -1282,8 +1295,10 @@ func NewStatLine(oldMongo, newMongo MongoStatus, key string, all bool, sampleSec
 		//If we have wiredtiger stats, use those instead
 		if newStat.GlobalLock.CurrentQueue != nil {
 			if hasWT {
-				returnVal.QueuedReaders = newStat.GlobalLock.CurrentQueue.Readers + newStat.GlobalLock.ActiveClients.Readers - newStat.WiredTiger.Concurrent.Read.Out
-				returnVal.QueuedWriters = newStat.GlobalLock.CurrentQueue.Writers + newStat.GlobalLock.ActiveClients.Writers - newStat.WiredTiger.Concurrent.Write.Out
+				returnVal.QueuedReaders = newStat.GlobalLock.CurrentQueue.Readers + newStat.GlobalLock.ActiveClients.Readers -
+					newStat.WiredTiger.Concurrent.Read.Out
+				returnVal.QueuedWriters = newStat.GlobalLock.CurrentQueue.Writers + newStat.GlobalLock.ActiveClients.Writers -
+					newStat.WiredTiger.Concurrent.Write.Out
 				if returnVal.QueuedReaders < 0 {
 					returnVal.QueuedReaders = 0
 				}
@@ -1332,6 +1347,8 @@ func NewStatLine(oldMongo, newMongo MongoStatus, key string, all bool, sampleSec
 					returnVal.NodeState = member.StateStr
 					// Store my state integer
 					returnVal.NodeStateInt = member.State
+					// Store my health integer
+					returnVal.NodeHealthInt = member.Health
 
 					if member.State == 1 {
 						// I'm the master
@@ -1355,6 +1372,26 @@ func NewStatLine(oldMongo, newMongo MongoStatus, key string, all bool, sampleSec
 				} else {
 					returnVal.ReplLag = lag
 				}
+			}
+
+			// Preparations for the average health state of the replica-set
+			replMemberCount := len(newReplStat.Members)
+			replMemberHealthyCount := 0
+
+			// Second for-loop is needed, because of break-construct above
+			for _, member := range newReplStat.Members {
+				// Count only healthy members for the average health state of the replica-set
+				if member.Health == 1 {
+					replMemberHealthyCount++
+				}
+			}
+
+			// Calculate the average health state of the replica-set (For precise monitoring alerts)
+			// To detect if a member is unhealthy from the perspective of another member and also how bad the replica-set health is
+			if replMemberCount > 0 {
+				returnVal.ReplHealthAvg = float64(replMemberHealthyCount) / float64(replMemberCount)
+			} else {
+				returnVal.ReplHealthAvg = 0.00
 			}
 		}
 	}

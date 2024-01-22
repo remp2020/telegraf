@@ -14,11 +14,12 @@ import (
 
 	"github.com/dynatrace-oss/dynatrace-metric-utils-go/metric/apiconstants"
 	"github.com/dynatrace-oss/dynatrace-metric-utils-go/metric/dimensions"
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNilMetrics(t *testing.T) {
@@ -34,7 +35,7 @@ func TestNilMetrics(t *testing.T) {
 	}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -57,7 +58,7 @@ func TestEmptyMetricsSlice(t *testing.T) {
 	d := &Dynatrace{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 
 	err := d.Init()
@@ -81,7 +82,7 @@ func TestMockURL(t *testing.T) {
 	d := &Dynatrace{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 
 	err := d.Init()
@@ -152,7 +153,7 @@ func TestSendMetrics(t *testing.T) {
 
 	d := &Dynatrace{
 		URL:               ts.URL,
-		APIToken:          "123",
+		APIToken:          config.NewSecret([]byte("123")),
 		Log:               testutil.Logger{},
 		AddCounterMetrics: []string{},
 	}
@@ -165,8 +166,10 @@ func TestSendMetrics(t *testing.T) {
 	// Init metrics
 
 	// Simple metrics are exported as a gauge unless in additional_counters
-	expected = append(expected, "simple_metric.value,dt.metrics.source=telegraf gauge,3.14 1289430000000")
-	expected = append(expected, "simple_metric.counter,dt.metrics.source=telegraf count,delta=5 1289430000000")
+	expected = append(expected,
+		"simple_metric.value,dt.metrics.source=telegraf gauge,3.14 1289430000000",
+		"simple_metric.counter,dt.metrics.source=telegraf count,delta=5 1289430000000",
+	)
 	d.AddCounterMetrics = append(d.AddCounterMetrics, "simple_metric.counter")
 	m1 := metric.New(
 		"simple_metric",
@@ -176,8 +179,10 @@ func TestSendMetrics(t *testing.T) {
 	)
 
 	// Even if Type() returns counter, all metrics are treated as a gauge unless explicitly added to additional_counters
-	expected = append(expected, "counter_type.value,dt.metrics.source=telegraf gauge,3.14 1289430000000")
-	expected = append(expected, "counter_type.counter,dt.metrics.source=telegraf count,delta=5 1289430000000")
+	expected = append(expected,
+		"counter_type.value,dt.metrics.source=telegraf gauge,3.14 1289430000000",
+		"counter_type.counter,dt.metrics.source=telegraf count,delta=5 1289430000000",
+	)
 	d.AddCounterMetrics = append(d.AddCounterMetrics, "counter_type.counter")
 	m2 := metric.New(
 		"counter_type",
@@ -187,12 +192,14 @@ func TestSendMetrics(t *testing.T) {
 		telegraf.Counter,
 	)
 
-	expected = append(expected, "complex_metric.int,dt.metrics.source=telegraf gauge,1 1289430000000")
-	expected = append(expected, "complex_metric.int64,dt.metrics.source=telegraf gauge,2 1289430000000")
-	expected = append(expected, "complex_metric.float,dt.metrics.source=telegraf gauge,3 1289430000000")
-	expected = append(expected, "complex_metric.float64,dt.metrics.source=telegraf gauge,4 1289430000000")
-	expected = append(expected, "complex_metric.true,dt.metrics.source=telegraf gauge,1 1289430000000")
-	expected = append(expected, "complex_metric.false,dt.metrics.source=telegraf gauge,0 1289430000000")
+	expected = append(expected,
+		"complex_metric.int,dt.metrics.source=telegraf gauge,1 1289430000000",
+		"complex_metric.int64,dt.metrics.source=telegraf gauge,2 1289430000000",
+		"complex_metric.float,dt.metrics.source=telegraf gauge,3 1289430000000",
+		"complex_metric.float64,dt.metrics.source=telegraf gauge,4 1289430000000",
+		"complex_metric.true,dt.metrics.source=telegraf gauge,1 1289430000000",
+		"complex_metric.false,dt.metrics.source=telegraf gauge,0 1289430000000",
+	)
 	m3 := metric.New(
 		"complex_metric",
 		map[string]string{},
@@ -213,7 +220,7 @@ func TestSendSingleMetricWithUnorderedTags(t *testing.T) {
 		require.NoError(t, err)
 		bodyString := string(bodyBytes)
 		// use regex because dimension order isn't guaranteed
-		require.Equal(t, len(bodyString), 94)
+		require.Len(t, bodyString, 94)
 		require.Regexp(t, regexp.MustCompile(`^mymeasurement\.myfield`), bodyString)
 		require.Regexp(t, regexp.MustCompile(`a=test`), bodyString)
 		require.Regexp(t, regexp.MustCompile(`b=test`), bodyString)
@@ -229,7 +236,7 @@ func TestSendSingleMetricWithUnorderedTags(t *testing.T) {
 	d := &Dynatrace{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -270,7 +277,7 @@ func TestSendMetricWithoutTags(t *testing.T) {
 	d := &Dynatrace{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -301,7 +308,7 @@ func TestSendMetricWithUpperCaseTagKeys(t *testing.T) {
 		bodyString := string(bodyBytes)
 
 		// use regex because dimension order isn't guaranteed
-		require.Equal(t, len(bodyString), 100)
+		require.Len(t, bodyString, 100)
 		require.Regexp(t, regexp.MustCompile(`^mymeasurement\.myfield`), bodyString)
 		require.Regexp(t, regexp.MustCompile(`aaa=test`), bodyString)
 		require.Regexp(t, regexp.MustCompile(`b_b=test`), bodyString)
@@ -317,7 +324,7 @@ func TestSendMetricWithUpperCaseTagKeys(t *testing.T) {
 	d := &Dynatrace{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -347,7 +354,7 @@ func TestSendBooleanMetricWithoutTags(t *testing.T) {
 		require.NoError(t, err)
 		bodyString := string(bodyBytes)
 		// use regex because field order isn't guaranteed
-		require.Equal(t, len(bodyString), 132)
+		require.Len(t, bodyString, 132)
 		require.Contains(t, bodyString, "mymeasurement.yes,dt.metrics.source=telegraf gauge,1 1289430000000")
 		require.Contains(t, bodyString, "mymeasurement.no,dt.metrics.source=telegraf gauge,0 1289430000000")
 		err = json.NewEncoder(w).Encode(`{"linesOk":1,"linesInvalid":0,"error":null}`)
@@ -358,7 +365,7 @@ func TestSendBooleanMetricWithoutTags(t *testing.T) {
 	d := &Dynatrace{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -388,7 +395,7 @@ func TestSendMetricWithDefaultDimensions(t *testing.T) {
 		require.NoError(t, err)
 		bodyString := string(bodyBytes)
 		// use regex because field order isn't guaranteed
-		require.Equal(t, len(bodyString), 78)
+		require.Len(t, bodyString, 78)
 		require.Regexp(t, regexp.MustCompile("^mymeasurement.value"), bodyString)
 		require.Regexp(t, regexp.MustCompile("dt.metrics.source=telegraf"), bodyString)
 		require.Regexp(t, regexp.MustCompile("dim=value"), bodyString)
@@ -401,7 +408,7 @@ func TestSendMetricWithDefaultDimensions(t *testing.T) {
 	d := &Dynatrace{DefaultDimensions: map[string]string{"dim": "value"}}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -431,7 +438,7 @@ func TestMetricDimensionsOverrideDefault(t *testing.T) {
 		require.NoError(t, err)
 		bodyString := string(bodyBytes)
 		// use regex because field order isn't guaranteed
-		require.Equal(t, len(bodyString), 80)
+		require.Len(t, bodyString, 80)
 		require.Regexp(t, regexp.MustCompile("^mymeasurement.value"), bodyString)
 		require.Regexp(t, regexp.MustCompile("dt.metrics.source=telegraf"), bodyString)
 		require.Regexp(t, regexp.MustCompile("dim=metric"), bodyString)
@@ -444,7 +451,7 @@ func TestMetricDimensionsOverrideDefault(t *testing.T) {
 	d := &Dynatrace{DefaultDimensions: map[string]string{"dim": "default"}}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -474,7 +481,7 @@ func TestStaticDimensionsOverrideMetric(t *testing.T) {
 		require.NoError(t, err)
 		bodyString := string(bodyBytes)
 		// use regex because field order isn't guaranteed
-		require.Equal(t, len(bodyString), 53)
+		require.Len(t, bodyString, 53)
 		require.Regexp(t, regexp.MustCompile("^mymeasurement.value"), bodyString)
 		require.Regexp(t, regexp.MustCompile("dim=static"), bodyString)
 		require.Regexp(t, regexp.MustCompile("gauge,32 1289430000000$"), bodyString)
@@ -486,7 +493,7 @@ func TestStaticDimensionsOverrideMetric(t *testing.T) {
 	d := &Dynatrace{DefaultDimensions: map[string]string{"dim": "default"}}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = testutil.Logger{}
 	err := d.Init()
 	require.NoError(t, err)
@@ -516,7 +523,7 @@ type loggerStub struct {
 	testutil.Logger
 }
 
-func (l loggerStub) Warnf(format string, args ...interface{}) {
+func (l loggerStub) Warnf(_ string, _ ...interface{}) {
 	warnfCalledTimes++
 }
 
@@ -532,7 +539,7 @@ func TestSendUnsupportedMetric(t *testing.T) {
 	logStub := loggerStub{}
 
 	d.URL = ts.URL
-	d.APIToken = "123"
+	d.APIToken = config.NewSecret([]byte("123"))
 	d.Log = logStub
 	err := d.Init()
 	require.NoError(t, err)

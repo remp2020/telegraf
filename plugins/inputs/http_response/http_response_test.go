@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 // TODO: Windows - should be enabled for Windows when https://github.com/influxdata/telegraf/issues/8451 is fixed
 
@@ -20,6 +19,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/testutil"
 )
@@ -96,19 +96,29 @@ func setUpTestMux() http.Handler {
 	mux.HandleFunc("/good", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Server", "MyTestServer")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		//nolint:errcheck,revive
 		fmt.Fprintf(w, "hit the good page!")
 	})
+	mux.HandleFunc("/form", func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		defer req.Body.Close()
+		if err != nil {
+			http.Error(w, "couldn't read request body", http.StatusBadRequest)
+			return
+		}
+		if string(body) != "list=foobar&list=fizbuzz&test=42" {
+			fmt.Println(string(body))
+			w.WriteHeader(http.StatusBadRequest)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	})
 	mux.HandleFunc("/invalidUTF8", func(w http.ResponseWriter, req *http.Request) {
-		//nolint:errcheck,revive
-		w.Write([]byte{0xff, 0xfe, 0xfd})
+		w.Write([]byte{0xff, 0xfe, 0xfd}) //nolint:errcheck // ignore the returned error as the test will fail anyway
 	})
 	mux.HandleFunc("/noheader", func(w http.ResponseWriter, req *http.Request) {
-		//nolint:errcheck,revive
 		fmt.Fprintf(w, "hit the good page!")
 	})
 	mux.HandleFunc("/jsonresponse", func(w http.ResponseWriter, req *http.Request) {
-		//nolint:errcheck,revive
 		fmt.Fprintf(w, "\"service_status\": \"up\", \"healthy\" : \"true\"")
 	})
 	mux.HandleFunc("/badredirect", func(w http.ResponseWriter, req *http.Request) {
@@ -119,22 +129,19 @@ func setUpTestMux() http.Handler {
 			http.Error(w, "method wasn't post", http.StatusMethodNotAllowed)
 			return
 		}
-		//nolint:errcheck,revive
 		fmt.Fprintf(w, "used post correctly!")
 	})
 	mux.HandleFunc("/musthaveabody", func(w http.ResponseWriter, req *http.Request) {
 		body, err := io.ReadAll(req.Body)
-		//nolint:errcheck,revive
-		req.Body.Close()
+		defer req.Body.Close()
 		if err != nil {
 			http.Error(w, "couldn't read request body", http.StatusBadRequest)
 			return
 		}
-		if string(body) == "" {
+		if len(body) == 0 {
 			http.Error(w, "body was empty", http.StatusBadRequest)
 			return
 		}
-		//nolint:errcheck,revive
 		fmt.Fprintf(w, "sent a body!")
 	})
 	mux.HandleFunc("/twosecondnap", func(w http.ResponseWriter, req *http.Request) {
@@ -146,7 +153,14 @@ func setUpTestMux() http.Handler {
 	return mux
 }
 
-func checkOutput(t *testing.T, acc *testutil.Accumulator, presentFields map[string]interface{}, presentTags map[string]interface{}, absentFields []string, absentTags []string) {
+func checkOutput(
+	t *testing.T,
+	acc *testutil.Accumulator,
+	presentFields map[string]interface{},
+	presentTags map[string]interface{},
+	absentFields []string,
+	absentTags []string,
+) {
 	t.Helper()
 	if presentFields != nil {
 		checkFields(t, presentFields, acc)
@@ -168,8 +182,10 @@ func checkOutput(t *testing.T, acc *testutil.Accumulator, presentFields map[stri
 func TestHeaders(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cHeader := r.Header.Get("Content-Type")
+		uaHeader := r.Header.Get("User-Agent")
 		require.Equal(t, "Hello", r.Host)
 		require.Equal(t, "application/json", cHeader)
+		require.Equal(t, internal.ProductToken(), uaHeader)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
@@ -308,6 +324,46 @@ func TestResponseBodyField(t *testing.T) {
 		"server": nil,
 		"method": "GET",
 		"result": "body_read_error",
+	}
+	checkOutput(t, &acc, expectedFields, expectedTags, nil, nil)
+}
+
+func TestResponseBodyFormField(t *testing.T) {
+	mux := setUpTestMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	h := &HTTPResponse{
+		Log:  testutil.Logger{},
+		URLs: []string{ts.URL + "/form"},
+		BodyForm: map[string][]string{
+			"test": {"42"},
+			"list": {"foobar", "fizbuzz"},
+		},
+		Method: "POST",
+		Headers: map[string]string{
+			"Content-Type": "application/x-www-form-urlencoded",
+		},
+		ResponseTimeout:   config.Duration(time.Second * 20),
+		ResponseBodyField: "my_body_field",
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, h.Gather(&acc))
+
+	expectedFields := map[string]interface{}{
+		"http_response_code": http.StatusOK,
+		"result_type":        "success",
+		"result_code":        0,
+		"response_time":      nil,
+		"content_length":     nil,
+		"my_body_field":      "",
+	}
+	expectedTags := map[string]interface{}{
+		"server":      nil,
+		"method":      "POST",
+		"status_code": "200",
+		"result":      "success",
 	}
 	checkOutput(t, &acc, expectedFields, expectedTags, nil, nil)
 }
@@ -1111,8 +1167,8 @@ func TestBasicAuth(t *testing.T) {
 		Body:            "{ 'test': 'data'}",
 		Method:          "GET",
 		ResponseTimeout: config.Duration(time.Second * 20),
-		Username:        "me",
-		Password:        "mypassword",
+		Username:        config.NewSecret([]byte("me")),
+		Password:        config.NewSecret([]byte("mypassword")),
 		Headers: map[string]string{
 			"Content-Type": "application/json",
 		},

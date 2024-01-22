@@ -1,22 +1,40 @@
 # Parser Processor Plugin
 
-This plugin parses defined fields containing the specified data format and
-creates new metrics based on the contents of the field.
+This plugin parses defined fields or tags containing the specified data format
+and creates new metrics based on the contents of the field or tag.
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
 ## Configuration
 
 ```toml @sample.conf
-# Parse a value in a specified field/tag(s) and add the result in a new metric
+# Parse a value in a specified field(s)/tag(s) and add the result in a new metric
 [[processors.parser]]
   ## The name of the fields whose value will be parsed.
   parse_fields = ["message"]
 
-  ## If true, incoming metrics are not emitted.
-  drop_original = false
+  ## The name of the tags whose value will be parsed.
+  # parse_tags = []
 
-  ## If set to override, emitted metrics will be merged by overriding the
-  ## original metric using the newly parsed metrics.
-  merge = "override"
+  ## If true, incoming metrics are not emitted.
+  # drop_original = false
+
+  ## Merge Behavior
+  ## Only has effect when drop_original is set to false. Possible options
+  ## include:
+  ##  * override: emitted metrics are merged by overriding the original metric
+  ##    using the newly parsed metrics, but retains the original metric
+  ##    timestamp.
+  ##  * override-with-timestamp: the same as "override", but the timestamp is
+  ##    set based on the new metrics if present.
+  # merge = ""
 
   ## The dataformat to be read from files
   ## Each data format has its own unique set of configuration options, read

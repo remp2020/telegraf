@@ -9,16 +9,16 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/inputs/system"
+	"github.com/shirou/gopsutil/v3/disk"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type DiskStats struct {
 	ps system.PS
 
-	LegacyMountPoints []string `toml:"mountpoints" deprecated:"0.10.2;2.0.0;use 'mount_points' instead"`
+	LegacyMountPoints []string `toml:"mountpoints" deprecated:"0.10.2;1.30.0;use 'mount_points' instead"`
 
 	MountPoints     []string `toml:"mount_points"`
 	IgnoreFS        []string `toml:"ignore_fs"`
@@ -47,34 +47,49 @@ func (ds *DiskStats) Init() error {
 func (ds *DiskStats) Gather(acc telegraf.Accumulator) error {
 	disks, partitions, err := ds.ps.DiskUsage(ds.MountPoints, ds.IgnoreMountOpts, ds.IgnoreFS)
 	if err != nil {
-		return fmt.Errorf("error getting disk usage info: %s", err)
+		return fmt.Errorf("error getting disk usage info: %w", err)
 	}
 	for i, du := range disks {
 		if du.Total == 0 {
 			// Skip dummy filesystem (procfs, cgroupfs, ...)
 			continue
 		}
+
+		device := partitions[i].Device
 		mountOpts := MountOptions(partitions[i].Opts)
 		tags := map[string]string{
 			"path":   du.Path,
-			"device": strings.ReplaceAll(partitions[i].Device, "/dev/", ""),
+			"device": strings.ReplaceAll(device, "/dev/", ""),
 			"fstype": du.Fstype,
 			"mode":   mountOpts.Mode(),
 		}
+
+		label, err := disk.Label(strings.TrimPrefix(device, "/dev/"))
+		if err == nil && label != "" {
+			tags["label"] = label
+		}
+
 		var usedPercent float64
 		if du.Used+du.Free > 0 {
 			usedPercent = float64(du.Used) /
 				(float64(du.Used) + float64(du.Free)) * 100
 		}
 
+		var inodesUsedPercent float64
+		if du.InodesUsed+du.InodesFree > 0 {
+			inodesUsedPercent = float64(du.InodesUsed) /
+				(float64(du.InodesUsed) + float64(du.InodesFree)) * 100
+		}
+
 		fields := map[string]interface{}{
-			"total":        du.Total,
-			"free":         du.Free,
-			"used":         du.Used,
-			"used_percent": usedPercent,
-			"inodes_total": du.InodesTotal,
-			"inodes_free":  du.InodesFree,
-			"inodes_used":  du.InodesUsed,
+			"total":               du.Total,
+			"free":                du.Free,
+			"used":                du.Used,
+			"used_percent":        usedPercent,
+			"inodes_total":        du.InodesTotal,
+			"inodes_free":         du.InodesFree,
+			"inodes_used":         du.InodesUsed,
+			"inodes_used_percent": inodesUsedPercent,
 		}
 		acc.AddGauge("disk", fields, tags)
 	}
@@ -89,9 +104,8 @@ func (opts MountOptions) Mode() string {
 		return "rw"
 	} else if opts.exists("ro") {
 		return "ro"
-	} else {
-		return "unknown"
 	}
+	return "unknown"
 }
 
 func (opts MountOptions) exists(opt string) bool {

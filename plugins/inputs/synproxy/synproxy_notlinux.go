@@ -1,5 +1,4 @@
 //go:build !linux
-// +build !linux
 
 package synproxy
 
@@ -13,7 +12,7 @@ func (k *Synproxy) Init() error {
 	return nil
 }
 
-func (k *Synproxy) Gather(acc telegraf.Accumulator) error {
+func (*Synproxy) Gather(_ telegraf.Accumulator) error {
 	return nil
 }
 

@@ -3,13 +3,13 @@ package kafka
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
-	"github.com/Shopify/sarama"
-	"github.com/gofrs/uuid"
+	"github.com/IBM/sarama"
+	"github.com/gofrs/uuid/v5"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/common/kafka"
@@ -18,7 +18,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -51,6 +50,8 @@ type Kafka struct {
 
 	kafka.WriteConfig
 
+	kafka.Logger
+
 	Log telegraf.Logger `toml:"-"`
 
 	saramaConfig *sarama.Config
@@ -64,26 +65,6 @@ type TopicSuffix struct {
 	Method    string   `toml:"method"`
 	Keys      []string `toml:"keys"`
 	Separator string   `toml:"separator"`
-}
-
-// DebugLogger logs messages from sarama at the debug level.
-type DebugLogger struct {
-}
-
-func (*DebugLogger) Print(v ...interface{}) {
-	args := make([]interface{}, 0, len(v)+1)
-	args = append(append(args, "D! [sarama] "), v...)
-	log.Print(args...)
-}
-
-func (*DebugLogger) Printf(format string, v ...interface{}) {
-	log.Printf("D! [sarama] "+format, v...)
-}
-
-func (*DebugLogger) Println(v ...interface{}) {
-	args := make([]interface{}, 0, len(v)+1)
-	args = append(append(args, "D! [sarama] "), v...)
-	log.Println(args...)
 }
 
 func ValidateTopicSuffixMethod(method string) error {
@@ -140,17 +121,17 @@ func (k *Kafka) SetSerializer(serializer serializers.Serializer) {
 }
 
 func (k *Kafka) Init() error {
+	k.SetLogger()
+
 	err := ValidateTopicSuffixMethod(k.TopicSuffix.Method)
 	if err != nil {
 		return err
 	}
 	config := sarama.NewConfig()
 
-	if err := k.SetConfig(config); err != nil {
+	if err := k.SetConfig(config, k.Log); err != nil {
 		return err
 	}
-
-	k.saramaConfig = config
 
 	// Legacy support ssl config
 	if k.Certificate != "" {
@@ -164,10 +145,11 @@ func (k *Kafka) Init() error {
 
 		dialer, err := k.Socks5ProxyConfig.GetDialer()
 		if err != nil {
-			return fmt.Errorf("connecting to proxy server failed: %s", err)
+			return fmt.Errorf("connecting to proxy server failed: %w", err)
 		}
 		config.Net.Proxy.Dialer = dialer
 	}
+	k.saramaConfig = config
 
 	return nil
 }
@@ -227,7 +209,7 @@ func (k *Kafka) Write(metrics []telegraf.Metric) error {
 
 		key, err := k.routingKey(metric)
 		if err != nil {
-			return fmt.Errorf("could not generate routing key: %v", err)
+			return fmt.Errorf("could not generate routing key: %w", err)
 		}
 
 		if key != "" {
@@ -239,18 +221,22 @@ func (k *Kafka) Write(metrics []telegraf.Metric) error {
 	err := k.producer.SendMessages(msgs)
 	if err != nil {
 		// We could have many errors, return only the first encountered.
-		if errs, ok := err.(sarama.ProducerErrors); ok {
-			for _, prodErr := range errs {
-				if prodErr.Err == sarama.ErrMessageSizeTooLarge {
-					k.Log.Error("Message too large, consider increasing `max_message_bytes`; dropping batch")
-					return nil
-				}
-				if prodErr.Err == sarama.ErrInvalidTimestamp {
-					k.Log.Error("The timestamp of the message is out of acceptable range, consider increasing broker `message.timestamp.difference.max.ms`; dropping batch")
-					return nil
-				}
-				return prodErr //nolint:staticcheck // Return first error encountered
+		var errs sarama.ProducerErrors
+		if errors.As(err, &errs) && len(errs) > 0 {
+			// Just return the first error encountered
+			firstErr := errs[0]
+			if errors.Is(firstErr.Err, sarama.ErrMessageSizeTooLarge) {
+				k.Log.Error("Message too large, consider increasing `max_message_bytes`; dropping batch")
+				return nil
 			}
+			if errors.Is(firstErr.Err, sarama.ErrInvalidTimestamp) {
+				k.Log.Error(
+					"The timestamp of the message is out of acceptable range, consider increasing broker `message.timestamp.difference.max.ms`; " +
+						"dropping batch",
+				)
+				return nil
+			}
+			return firstErr
 		}
 		return err
 	}
@@ -259,7 +245,6 @@ func (k *Kafka) Write(metrics []telegraf.Metric) error {
 }
 
 func init() {
-	sarama.Logger = &DebugLogger{}
 	outputs.Add("kafka", func() telegraf.Output {
 		return &Kafka{
 			WriteConfig: kafka.WriteConfig{

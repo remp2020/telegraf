@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/influxdata/telegraf"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/x/bsonx"
+
+	"github.com/influxdata/telegraf"
 )
 
 type Server struct {
@@ -35,6 +35,13 @@ type oplogEntry struct {
 
 func IsAuthorization(err error) bool {
 	return strings.Contains(err.Error(), "not authorized")
+}
+
+func (s *Server) ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	return s.client.Ping(ctx, nil)
 }
 
 func (s *Server) authLog(err error) {
@@ -86,31 +93,31 @@ func (s *Server) gatherReplSetStatus() (*ReplSetStatus, error) {
 }
 
 func (s *Server) gatherTopStatData() (*TopStats, error) {
-	dest := &bsonx.Doc{}
+	var dest map[string]interface{}
 	err := s.runCommand("admin", bson.D{
 		{
 			Key:   "top",
 			Value: 1,
 		},
-	}, dest)
+	}, &dest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed running admin cmd: %w", err)
 	}
 
-	// From: https://github.com/mongodb/mongo-tools/blob/master/mongotop/mongotop.go#L49-L70
-	// Remove 'note' field that prevents easy decoding, then round-trip
-	// again to simplify unpacking into the nested data structure
-	totals, err := dest.LookupErr("totals")
-	if err != nil {
-		return nil, err
+	totals, ok := dest["totals"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("collection totals not found or not a map")
 	}
-	recoded, err := totals.Document().Delete("note").MarshalBSON()
+	delete(totals, "note")
+
+	recorded, err := bson.Marshal(totals)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to marshal totals")
 	}
+
 	topInfo := make(map[string]TopStatCollection)
-	if err := bson.Unmarshal(recoded, &topInfo); err != nil {
-		return nil, err
+	if err := bson.Unmarshal(recorded, &topInfo); err != nil {
+		return nil, fmt.Errorf("failed unmarshalling records: %w", err)
 	}
 
 	return &TopStats{Totals: topInfo}, nil
@@ -134,7 +141,7 @@ func poolStatsCommand(version string) (string, error) {
 		return "", err
 	}
 
-	if major == 5 {
+	if major >= 5 {
 		return "connPoolStats", nil
 	}
 	return "shardConnPoolStats", nil
@@ -247,7 +254,7 @@ func (s *Server) gatherCollectionStats(colStatsDbs []string) (*ColStats, error) 
 					},
 				}, colStatLine)
 				if err != nil {
-					s.authLog(fmt.Errorf("error getting col stats from %q: %v", colName, err))
+					s.authLog(fmt.Errorf("error getting col stats from %q: %w", colName, err))
 					continue
 				}
 				collection := &Collection{
@@ -262,7 +269,14 @@ func (s *Server) gatherCollectionStats(colStatsDbs []string) (*ColStats, error) 
 	return results, nil
 }
 
-func (s *Server) gatherData(acc telegraf.Accumulator, gatherClusterStatus bool, gatherDbStats bool, gatherColStats bool, gatherTopStat bool, colStatsDbs []string) error {
+func (s *Server) gatherData(
+	acc telegraf.Accumulator,
+	gatherClusterStatus bool,
+	gatherDbStats bool,
+	gatherColStats bool,
+	gatherTopStat bool,
+	colStatsDbs []string,
+) error {
 	serverStatus, err := s.gatherServerStatus()
 	if err != nil {
 		return err
@@ -281,7 +295,7 @@ func (s *Server) gatherData(acc telegraf.Accumulator, gatherClusterStatus bool, 
 	if replSetStatus != nil {
 		oplogStats, err = s.gatherOplogStats()
 		if err != nil {
-			s.authLog(fmt.Errorf("Unable to get oplog stats: %v", err))
+			s.authLog(fmt.Errorf("unable to get oplog stats: %w", err))
 		}
 	}
 
@@ -296,7 +310,7 @@ func (s *Server) gatherData(acc telegraf.Accumulator, gatherClusterStatus bool, 
 
 	shardStats, err := s.gatherShardConnPoolStats(serverStatus.Version)
 	if err != nil {
-		s.authLog(fmt.Errorf("unable to gather shard connection pool stats: %s", err.Error()))
+		s.authLog(fmt.Errorf("unable to gather shard connection pool stats: %w", err))
 	}
 
 	var collectionStats *ColStats

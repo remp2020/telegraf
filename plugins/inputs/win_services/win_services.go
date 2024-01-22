@@ -1,14 +1,16 @@
 //go:generate ../../../tools/readme_config_includer/generator
 //go:build windows
-// +build windows
 
 package win_services
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
+	"syscall"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 
@@ -17,23 +19,23 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
-type ServiceErr struct {
+type ServiceError struct {
 	Message string
 	Service string
 	Err     error
 }
 
-func (e *ServiceErr) Error() string {
-	return fmt.Sprintf("%s: '%s': %v", e.Message, e.Service, e.Err)
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("%s: %q: %v", e.Message, e.Service, e.Err)
 }
 
 func IsPermission(err error) bool {
-	if err, ok := err.(*ServiceErr); ok {
-		return os.IsPermission(err.Err)
+	var serviceErr *ServiceError
+	if errors.As(err, &serviceErr) {
+		return errors.Is(serviceErr, fs.ErrPermission)
 	}
 	return false
 }
@@ -67,8 +69,17 @@ func (m *WinSvcMgr) Disconnect() error {
 }
 
 func (m *WinSvcMgr) OpenService(name string) (WinService, error) {
-	return m.realMgr.OpenService(name)
+	serviceName, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, fmt.Errorf("cannot convert service name %q: %w", name, err)
+	}
+	h, err := windows.OpenService(m.realMgr.Handle, serviceName, windows.GENERIC_READ)
+	if err != nil {
+		return nil, err
+	}
+	return &mgr.Service{Name: name, Handle: h}, nil
 }
+
 func (m *WinSvcMgr) ListServices() ([]string, error) {
 	return m.realMgr.ListServices()
 }
@@ -78,15 +89,15 @@ type MgProvider struct {
 }
 
 func (rmr *MgProvider) Connect() (WinServiceManager, error) {
-	scmgr, err := mgr.Connect()
+	h, err := windows.OpenSCManager(nil, nil, windows.GENERIC_READ)
 	if err != nil {
 		return nil, err
-	} else {
-		return &WinSvcMgr{scmgr}, nil
 	}
+	scmgr := &mgr.Mgr{Handle: h}
+	return &WinSvcMgr{scmgr}, nil
 }
 
-//WinServices is an implementation if telegraf.Input interface, providing info about Windows Services
+// WinServices is an implementation if telegraf.Input interface, providing info about Windows Services
 type WinServices struct {
 	Log telegraf.Logger
 
@@ -121,7 +132,7 @@ func (m *WinServices) Init() error {
 func (m *WinServices) Gather(acc telegraf.Accumulator) error {
 	scmgr, err := m.mgrProvider.Connect()
 	if err != nil {
-		return fmt.Errorf("Could not open service manager: %s", err)
+		return fmt.Errorf("could not open service manager: %w", err)
 	}
 	defer scmgr.Disconnect()
 
@@ -163,7 +174,7 @@ func (m *WinServices) Gather(acc telegraf.Accumulator) error {
 func (m *WinServices) listServices(scmgr WinServiceManager) ([]string, error) {
 	names, err := scmgr.ListServices()
 	if err != nil {
-		return nil, fmt.Errorf("Could not list services: %s", err)
+		return nil, fmt.Errorf("could not list services: %w", err)
 	}
 
 	var services []string
@@ -180,7 +191,7 @@ func (m *WinServices) listServices(scmgr WinServiceManager) ([]string, error) {
 func collectServiceInfo(scmgr WinServiceManager, serviceName string) (*ServiceInfo, error) {
 	srv, err := scmgr.OpenService(serviceName)
 	if err != nil {
-		return nil, &ServiceErr{
+		return nil, &ServiceError{
 			Message: "could not open service",
 			Service: serviceName,
 			Err:     err,
@@ -190,7 +201,7 @@ func collectServiceInfo(scmgr WinServiceManager, serviceName string) (*ServiceIn
 
 	srvStatus, err := srv.Query()
 	if err != nil {
-		return nil, &ServiceErr{
+		return nil, &ServiceError{
 			Message: "could not query service",
 			Service: serviceName,
 			Err:     err,
@@ -199,7 +210,7 @@ func collectServiceInfo(scmgr WinServiceManager, serviceName string) (*ServiceIn
 
 	srvCfg, err := srv.Config()
 	if err != nil {
-		return nil, &ServiceErr{
+		return nil, &ServiceError{
 			Message: "could not get config of service",
 			Service: serviceName,
 			Err:     err,

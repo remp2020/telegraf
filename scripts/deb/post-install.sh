@@ -1,9 +1,6 @@
 #!/bin/bash
 
-BIN_DIR=/usr/bin
-LOG_DIR=/var/log/telegraf
 SCRIPT_DIR=/usr/lib/telegraf/scripts
-LOGROTATE_DIR=/etc/logrotate.d
 
 function install_init {
     cp -f $SCRIPT_DIR/init.sh /etc/init.d/telegraf
@@ -11,6 +8,7 @@ function install_init {
 }
 
 function install_systemd {
+    #shellcheck disable=SC2086
     cp -f $SCRIPT_DIR/telegraf.service $1
     systemctl enable telegraf || true
     systemctl daemon-reload || true
@@ -28,10 +26,6 @@ function install_chkconfig {
 if [[ -L /etc/init.d/telegraf ]]; then
     rm -f /etc/init.d/telegraf
 fi
-# Remove legacy symlink, if it exists
-if [[ -L /etc/systemd/system/telegraf.service ]]; then
-    rm -f /etc/systemd/system/telegraf.service
-fi
 
 # Add defaults file, if it doesn't exist
 if [[ ! -f /etc/default/telegraf ]]; then
@@ -48,13 +42,29 @@ if [[ ! -f /etc/telegraf/telegraf.conf ]] && [[ -f /etc/telegraf/telegraf.conf.s
    cp /etc/telegraf/telegraf.conf.sample /etc/telegraf/telegraf.conf
 fi
 
+LOG_DIR=/var/log/telegraf
 test -d $LOG_DIR || mkdir -p $LOG_DIR
 chown -R -L telegraf:telegraf $LOG_DIR
 chmod 755 $LOG_DIR
 
-if [[ "$(readlink /proc/1/exe)" == */systemd ]]; then
-	install_systemd /lib/systemd/system/telegraf.service
-	deb-systemd-invoke restart telegraf.service || echo "WARNING: systemd not running."
+STATE_DIR=/var/lib/telegraf
+test -d "$STATE_DIR" || {
+    mkdir -p "$STATE_DIR"
+    chmod 770 "$STATE_DIR"
+    chown root:telegraf "$STATE_DIR"
+}
+
+STATE_FILE="$STATE_DIR/statefile"
+test -f "$STATE_FILE" || {
+    touch "$STATE_FILE"
+    chown root:telegraf "$STATE_FILE"
+    chmod 660 "$STATE_FILE"
+}
+
+if [ -d /run/systemd/system ]; then
+    install_systemd /lib/systemd/system/telegraf.service
+    # if and only if the service was already running then restart
+    deb-systemd-invoke try-restart telegraf.service >/dev/null || true
 else
 	# Assuming SysVinit
 	install_init

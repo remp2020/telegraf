@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package wireless
 
@@ -53,5 +52,5 @@ func TestLoadWirelessTable(t *testing.T) {
 	require.NoError(t, err)
 
 	as := require.New(t)
-	as.Equal(metrics, expectedMetrics)
+	as.Equal(expectedMetrics, metrics)
 }

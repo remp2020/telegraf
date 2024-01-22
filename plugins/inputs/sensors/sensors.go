@@ -1,6 +1,5 @@
 //go:generate ../../../tools/readme_config_includer/generator
 //go:build linux
-// +build linux
 
 package sensors
 
@@ -20,7 +19,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -47,7 +45,7 @@ func (s *Sensors) Init() error {
 	if s.path == "" {
 		path, err := exec.LookPath(cmd)
 		if err != nil {
-			return fmt.Errorf("looking up %q failed: %v", cmd, err)
+			return fmt.Errorf("looking up %q failed: %w", cmd, err)
 		}
 		s.path = path
 	}
@@ -69,7 +67,9 @@ func (s *Sensors) Gather(acc telegraf.Accumulator) error {
 }
 
 // parse forks the command:
-//     sensors -u -A
+//
+//	sensors -u -A
+//
 // and parses the output to add it to the telegraf.Accumulator.
 func (s *Sensors) parse(acc telegraf.Accumulator) error {
 	tags := map[string]string{}
@@ -78,7 +78,7 @@ func (s *Sensors) parse(acc telegraf.Accumulator) error {
 	cmd := execCommand(s.path, "-A", "-u")
 	out, err := internal.StdOutputTimeout(cmd, time.Duration(s.Timeout))
 	if err != nil {
-		return fmt.Errorf("failed to run command %s: %s - %s", strings.Join(cmd.Args, " "), err, string(out))
+		return fmt.Errorf("failed to run command %q: %w - %s", strings.Join(cmd.Args, " "), err, string(out))
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for _, line := range lines {

@@ -13,27 +13,12 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 var (
 	varRegex = regexp.MustCompile(`\$(?:\w+|\{\w+\})`)
 )
-
-type DiskIO struct {
-	ps system.PS
-
-	Devices          []string
-	DeviceTags       []string
-	NameTemplates    []string
-	SkipSerialNumber bool
-
-	Log telegraf.Logger
-
-	infoCache    map[string]diskInfoCache
-	deviceFilter filter.Filter
-}
 
 // hasMeta reports whether s contains any special glob characters.
 func hasMeta(s string) bool {
@@ -49,7 +34,7 @@ func (d *DiskIO) Init() error {
 		if hasMeta(device) {
 			deviceFilter, err := filter.Compile(d.Devices)
 			if err != nil {
-				return fmt.Errorf("error compiling device pattern: %s", err.Error())
+				return fmt.Errorf("error compiling device pattern: %w", err)
 			}
 			d.deviceFilter = deviceFilter
 		}
@@ -58,14 +43,16 @@ func (d *DiskIO) Init() error {
 }
 
 func (d *DiskIO) Gather(acc telegraf.Accumulator) error {
-	devices := []string{}
+	var devices []string
 	if d.deviceFilter == nil {
-		devices = d.Devices
+		for _, dev := range d.Devices {
+			devices = append(devices, resolveName(dev))
+		}
 	}
 
 	diskio, err := d.ps.DiskIO(devices)
 	if err != nil {
-		return fmt.Errorf("error getting disk io info: %s", err.Error())
+		return fmt.Errorf("error getting disk io info: %w", err)
 	}
 
 	for _, io := range diskio {
@@ -77,6 +64,10 @@ func (d *DiskIO) Gather(acc telegraf.Accumulator) error {
 		tags := map[string]string{}
 		var devLinks []string
 		tags["name"], devLinks = d.diskName(io.Name)
+
+		if wwid := getDeviceWWID(io.Name); wwid != "" {
+			tags["wwid"] = wwid
+		}
 
 		if d.deviceFilter != nil && !match {
 			for _, devLink := range devLinks {

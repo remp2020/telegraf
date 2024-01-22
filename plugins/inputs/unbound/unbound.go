@@ -20,7 +20,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -58,10 +57,10 @@ func unboundRunner(unbound Unbound) (*bytes.Buffer, error) {
 		defer lookUpCancel()
 		serverIps, err := resolver.LookupIPAddr(ctx, host)
 		if err != nil {
-			return nil, fmt.Errorf("error looking up ip for server: %s: %s", unbound.Server, err)
+			return nil, fmt.Errorf("error looking up ip for server %q: %w", unbound.Server, err)
 		}
 		if len(serverIps) == 0 {
-			return nil, fmt.Errorf("error no ip for server: %s: %s", unbound.Server, err)
+			return nil, fmt.Errorf("error no ip for server %q: %w", unbound.Server, err)
 		}
 		server := serverIps[0].IP.String()
 		if port != "" {
@@ -86,14 +85,13 @@ func unboundRunner(unbound Unbound) (*bytes.Buffer, error) {
 	cmd.Stdout = &out
 	err := internal.RunTimeout(cmd, time.Duration(unbound.Timeout))
 	if err != nil {
-		return &out, fmt.Errorf("error running unbound-control: %s (%s %v)", err, unbound.Binary, cmdArgs)
+		return &out, fmt.Errorf("error running unbound-control %q %q: %w", unbound.Binary, cmdArgs, err)
 	}
 
 	return &out, nil
 }
 
 // Gather collects stats from unbound-control and adds them to the Accumulator
-//
 func (*Unbound) SampleConfig() string {
 	return sampleConfig
 }
@@ -109,7 +107,7 @@ func (s *Unbound) Gather(acc telegraf.Accumulator) error {
 
 	out, err := s.run(*s)
 	if err != nil {
-		return fmt.Errorf("error gathering metrics: %s", err)
+		return fmt.Errorf("error gathering metrics: %w", err)
 	}
 
 	// Process values

@@ -7,6 +7,15 @@ When the plugin is healthy it will return a 200 response; when unhealthy it
 will return a 503 response.  The default state is healthy, one or more checks
 must fail in order for the resource to enter the failed state.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -32,6 +41,10 @@ must fail in order for the resource to enter the failed state.
   ## TLS server certificate and private key.
   # tls_cert = "/etc/telegraf/cert.pem"
   # tls_key = "/etc/telegraf/key.pem"
+
+  ## NOTE: Due to the way TOML is parsed, tables must be at the END of the
+  ## plugin definition, otherwise additional config options are read as part of
+  ## the table
 
   ## One or more check sub-tables should be defined, it is also recommended to
   ## use metric filtering to limit the metrics that flow into this output.

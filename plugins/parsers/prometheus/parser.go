@@ -3,6 +3,7 @@ package prometheus
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -16,21 +17,27 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/plugins/parsers/prometheus/common"
 )
 
 type Parser struct {
-	DefaultTags     map[string]string
-	Header          http.Header
-	IgnoreTimestamp bool
+	DefaultTags     map[string]string `toml:"-"`
+	Header          http.Header       `toml:"-"` // set by the prometheus input
+	IgnoreTimestamp bool              `toml:"prometheus_ignore_timestamp"`
 }
 
 func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 	var parser expfmt.TextParser
 	var metrics []telegraf.Metric
 	var err error
-	// parse even if the buffer begins with a newline
+
+	// Make sure we have a finishing newline but no trailing one
 	buf = bytes.TrimPrefix(buf, []byte("\n"))
+	if !bytes.HasSuffix(buf, []byte("\n")) {
+		buf = append(buf, []byte("\n")...)
+	}
+
 	// Read raw data
 	buffer := bytes.NewBuffer(buf)
 	reader := bufio.NewReader(buffer)
@@ -44,17 +51,17 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 		for {
 			mf := &dto.MetricFamily{}
 			if _, ierr := pbutil.ReadDelimited(reader, mf); ierr != nil {
-				if ierr == io.EOF {
+				if errors.Is(ierr, io.EOF) {
 					break
 				}
-				return nil, fmt.Errorf("reading metric family protocol buffer failed: %s", ierr)
+				return nil, fmt.Errorf("reading metric family protocol buffer failed: %w", ierr)
 			}
 			metricFamilies[mf.GetName()] = mf
 		}
 	} else {
 		metricFamilies, err = parser.TextToMetricFamilies(reader)
 		if err != nil {
-			return nil, fmt.Errorf("reading text format failed: %s", err)
+			return nil, fmt.Errorf("reading text format failed: %w", err)
 		}
 	}
 
@@ -114,7 +121,7 @@ func (p *Parser) SetDefaultTags(tags map[string]string) {
 
 // Get Quantiles for summary metric & Buckets for histogram
 func makeQuantiles(m *dto.Metric, tags map[string]string, metricName string, metricType dto.MetricType, t time.Time) []telegraf.Metric {
-	var metrics []telegraf.Metric
+	metrics := make([]telegraf.Metric, 0, len(m.GetSummary().Quantile)+1)
 	fields := make(map[string]interface{})
 
 	fields[metricName+"_count"] = float64(m.GetSummary().GetSampleCount())
@@ -137,7 +144,7 @@ func makeQuantiles(m *dto.Metric, tags map[string]string, metricName string, met
 
 // Get Buckets  from histogram metric
 func makeBuckets(m *dto.Metric, tags map[string]string, metricName string, metricType dto.MetricType, t time.Time) []telegraf.Metric {
-	var metrics []telegraf.Metric
+	metrics := make([]telegraf.Metric, 0, len(m.GetHistogram().Bucket)+2)
 	fields := make(map[string]interface{})
 
 	fields[metricName+"_count"] = float64(m.GetHistogram().GetSampleCount())
@@ -200,4 +207,11 @@ func (p *Parser) GetTimestamp(m *dto.Metric, now time.Time) time.Time {
 		t = now
 	}
 	return t
+}
+
+func init() {
+	parsers.Add("prometheus",
+		func(defaultMetricName string) telegraf.Parser {
+			return &Parser{}
+		})
 }

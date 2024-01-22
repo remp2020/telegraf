@@ -6,10 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/outputs"
+	serializer "github.com/influxdata/telegraf/plugins/serializers/wavefront"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 // default config used by Tests
@@ -44,25 +48,27 @@ func TestBuildMetrics(t *testing.T) {
 
 	var metricTests = []struct {
 		metric       telegraf.Metric
-		metricPoints []MetricPoint
+		metricPoints []serializer.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float", "metric2"),
-			[]MetricPoint{
+			[]serializer.MetricPoint{
 				{Metric: w.Prefix + "testing.just-a-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testutil.TestMetric(float64(1), "testing_just/another,metric:float", "metric2"),
-			[]MetricPoint{
+			[]serializer.MetricPoint{
 				{Metric: w.Prefix + "testing.just-another-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testMetric1,
-			[]MetricPoint{{Metric: w.Prefix + "test.simple.metric", Value: 123, Timestamp: timestamp, Source: "testHost", Tags: map[string]string{"tag1": "value1"}}},
+			[]serializer.MetricPoint{
+				{Metric: w.Prefix + "test.simple.metric", Value: 123, Timestamp: timestamp, Source: "testHost", Tags: map[string]string{"tag1": "value1"}},
+			},
 		},
 	}
 
@@ -87,19 +93,24 @@ func TestBuildMetricsStrict(t *testing.T) {
 
 	var metricTests = []struct {
 		metric       telegraf.Metric
-		metricPoints []MetricPoint
+		metricPoints []serializer.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float", "metric2"),
-			[]MetricPoint{
+			[]serializer.MetricPoint{
 				{Metric: w.Prefix + "testing.just-a-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testutil.TestMetric(float64(1), "testing_just/another,metric:float", "metric2"),
-			[]MetricPoint{
-				{Metric: w.Prefix + "testing.just/another,metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag/1": "value1", "tag,2": "value2"}},
+			[]serializer.MetricPoint{
+				{
+					Metric:    w.Prefix + "testing.just/another,metric-float",
+					Value:     1,
+					Timestamp: timestamp,
+					Tags:      map[string]string{"tag/1": "value1", "tag,2": "value2"},
+				},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag/1": "value1", "tag,2": "value2"}},
 			},
 		},
@@ -131,15 +142,15 @@ func TestBuildMetricsWithSimpleFields(t *testing.T) {
 
 	var metricTests = []struct {
 		metric      telegraf.Metric
-		metricLines []MetricPoint
+		metricLines []serializer.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float"),
-			[]MetricPoint{{Metric: w.Prefix + "testing.just-a-metric-float.value", Value: 1}},
+			[]serializer.MetricPoint{{Metric: w.Prefix + "testing.just-a-metric-float.value", Value: 1}},
 		},
 		{
 			testMetric1,
-			[]MetricPoint{{Metric: w.Prefix + "test.simple.metric.value", Value: 123}},
+			[]serializer.MetricPoint{{Metric: w.Prefix + "test.simple.metric.value", Value: 123}},
 		},
 	}
 
@@ -354,7 +365,84 @@ func TestTagLimits(t *testing.T) {
 	require.Equal(t, longKey, tags[longKey])
 }
 
-// Benchmarks to test performance of string replacement via Regex and Replacer
+func TestParseConnectionUrlReturnsAnErrorForInvalidUrls(t *testing.T) {
+	w := &Wavefront{
+		URL: "invalid url",
+		Log: testutil.Logger{},
+	}
+	_, err := w.parseConnectionURL()
+	require.EqualError(t, err, "could not parse the provided URL: invalid url")
+}
+func TestParseConnectionUrlReturnsAllowsTokensInUrl(t *testing.T) {
+	w := &Wavefront{
+		URL: "https://11111111-2222-3333-4444-555555555555@surf.wavefront.com",
+		Log: testutil.Logger{},
+	}
+
+	url, err := w.parseConnectionURL()
+	require.NoError(t, err)
+	require.Equalf(t, "https://11111111-2222-3333-4444-555555555555@surf.wavefront.com", url, "Token value should not overwrite the token embedded in url")
+}
+
+func TestParseConnectionUrlUsesHostAndPortWhenUrlIsOmitted(t *testing.T) {
+	w := &Wavefront{
+		Host: "surf.wavefront.com",
+		Port: 8080,
+		Log:  testutil.Logger{},
+	}
+
+	url, err := w.parseConnectionURL()
+	require.NoError(t, err)
+	require.Equalf(t, "http://surf.wavefront.com:8080", url, "Should combine host and port into URI")
+}
+
+func TestDefaults(t *testing.T) {
+	defaultWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
+	require.Equal(t, 10000, defaultWavefront.HTTPMaximumBatchSize)
+	require.Equal(t, config.Duration(10*time.Second), defaultWavefront.Timeout)
+	require.Equal(t, "", defaultWavefront.TLSCA)
+}
+
+func TestMakeAuthOptions(t *testing.T) {
+	cspAPIWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
+	cspAPIWavefront.AuthCSPAPIToken = config.NewSecret([]byte("fake-app-token"))
+	options, err := cspAPIWavefront.makeAuthOptions()
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+
+	cspClientCredsWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
+	cspClientCredsWavefront.AuthCSPClientCredentials = &authCSPClientCredentials{
+		AppID:     config.NewSecret([]byte("fake-app-id")),
+		AppSecret: config.NewSecret([]byte("fake-app-secret")),
+	}
+	options, err = cspClientCredsWavefront.makeAuthOptions()
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+
+	orgID := "org-id"
+	cspClientCredsWithOrgIDWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
+	cspClientCredsWithOrgIDWavefront.AuthCSPClientCredentials = &authCSPClientCredentials{
+		AppID:     config.NewSecret([]byte("fake-app-id")),
+		AppSecret: config.NewSecret([]byte("fake-app-secret")),
+		OrgID:     &orgID,
+	}
+	options, err = cspClientCredsWithOrgIDWavefront.makeAuthOptions()
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+
+	apiTokenWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
+	apiTokenWavefront.AuthCSPAPIToken = config.NewSecret([]byte("fake-wavefront-api-token"))
+	options, err = apiTokenWavefront.makeAuthOptions()
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+
+	noAuthOptionsWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
+	options, err = noAuthOptionsWavefront.makeAuthOptions()
+	require.NoError(t, err)
+	require.Empty(t, options)
+}
+
+// Benchmarks to test performance of string replacement via Regex and Sanitize
 var testString = "this_is*my!test/string\\for=replacement"
 
 func BenchmarkReplaceAllString(b *testing.B) {
@@ -371,6 +459,6 @@ func BenchmarkReplaceAllLiteralString(b *testing.B) {
 
 func BenchmarkReplacer(b *testing.B) {
 	for n := 0; n < b.N; n++ {
-		sanitizedChars.Replace(testString)
+		serializer.Sanitize(false, testString)
 	}
 }

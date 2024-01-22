@@ -2,26 +2,31 @@ package json_v2
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/dimchansky/utfbom"
+	"github.com/tidwall/gjson"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/tidwall/gjson"
+	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
 // Parser adheres to the parser interface, contains the parser configuration, and data required to parse JSON
 type Parser struct {
-	// These struct fields are common for a parser
-	Configs     []Config
-	DefaultTags map[string]string
-	Log         telegraf.Logger
+	Configs           []Config          `toml:"json_v2"`
+	DefaultMetricName string            `toml:"-"`
+	DefaultTags       map[string]string `toml:"-"`
+	Log               telegraf.Logger   `toml:"-"`
 
-	// **** The struct fields bellow this comment are used for processing indvidual configs ****
+	// **** The struct fields below this comment are used for processing individual configs ****
 
-	// measurementName is the the name of the current config used in each line protocol
+	// measurementName is the name of the current config used in each line protocol
 	measurementName string
 
 	// **** Specific for object configuration ****
@@ -30,13 +35,9 @@ type Parser struct {
 	// iterateObjects dictates if ExpandArray function will handle objects
 	iterateObjects bool
 	// objectConfig contains the config for an object, some info is needed while iterating over the gjson results
-	objectConfig JSONObject
-}
-
-type PathResult struct {
-	result gjson.Result
-	tag    bool
-	DataSet
+	objectConfig Object
+	// parseMutex is here because Parse() is not threadsafe.  If it is made threadsafe at some point, then we won't need it anymore.
+	parseMutex sync.Mutex
 }
 
 type Config struct {
@@ -46,9 +47,11 @@ type Config struct {
 	TimestampFormat     string `toml:"timestamp_format"`      // OPTIONAL, but REQUIRED when timestamp_path is defined
 	TimestampTimezone   string `toml:"timestamp_timezone"`    // OPTIONAL, but REQUIRES timestamp_path
 
-	Fields      []DataSet
-	Tags        []DataSet
-	JSONObjects []JSONObject
+	Fields      []DataSet `toml:"field"`
+	Tags        []DataSet `toml:"tag"`
+	JSONObjects []Object  `toml:"object"`
+
+	Location *time.Location
 }
 
 type DataSet struct {
@@ -58,7 +61,7 @@ type DataSet struct {
 	Optional bool   `toml:"optional"` // Will suppress errors if there isn't a match with Path
 }
 
-type JSONObject struct {
+type Object struct {
 	Path               string            `toml:"path"`     // REQUIRED
 	Optional           bool              `toml:"optional"` // Will suppress errors if there isn't a match with Path
 	TimestampKey       string            `toml:"timestamp_key"`
@@ -70,8 +73,14 @@ type JSONObject struct {
 	IncludedKeys       []string          `toml:"included_keys"`
 	ExcludedKeys       []string          `toml:"excluded_keys"`
 	DisablePrependKeys bool              `toml:"disable_prepend_keys"`
-	FieldPaths         []DataSet
-	TagPaths           []DataSet
+	FieldPaths         []DataSet         `toml:"field"`
+	TagPaths           []DataSet         `toml:"tag"`
+}
+
+type PathResult struct {
+	result gjson.Result
+	tag    bool
+	DataSet
 }
 
 type MetricNode struct {
@@ -90,10 +99,51 @@ type MetricNode struct {
 	gjson.Result
 }
 
+func (p *Parser) Init() error {
+	// Propagate the default metric name to the configs in case it is not set there
+	for i, cfg := range p.Configs {
+		if cfg.MeasurementName == "" {
+			p.Configs[i].MeasurementName = p.DefaultMetricName
+		}
+		if cfg.TimestampTimezone != "" {
+			loc, err := time.LoadLocation(cfg.TimestampTimezone)
+			if err != nil {
+				return fmt.Errorf("invalid timezone in config %d: %w", i+1, err)
+			}
+			p.Configs[i].Location = loc
+		}
+	}
+	return nil
+}
+
 func (p *Parser) Parse(input []byte) ([]telegraf.Metric, error) {
+	// What we've done here is to put the entire former contents of Parse()
+	// into parseCriticalPath().
+	//
+	// As we determine what bits of parseCriticalPath() are and are not
+	// threadsafe, we can lift the safe pieces back up into Parse(), and
+	// shrink the scope (or scopes, if the critical sections are disjoint)
+	// of those pieces that need to be protected with a mutex.
+	return p.parseCriticalPath(input)
+}
+
+func (p *Parser) parseCriticalPath(input []byte) ([]telegraf.Metric, error) {
+	p.parseMutex.Lock()
+	defer p.parseMutex.Unlock()
+
+	// Clear intermediate results if left by previous call
+	p.subPathResults = nil
+
+	reader := strings.NewReader(string(input))
+	body, _ := utfbom.Skip(reader)
+	input, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read body after BOM removal: %w", err)
+	}
+
 	// Only valid JSON is supported
 	if !gjson.Valid(string(input)) {
-		return nil, fmt.Errorf("invalid JSON provided, unable to parse")
+		return nil, fmt.Errorf("invalid JSON provided, unable to parse: %s", string(input))
 	}
 
 	var metrics []telegraf.Metric
@@ -115,16 +165,16 @@ func (p *Parser) Parse(input []byte) ([]telegraf.Metric, error) {
 
 			if result.Type == gjson.Null {
 				p.Log.Debugf("Message: %s", input)
-				return nil, fmt.Errorf("The timestamp path %s returned NULL", c.TimestampPath)
+				return nil, fmt.Errorf("the timestamp path %q returned NULL", c.TimestampPath)
 			}
 			if !result.IsArray() && !result.IsObject() {
 				if c.TimestampFormat == "" {
-					err := fmt.Errorf("use of 'timestamp_query' requires 'timestamp_format'")
+					err := fmt.Errorf("use of 'timestamp_path' requires 'timestamp_format'")
 					return nil, err
 				}
 
 				var err error
-				timestamp, err = internal.ParseTimestamp(c.TimestampFormat, result.String(), c.TimestampTimezone)
+				timestamp, err = internal.ParseTimestamp(c.TimestampFormat, result.String(), c.Location)
 
 				if err != nil {
 					return nil, err
@@ -174,22 +224,21 @@ func (p *Parser) processMetric(input []byte, data []DataSet, tag bool, timestamp
 	}
 
 	p.iterateObjects = false
-	var metrics [][]telegraf.Metric
-
+	metrics := make([][]telegraf.Metric, 0, len(data))
 	for _, c := range data {
 		if c.Path == "" {
 			return nil, fmt.Errorf("GJSON path is required")
 		}
 		result := gjson.GetBytes(input, c.Path)
-		if skip, err := p.checkResult(result, c.Path, c.Optional); err != nil {
-			if skip {
+		if err := p.checkResult(result, c.Path); err != nil {
+			if c.Optional {
 				continue
 			}
 			return nil, err
 		}
 
 		if result.IsObject() {
-			p.Log.Debugf("Found object in the path: %s, ignoring it please use 'object' to gather metrics from objects", c.Path)
+			p.Log.Debugf("Found object in the path %q, ignoring it please use 'object' to gather metrics from objects", c.Path)
 			continue
 		}
 
@@ -243,14 +292,12 @@ func cartesianProduct(a, b []telegraf.Metric) []telegraf.Metric {
 	if len(b) == 0 {
 		return a
 	}
-	p := make([]telegraf.Metric, len(a)*len(b))
-	i := 0
+	p := make([]telegraf.Metric, 0, len(a)*len(b))
 	for _, a := range a {
 		for _, b := range b {
 			m := a.Copy()
 			mergeMetric(b, m)
-			p[i] = m
-			i++
+			p = append(p, m)
 		}
 	}
 
@@ -303,6 +350,7 @@ func (p *Parser) expandArray(result MetricNode, timestamp time.Time) ([]telegraf
 				n.ParentIndex = n.Index + result.ParentIndex
 				r, err := p.combineObject(n, timestamp)
 				if err != nil {
+					p.Log.Error(err)
 					return false
 				}
 
@@ -323,6 +371,7 @@ func (p *Parser) expandArray(result MetricNode, timestamp time.Time) ([]telegraf
 			n.ParentIndex = n.Index + result.ParentIndex
 			r, err := p.expandArray(n, timestamp)
 			if err != nil {
+				p.Log.Error(err)
 				return false
 			}
 			results = append(results, r...)
@@ -334,10 +383,18 @@ func (p *Parser) expandArray(result MetricNode, timestamp time.Time) ([]telegraf
 	} else {
 		if p.objectConfig.TimestampKey != "" && result.SetName == p.objectConfig.TimestampKey {
 			if p.objectConfig.TimestampFormat == "" {
-				err := fmt.Errorf("use of 'timestamp_query' requires 'timestamp_format'")
+				err := fmt.Errorf("use of 'timestamp_key' requires 'timestamp_format'")
 				return nil, err
 			}
-			timestamp, err := internal.ParseTimestamp(p.objectConfig.TimestampFormat, result.String(), p.objectConfig.TimestampTimezone)
+			var loc *time.Location
+			if p.objectConfig.TimestampTimezone != "" {
+				var err error
+				loc, err = time.LoadLocation(p.objectConfig.TimestampTimezone)
+				if err != nil {
+					return nil, fmt.Errorf("invalid timezone: %w", err)
+				}
+			}
+			timestamp, err := internal.ParseTimestamp(p.objectConfig.TimestampFormat, result.String(), loc)
 			if err != nil {
 				return nil, err
 			}
@@ -410,7 +467,7 @@ func (p *Parser) existsInpathResults(index int) *PathResult {
 }
 
 // processObjects will iterate over all 'object' configs and create metrics for each
-func (p *Parser) processObjects(input []byte, objects []JSONObject, timestamp time.Time) ([]telegraf.Metric, error) {
+func (p *Parser) processObjects(input []byte, objects []Object, timestamp time.Time) ([]telegraf.Metric, error) {
 	p.iterateObjects = true
 	var t []telegraf.Metric
 	for _, c := range objects {
@@ -421,8 +478,8 @@ func (p *Parser) processObjects(input []byte, objects []JSONObject, timestamp ti
 		}
 
 		result := gjson.GetBytes(input, c.Path)
-		if skip, err := p.checkResult(result, c.Path, c.Optional); err != nil {
-			if skip {
+		if err := p.checkResult(result, c.Path); err != nil {
+			if c.Optional {
 				continue
 			}
 			return nil, err
@@ -432,8 +489,8 @@ func (p *Parser) processObjects(input []byte, objects []JSONObject, timestamp ti
 		for _, f := range c.FieldPaths {
 			var r PathResult
 			r.result = gjson.GetBytes(scopedJSON, f.Path)
-			if skip, err := p.checkResult(r.result, f.Path, f.Optional); err != nil {
-				if skip {
+			if err := p.checkResult(r.result, f.Path); err != nil {
+				if f.Optional {
 					continue
 				}
 				return nil, err
@@ -445,8 +502,8 @@ func (p *Parser) processObjects(input []byte, objects []JSONObject, timestamp ti
 		for _, f := range c.TagPaths {
 			var r PathResult
 			r.result = gjson.GetBytes(scopedJSON, f.Path)
-			if skip, err := p.checkResult(r.result, f.Path, f.Optional); err != nil {
-				if skip {
+			if err := p.checkResult(r.result, f.Path); err != nil {
+				if f.Optional {
 					continue
 				}
 				return nil, err
@@ -535,6 +592,7 @@ func (p *Parser) combineObject(result MetricNode, timestamp time.Time) ([]telegr
 			if val.IsObject() {
 				results, err = p.combineObject(arrayNode, timestamp)
 				if err != nil {
+					p.Log.Error(err)
 					return false
 				}
 			} else {
@@ -542,6 +600,7 @@ func (p *Parser) combineObject(result MetricNode, timestamp time.Time) ([]telegr
 				arrayNode.ParentIndex -= result.Index
 				r, err := p.expandArray(arrayNode, timestamp)
 				if err != nil {
+					p.Log.Error(err)
 					return false
 				}
 				results = cartesianProduct(r, results)
@@ -586,7 +645,7 @@ func (p *Parser) isExcluded(key string) bool {
 	return false
 }
 
-func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
+func (p *Parser) ParseLine(_ string) (telegraf.Metric, error) {
 	return nil, fmt.Errorf("ParseLine is designed for parsing influx line protocol, therefore not implemented for parsing JSON")
 }
 
@@ -602,25 +661,25 @@ func (p *Parser) convertType(input gjson.Result, desiredType string, name string
 		case "uint":
 			r, err := strconv.ParseUint(inputType, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to convert field '%s' to type uint: %v", name, err)
+				return nil, fmt.Errorf("unable to convert field %q to type uint: %w", name, err)
 			}
 			return r, nil
 		case "int":
 			r, err := strconv.ParseInt(inputType, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to convert field '%s' to type int: %v", name, err)
+				return nil, fmt.Errorf("unable to convert field %q to type int: %w", name, err)
 			}
 			return r, nil
 		case "float":
 			r, err := strconv.ParseFloat(inputType, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to convert field '%s' to type float: %v", name, err)
+				return nil, fmt.Errorf("unable to convert field %q to type float: %w", name, err)
 			}
 			return r, nil
 		case "bool":
 			r, err := strconv.ParseBool(inputType)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to convert field '%s' to type bool: %v", name, err)
+				return nil, fmt.Errorf("unable to convert field %q to type bool: %w", name, err)
 			}
 			return r, nil
 		}
@@ -655,26 +714,31 @@ func (p *Parser) convertType(input gjson.Result, desiredType string, name string
 			} else if inputType == 1 {
 				return true, nil
 			} else {
-				return nil, fmt.Errorf("Unable to convert field '%s' to type bool", name)
+				return nil, fmt.Errorf("unable to convert field %q to type bool", name)
 			}
 		}
 	default:
-		return nil, fmt.Errorf("unknown format '%T' for field  '%s'", inputType, name)
+		return nil, fmt.Errorf("unknown format '%T' for field  %q", inputType, name)
 	}
 
 	return input.Value(), nil
 }
 
-func (p *Parser) checkResult(result gjson.Result, path string, optional bool) (bool, error) {
+// Check if gjson result exists and return error if it does not
+func (p *Parser) checkResult(result gjson.Result, path string) error {
 	if !result.Exists() {
-		if optional {
-			// If path is marked as optional don't error if path doesn't return a result
-			p.Log.Debugf("the path %s doesn't exist", path)
-			return true, nil
-		}
-
-		return false, fmt.Errorf("the path %s doesn't exist", path)
+		p.Log.Debugf("the path %q doesn't exist", path)
+		return fmt.Errorf("the path %q doesn't exist", path)
 	}
 
-	return false, nil
+	return nil
+}
+
+func init() {
+	// Register all variants
+	parsers.Add("json_v2",
+		func(defaultMetricName string) telegraf.Parser {
+			return &Parser{DefaultMetricName: defaultMetricName}
+		},
+	)
 }

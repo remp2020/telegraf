@@ -4,6 +4,7 @@ package rabbitmq
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,7 +19,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -41,10 +41,10 @@ const DefaultClientTimeout = 4
 // RabbitMQ defines the configuration necessary for gathering metrics,
 // see the sample config for further details
 type RabbitMQ struct {
-	URL      string `toml:"url"`
-	Name     string `toml:"name" deprecated:"1.3.0;use 'tags' instead"`
-	Username string `toml:"username"`
-	Password string `toml:"password"`
+	URL      string        `toml:"url"`
+	Name     string        `toml:"name" deprecated:"1.3.0;use 'tags' instead"`
+	Username config.Secret `toml:"username"`
+	Password config.Secret `toml:"password"`
 	tls.ClientConfig
 
 	ResponseHeaderTimeout config.Duration `toml:"header_timeout"`
@@ -70,7 +70,6 @@ type RabbitMQ struct {
 	upstreamFilter    filter.Filter
 }
 
-// OverviewResponse ...
 type OverviewResponse struct {
 	MessageStats *MessageStats `json:"message_stats"`
 	ObjectTotals *ObjectTotals `json:"object_totals"`
@@ -78,17 +77,14 @@ type OverviewResponse struct {
 	Listeners    []Listeners   `json:"listeners"`
 }
 
-// Listeners ...
 type Listeners struct {
 	Protocol string `json:"protocol"`
 }
 
-// Details ...
 type Details struct {
 	Rate float64 `json:"rate"`
 }
 
-// MessageStats ...
 type MessageStats struct {
 	Ack                     int64
 	AckDetails              Details `json:"ack_details"`
@@ -108,7 +104,6 @@ type MessageStats struct {
 	ReturnUnroutableDetails Details `json:"return_unroutable_details"`
 }
 
-// ObjectTotals ...
 type ObjectTotals struct {
 	Channels    int64
 	Connections int64
@@ -117,7 +112,6 @@ type ObjectTotals struct {
 	Queues      int64
 }
 
-// QueueTotals ...
 type QueueTotals struct {
 	Messages                   int64
 	MessagesReady              int64 `json:"messages_ready"`
@@ -129,7 +123,6 @@ type QueueTotals struct {
 	MessagePersistent          int64 `json:"message_bytes_persistent"`
 }
 
-// Queue ...
 type Queue struct {
 	QueueTotals            // just to not repeat the same code
 	MessageStats           `json:"message_stats"`
@@ -144,9 +137,9 @@ type Queue struct {
 	IdleSince              string   `json:"idle_since"`
 	SlaveNodes             []string `json:"slave_nodes"`
 	SynchronisedSlaveNodes []string `json:"synchronised_slave_nodes"`
+	HeadMessageTimestamp   *int64   `json:"head_message_timestamp"`
 }
 
-// Node ...
 type Node struct {
 	Name string
 
@@ -193,7 +186,6 @@ type Exchange struct {
 	AutoDelete   bool `json:"auto_delete"`
 }
 
-// FederationLinkChannelMessageStats ...
 type FederationLinkChannelMessageStats struct {
 	Confirm                 int64   `json:"confirm"`
 	ConfirmDetails          Details `json:"confirm_details"`
@@ -203,7 +195,6 @@ type FederationLinkChannelMessageStats struct {
 	ReturnUnroutableDetails Details `json:"return_unroutable_details"`
 }
 
-// FederationLinkChannel ...
 type FederationLinkChannel struct {
 	AcksUncommitted        int64                             `json:"acks_uncommitted"`
 	ConsumerCount          int64                             `json:"consumer_count"`
@@ -213,7 +204,6 @@ type FederationLinkChannel struct {
 	MessageStats           FederationLinkChannelMessageStats `json:"message_stats"`
 }
 
-// FederationLink ...
 type FederationLink struct {
 	Type             string                `json:"type"`
 	Queue            string                `json:"queue"`
@@ -229,7 +219,6 @@ type HealthCheck struct {
 	Status string `json:"status"`
 }
 
-// MemoryResponse ...
 type MemoryResponse struct {
 	Memory *Memory `json:"memory"`
 }
@@ -264,7 +253,6 @@ type ErrorResponse struct {
 	Reason string `json:"reason"`
 }
 
-// gatherFunc ...
 type gatherFunc func(r *RabbitMQ, acc telegraf.Accumulator)
 
 var gatherFunctions = map[string]gatherFunc{
@@ -318,7 +306,6 @@ func (r *RabbitMQ) Init() error {
 	return nil
 }
 
-// Gather ...
 func (r *RabbitMQ) Gather(acc telegraf.Accumulator) error {
 	var wg sync.WaitGroup
 	for name, f := range gatherFunctions {
@@ -349,14 +336,24 @@ func (r *RabbitMQ) requestEndpoint(u string) ([]byte, error) {
 		return nil, err
 	}
 
-	username := r.Username
-	if username == "" {
-		username = DefaultUsername
+	username := DefaultUsername
+	if !r.Username.Empty() {
+		usernameSecret, err := r.Username.Get()
+		if err != nil {
+			return nil, err
+		}
+		defer usernameSecret.Destroy()
+		username = usernameSecret.String()
 	}
 
-	password := r.Password
-	if password == "" {
-		password = DefaultPassword
+	password := DefaultPassword
+	if !r.Password.Empty() {
+		passwordSecret, err := r.Password.Get()
+		if err != nil {
+			return nil, err
+		}
+		defer passwordSecret.Destroy()
+		password = passwordSecret.String()
 	}
 
 	req.SetBasicAuth(username, password)
@@ -381,7 +378,8 @@ func (r *RabbitMQ) requestJSON(u string, target interface{}) error {
 		return err
 	}
 	if err := json.Unmarshal(buf, target); err != nil {
-		if _, ok := err.(*json.UnmarshalTypeError); ok {
+		var jsonErr *json.UnmarshalTypeError
+		if errors.As(err, &jsonErr) {
 			// Try to get the error reason from the response
 			var errResponse ErrorResponse
 			if json.Unmarshal(buf, &errResponse) == nil && errResponse.Error != "" {
@@ -390,7 +388,7 @@ func (r *RabbitMQ) requestJSON(u string, target interface{}) error {
 			}
 		}
 
-		return fmt.Errorf("decoding answer from %q failed: %v", u, err)
+		return fmt.Errorf("decoding answer from %q failed: %w", u, err)
 	}
 
 	return nil
@@ -585,36 +583,42 @@ func gatherQueues(r *RabbitMQ, acc telegraf.Accumulator) {
 			"auto_delete": strconv.FormatBool(queue.AutoDelete),
 		}
 
+		fields := map[string]interface{}{
+			// common information
+			"consumers":                queue.Consumers,
+			"consumer_utilisation":     queue.ConsumerUtilisation,
+			"idle_since":               queue.IdleSince,
+			"slave_nodes":              len(queue.SlaveNodes),
+			"synchronised_slave_nodes": len(queue.SynchronisedSlaveNodes),
+			"memory":                   queue.Memory,
+			// messages information
+			"message_bytes":             queue.MessageBytes,
+			"message_bytes_ready":       queue.MessageBytesReady,
+			"message_bytes_unacked":     queue.MessageBytesUnacknowledged,
+			"message_bytes_ram":         queue.MessageRAM,
+			"message_bytes_persist":     queue.MessagePersistent,
+			"messages":                  queue.Messages,
+			"messages_ready":            queue.MessagesReady,
+			"messages_unack":            queue.MessagesUnacknowledged,
+			"messages_ack":              queue.MessageStats.Ack,
+			"messages_ack_rate":         queue.MessageStats.AckDetails.Rate,
+			"messages_deliver":          queue.MessageStats.Deliver,
+			"messages_deliver_rate":     queue.MessageStats.DeliverDetails.Rate,
+			"messages_deliver_get":      queue.MessageStats.DeliverGet,
+			"messages_deliver_get_rate": queue.MessageStats.DeliverGetDetails.Rate,
+			"messages_publish":          queue.MessageStats.Publish,
+			"messages_publish_rate":     queue.MessageStats.PublishDetails.Rate,
+			"messages_redeliver":        queue.MessageStats.Redeliver,
+			"messages_redeliver_rate":   queue.MessageStats.RedeliverDetails.Rate,
+		}
+
+		if queue.HeadMessageTimestamp != nil {
+			fields["head_message_timestamp"] = *queue.HeadMessageTimestamp
+		}
+
 		acc.AddFields(
 			"rabbitmq_queue",
-			map[string]interface{}{
-				// common information
-				"consumers":                queue.Consumers,
-				"consumer_utilisation":     queue.ConsumerUtilisation,
-				"idle_since":               queue.IdleSince,
-				"slave_nodes":              len(queue.SlaveNodes),
-				"synchronised_slave_nodes": len(queue.SynchronisedSlaveNodes),
-				"memory":                   queue.Memory,
-				// messages information
-				"message_bytes":             queue.MessageBytes,
-				"message_bytes_ready":       queue.MessageBytesReady,
-				"message_bytes_unacked":     queue.MessageBytesUnacknowledged,
-				"message_bytes_ram":         queue.MessageRAM,
-				"message_bytes_persist":     queue.MessagePersistent,
-				"messages":                  queue.Messages,
-				"messages_ready":            queue.MessagesReady,
-				"messages_unack":            queue.MessagesUnacknowledged,
-				"messages_ack":              queue.MessageStats.Ack,
-				"messages_ack_rate":         queue.MessageStats.AckDetails.Rate,
-				"messages_deliver":          queue.MessageStats.Deliver,
-				"messages_deliver_rate":     queue.MessageStats.DeliverDetails.Rate,
-				"messages_deliver_get":      queue.MessageStats.DeliverGet,
-				"messages_deliver_get_rate": queue.MessageStats.DeliverGetDetails.Rate,
-				"messages_publish":          queue.MessageStats.Publish,
-				"messages_publish_rate":     queue.MessageStats.PublishDetails.Rate,
-				"messages_redeliver":        queue.MessageStats.Redeliver,
-				"messages_redeliver_rate":   queue.MessageStats.RedeliverDetails.Rate,
-			},
+			fields,
 			tags,
 		)
 	}

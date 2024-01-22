@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/plugins/parsers"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/parsers/csv"
+	"github.com/influxdata/telegraf/plugins/parsers/grok"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/plugins/parsers/json"
 	"github.com/influxdata/telegraf/testutil"
@@ -23,6 +25,15 @@ import (
 var (
 	testdataDir = getTestdataDir()
 )
+
+func NewInfluxParser() (telegraf.Parser, error) {
+	parser := &influx.Parser{}
+	err := parser.Init()
+	if err != nil {
+		return nil, err
+	}
+	return parser, nil
+}
 
 func NewTestTail() *Tail {
 	offsetsMutex.Lock()
@@ -67,7 +78,7 @@ func TestTailBadLine(t *testing.T) {
 	tt.Log = testutil.Logger{}
 	tt.FromBeginning = true
 	tt.Files = []string{tmpfile.Name()}
-	tt.SetParserFunc(parsers.NewInfluxParser)
+	tt.SetParserFunc(NewInfluxParser)
 
 	err = tt.Init()
 	require.NoError(t, err)
@@ -96,7 +107,7 @@ func TestColoredLine(t *testing.T) {
 	tt.FromBeginning = true
 	tt.Filters = []string{"ansi_color"}
 	tt.Files = []string{tmpfile.Name()}
-	tt.SetParserFunc(parsers.NewInfluxParser)
+	tt.SetParserFunc(NewInfluxParser)
 
 	err = tt.Init()
 	require.NoError(t, err)
@@ -129,7 +140,7 @@ func TestTailDosLineEndings(t *testing.T) {
 	tt.Log = testutil.Logger{}
 	tt.FromBeginning = true
 	tt.Files = []string{tmpfile.Name()}
-	tt.SetParserFunc(parsers.NewInfluxParser)
+	tt.SetParserFunc(NewInfluxParser)
 
 	err = tt.Init()
 	require.NoError(t, err)
@@ -194,7 +205,8 @@ func TestGrokParseLogFilesWithMultiline(t *testing.T) {
 		})
 	acc.AssertContainsTaggedFields(t, "tail_grok",
 		map[string]interface{}{
-			"message": "HelloExample: Sorry, something wrong! java.lang.ArithmeticException: / by zero\tat com.foo.HelloExample2.divide(HelloExample2.java:24)\tat com.foo.HelloExample2.main(HelloExample2.java:14)",
+			"message": "HelloExample: Sorry, something wrong! java.lang.ArithmeticException: / by zero\t" +
+				"at com.foo.HelloExample2.divide(HelloExample2.java:24)\tat com.foo.HelloExample2.main(HelloExample2.java:14)",
 		},
 		map[string]string{
 			"path":     expectedPath,
@@ -305,14 +317,14 @@ func TestGrokParseLogFilesWithMultilineTailerCloseFlushesMultilineBuffer(t *test
 		})
 }
 
-func createGrokParser() (parsers.Parser, error) {
-	grokConfig := &parsers.Config{
-		MetricName:             "tail_grok",
-		GrokPatterns:           []string{"%{TEST_LOG_MULTILINE}"},
-		GrokCustomPatternFiles: []string{filepath.Join(testdataDir, "test-patterns")},
-		DataFormat:             "grok",
+func createGrokParser() (telegraf.Parser, error) {
+	parser := &grok.Parser{
+		Measurement:        "tail_grok",
+		Patterns:           []string{"%{TEST_LOG_MULTILINE}"},
+		CustomPatternFiles: []string{filepath.Join(testdataDir, "test-patterns")},
+		Log:                testutil.Logger{},
 	}
-	parser, err := parsers.NewParser(grokConfig)
+	err := parser.Init()
 	return parser, err
 }
 
@@ -334,7 +346,7 @@ cpu,42
 	plugin.Log = testutil.Logger{}
 	plugin.FromBeginning = true
 	plugin.Files = []string{tmpfile.Name()}
-	plugin.SetParserFunc(func() (parsers.Parser, error) {
+	plugin.SetParserFunc(func() (telegraf.Parser, error) {
 		parser := csv.Parser{
 			MeasurementColumn: "measurement",
 			HeaderRowCount:    1,
@@ -344,17 +356,7 @@ cpu,42
 		return &parser, err
 	})
 
-	err = plugin.Init()
-	require.NoError(t, err)
-
-	acc := testutil.Accumulator{}
-	err = plugin.Start(&acc)
-	require.NoError(t, err)
-	defer plugin.Stop()
-	err = plugin.Gather(&acc)
-	require.NoError(t, err)
-	acc.Wait(2)
-	plugin.Stop()
+	require.NoError(t, plugin.Init())
 
 	expected := []telegraf.Metric{
 		testutil.MustMetric("cpu",
@@ -374,6 +376,15 @@ cpu,42
 			},
 			time.Unix(0, 0)),
 	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+	defer plugin.Stop()
+
+	require.NoError(t, plugin.Gather(&acc))
+	require.Eventually(t, func() bool {
+		return acc.NFields() >= len(expected)
+	}, 3*time.Second, 100*time.Millisecond)
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics())
 }
 
@@ -395,7 +406,7 @@ skip2,mem,100
 	plugin.Log = testutil.Logger{}
 	plugin.FromBeginning = true
 	plugin.Files = []string{tmpfile.Name()}
-	plugin.SetParserFunc(func() (parsers.Parser, error) {
+	plugin.SetParserFunc(func() (telegraf.Parser, error) {
 		parser := csv.Parser{
 			MeasurementColumn: "measurement1",
 			HeaderRowCount:    2,
@@ -457,11 +468,10 @@ func TestMultipleMetricsOnFirstLine(t *testing.T) {
 	plugin.FromBeginning = true
 	plugin.Files = []string{tmpfile.Name()}
 	plugin.PathTag = "customPathTagMyFile"
-	plugin.SetParserFunc(func() (parsers.Parser, error) {
-		return json.New(
-			&json.Config{
-				MetricName: "cpu",
-			})
+	plugin.SetParserFunc(func() (telegraf.Parser, error) {
+		p := &json.Parser{MetricName: "cpu"}
+		err := p.Init()
+		return p, err
 	})
 
 	err = plugin.Init()
@@ -607,10 +617,8 @@ func TestCharacterEncoding(t *testing.T) {
 				WatchMethod:         watchMethod,
 			}
 
-			plugin.SetParserFunc(func() (parsers.Parser, error) {
-				handler := influx.NewMetricHandler()
-				return influx.NewParser(handler), nil
-			})
+			plugin.SetParserFunc(NewInfluxParser)
+			require.NoError(t, plugin.Init())
 
 			if tt.offset != 0 {
 				plugin.offsets = map[string]int64{
@@ -618,12 +626,8 @@ func TestCharacterEncoding(t *testing.T) {
 				}
 			}
 
-			err := plugin.Init()
-			require.NoError(t, err)
-
 			var acc testutil.Accumulator
-			err = plugin.Start(&acc)
-			require.NoError(t, err)
+			require.NoError(t, plugin.Start(&acc))
 			acc.Wait(len(tt.expected))
 			plugin.Stop()
 
@@ -650,7 +654,7 @@ func TestTailEOF(t *testing.T) {
 	tt.Log = testutil.Logger{}
 	tt.FromBeginning = true
 	tt.Files = []string{tmpfile.Name()}
-	tt.SetParserFunc(parsers.NewInfluxParser)
+	tt.SetParserFunc(NewInfluxParser)
 
 	err = tt.Init()
 	require.NoError(t, err)
@@ -679,6 +683,96 @@ func TestTailEOF(t *testing.T) {
 
 	err = tmpfile.Close()
 	require.NoError(t, err)
+}
+
+func TestCSVBehavior(t *testing.T) {
+	// Prepare the input file
+	input, err := os.CreateTemp("", "")
+	require.NoError(t, err)
+	defer os.Remove(input.Name())
+	// Write header
+	_, err = input.WriteString("a,b\n")
+	require.NoError(t, err)
+	require.NoError(t, input.Sync())
+
+	// Setup the CSV parser creator function
+	parserFunc := func() (telegraf.Parser, error) {
+		parser := &csv.Parser{
+			MetricName:     "tail",
+			HeaderRowCount: 1,
+		}
+		err := parser.Init()
+		return parser, err
+	}
+
+	// Setup the plugin
+	plugin := &Tail{
+		Files:               []string{input.Name()},
+		FromBeginning:       true,
+		MaxUndeliveredLines: 1000,
+		offsets:             make(map[string]int64, 0),
+		PathTag:             "path",
+		Log:                 testutil.Logger{},
+	}
+	plugin.SetParserFunc(parserFunc)
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"tail",
+			map[string]string{
+				"path": input.Name(),
+			},
+			map[string]interface{}{
+				"a": int64(1),
+				"b": int64(2),
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"tail",
+			map[string]string{
+				"path": input.Name(),
+			},
+			map[string]interface{}{
+				"a": int64(3),
+				"b": int64(4),
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+	defer plugin.Stop()
+
+	// Write the first line of data
+	_, err = input.WriteString("1,2\n")
+	require.NoError(t, err)
+	require.NoError(t, input.Sync())
+	require.NoError(t, plugin.Gather(&acc))
+
+	// Write another line of data
+	_, err = input.WriteString("3,4\n")
+	require.NoError(t, err)
+	require.NoError(t, input.Sync())
+	require.NoError(t, plugin.Gather(&acc))
+	require.Eventuallyf(t, func() bool {
+		acc.Lock()
+		defer acc.Unlock()
+		return acc.NMetrics() >= uint64(len(expected))
+	}, time.Second, 100*time.Millisecond, "Expected %d metrics found %d", len(expected), acc.NMetrics())
+
+	// Check the result
+	options := []cmp.Option{
+		testutil.SortMetrics(),
+		testutil.IgnoreTime(),
+	}
+	actual := acc.GetTelegrafMetrics()
+	testutil.RequireMetricsEqual(t, expected, actual, options...)
+
+	// Close the input file
+	require.NoError(t, input.Close())
 }
 
 func getTestdataDir() string {

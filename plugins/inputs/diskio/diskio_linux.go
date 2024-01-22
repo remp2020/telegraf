@@ -3,12 +3,32 @@ package diskio
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/filter"
+	"github.com/influxdata/telegraf/plugins/inputs/system"
 	"golang.org/x/sys/unix"
 )
+
+type DiskIO struct {
+	ps system.PS
+
+	Devices          []string
+	DeviceTags       []string
+	NameTemplates    []string
+	SkipSerialNumber bool
+
+	Log telegraf.Logger
+
+	infoCache    map[string]diskInfoCache
+	deviceFilter filter.Filter
+}
 
 type diskInfoCache struct {
 	modifiedAt   int64 // Unix Nano timestamp of the last modification of the device. This value is used to invalidate the cache
@@ -80,12 +100,9 @@ func (d *DiskIO) diskInfo(devName string) (map[string]string, error) {
 		}
 		if l[:2] == "S:" {
 			if devlinks.Len() > 0 {
-				//nolint:errcheck,revive // this will never fail
 				devlinks.WriteString(" ")
 			}
-			//nolint:errcheck,revive // this will never fail
 			devlinks.WriteString("/dev/")
-			//nolint:errcheck,revive // this will never fail
 			devlinks.WriteString(l[2:])
 			continue
 		}
@@ -104,4 +121,30 @@ func (d *DiskIO) diskInfo(devName string) (map[string]string, error) {
 	}
 
 	return di, nil
+}
+
+func resolveName(name string) string {
+	resolved, err := filepath.EvalSymlinks(name)
+	if err == nil {
+		return resolved
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return name
+	}
+	// Try to prepend "/dev"
+	resolved, err = filepath.EvalSymlinks("/dev/" + name)
+	if err != nil {
+		return name
+	}
+
+	return resolved
+}
+
+func getDeviceWWID(name string) string {
+	path := fmt.Sprintf("/sys/block/%s/wwid", filepath.Base(name))
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(string(buf), "\n")
 }

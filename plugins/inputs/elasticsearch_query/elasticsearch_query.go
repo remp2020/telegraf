@@ -15,11 +15,10 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/plugins/common/tls"
+	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -29,15 +28,15 @@ type ElasticsearchQuery struct {
 	Username            string          `toml:"username"`
 	Password            string          `toml:"password"`
 	EnableSniffer       bool            `toml:"enable_sniffer"`
-	Timeout             config.Duration `toml:"timeout"`
 	HealthCheckInterval config.Duration `toml:"health_check_interval"`
 	Aggregations        []esAggregation `toml:"aggregation"`
 
 	Log telegraf.Logger `toml:"-"`
 
-	tls.ClientConfig
 	httpclient *http.Client
-	esClient   *elastic5.Client
+	httpconfig.HTTPClientConfig
+
+	esClient *elastic5.Client
 }
 
 // esAggregation struct
@@ -85,7 +84,7 @@ func (e *ElasticsearchQuery) Init() error {
 		}
 		err = e.initAggregation(ctx, agg, i)
 		if err != nil {
-			e.Log.Errorf("%s", err)
+			e.Log.Error(err.Error())
 			return nil
 		}
 	}
@@ -96,12 +95,12 @@ func (e *ElasticsearchQuery) initAggregation(ctx context.Context, agg esAggregat
 	// retrieve field mapping and build queries only once
 	agg.mapMetricFields, err = e.getMetricFields(ctx, agg)
 	if err != nil {
-		return fmt.Errorf("not possible to retrieve fields: %v", err.Error())
+		return fmt.Errorf("not possible to retrieve fields: %w", err)
 	}
 
 	for _, metricField := range agg.MetricFields {
 		if _, ok := agg.mapMetricFields[metricField]; !ok {
-			return fmt.Errorf("metric field '%s' not found on index '%s'", metricField, agg.Index)
+			return fmt.Errorf("metric field %q not found on index %q", metricField, agg.Index)
 		}
 	}
 
@@ -154,7 +153,7 @@ func (e *ElasticsearchQuery) connectToES() error {
 	// check for ES version on first node
 	esVersion, err := client.ElasticsearchVersion(e.URLs[0])
 	if err != nil {
-		return fmt.Errorf("elasticsearch version check failed: %s", err)
+		return fmt.Errorf("elasticsearch version check failed: %w", err)
 	}
 
 	esVersionSplit := strings.Split(esVersion, ".")
@@ -188,7 +187,7 @@ func (e *ElasticsearchQuery) Gather(acc telegraf.Accumulator) error {
 			defer wg.Done()
 			err := e.esAggregationQuery(acc, agg, i)
 			if err != nil {
-				acc.AddError(fmt.Errorf("elasticsearch query aggregation %s: %s ", agg.MeasurementName, err.Error()))
+				acc.AddError(fmt.Errorf("elasticsearch query aggregation %s: %w", agg.MeasurementName, err))
 			}
 		}(agg, i)
 	}
@@ -198,20 +197,8 @@ func (e *ElasticsearchQuery) Gather(acc telegraf.Accumulator) error {
 }
 
 func (e *ElasticsearchQuery) createHTTPClient() (*http.Client, error) {
-	tlsCfg, err := e.ClientConfig.TLSConfig()
-	if err != nil {
-		return nil, err
-	}
-	tr := &http.Transport{
-		ResponseHeaderTimeout: time.Duration(e.Timeout),
-		TLSClientConfig:       tlsCfg,
-	}
-	httpclient := &http.Client{
-		Transport: tr,
-		Timeout:   time.Duration(e.Timeout),
-	}
-
-	return httpclient, nil
+	ctx := context.Background()
+	return e.HTTPClientConfig.CreateClient(ctx, e.Log)
 }
 
 func (e *ElasticsearchQuery) esAggregationQuery(acc telegraf.Accumulator, aggregation esAggregation, i int) error {
@@ -243,8 +230,11 @@ func (e *ElasticsearchQuery) esAggregationQuery(acc telegraf.Accumulator, aggreg
 func init() {
 	inputs.Add("elasticsearch_query", func() telegraf.Input {
 		return &ElasticsearchQuery{
-			Timeout:             config.Duration(time.Second * 5),
 			HealthCheckInterval: config.Duration(time.Second * 10),
+			HTTPClientConfig: httpconfig.HTTPClientConfig{
+				ResponseHeaderTimeout: config.Duration(5 * time.Second),
+				Timeout:               config.Duration(5 * time.Second),
+			},
 		}
 	})
 }

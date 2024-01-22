@@ -5,21 +5,21 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/common/kafka"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -35,6 +35,7 @@ type semaphore chan empty
 
 type KafkaConsumer struct {
 	Brokers                []string        `toml:"brokers"`
+	Version                string          `toml:"kafka_version"`
 	ConsumerGroup          string          `toml:"consumer_group"`
 	MaxMessageLen          int             `toml:"max_message_len"`
 	MaxUndeliveredMessages int             `toml:"max_undelivered_messages"`
@@ -42,9 +43,16 @@ type KafkaConsumer struct {
 	Offset                 string          `toml:"offset"`
 	BalanceStrategy        string          `toml:"balance_strategy"`
 	Topics                 []string        `toml:"topics"`
+	TopicRegexps           []string        `toml:"topic_regexps"`
 	TopicTag               string          `toml:"topic_tag"`
+	MsgHeadersAsTags       []string        `toml:"msg_headers_as_tags"`
+	MsgHeaderAsMetricName  string          `toml:"msg_header_as_metric_name"`
+	ConsumerFetchDefault   config.Size     `toml:"consumer_fetch_default"`
+	ConnectionStrategy     string          `toml:"connection_strategy"`
 
 	kafka.ReadConfig
+
+	kafka.Logger
 
 	Log telegraf.Logger `toml:"-"`
 
@@ -52,9 +60,16 @@ type KafkaConsumer struct {
 	consumer        ConsumerGroup
 	config          *sarama.Config
 
-	parser parsers.Parser
-	wg     sync.WaitGroup
-	cancel context.CancelFunc
+	topicClient     sarama.Client
+	regexps         []regexp.Regexp
+	allWantedTopics []string
+	ticker          *time.Ticker
+	fingerprint     string
+
+	parser    telegraf.Parser
+	topicLock sync.Mutex
+	wg        sync.WaitGroup
+	cancel    context.CancelFunc
 }
 
 type ConsumerGroup interface {
@@ -77,11 +92,13 @@ func (*KafkaConsumer) SampleConfig() string {
 	return sampleConfig
 }
 
-func (k *KafkaConsumer) SetParser(parser parsers.Parser) {
+func (k *KafkaConsumer) SetParser(parser telegraf.Parser) {
 	k.parser = parser
 }
 
 func (k *KafkaConsumer) Init() error {
+	k.SetLogger()
+
 	if k.MaxUndeliveredMessages == 0 {
 		k.MaxUndeliveredMessages = defaultMaxUndeliveredMessages
 	}
@@ -95,10 +112,18 @@ func (k *KafkaConsumer) Init() error {
 	cfg := sarama.NewConfig()
 
 	// Kafka version 0.10.2.0 is required for consumer groups.
+	// Try to parse version from config. If can not, set default
 	cfg.Version = sarama.V0_10_2_0
+	if k.Version != "" {
+		version, err := sarama.ParseKafkaVersion(k.Version)
+		if err != nil {
+			return fmt.Errorf("invalid version: %w", err)
+		}
+		cfg.Version = version
+	}
 
-	if err := k.SetConfig(cfg); err != nil {
-		return err
+	if err := k.SetConfig(cfg, k.Log); err != nil {
+		return fmt.Errorf("SetConfig: %w", err)
 	}
 
 	switch strings.ToLower(k.Offset) {
@@ -112,11 +137,11 @@ func (k *KafkaConsumer) Init() error {
 
 	switch strings.ToLower(k.BalanceStrategy) {
 	case "range", "":
-		cfg.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRange
+		cfg.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRange()}
 	case "roundrobin":
-		cfg.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
+		cfg.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
 	case "sticky":
-		cfg.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategySticky
+		cfg.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategySticky()}
 	default:
 		return fmt.Errorf("invalid balance strategy %q", k.BalanceStrategy)
 	}
@@ -127,51 +152,204 @@ func (k *KafkaConsumer) Init() error {
 
 	cfg.Consumer.MaxProcessingTime = time.Duration(k.MaxProcessingTime)
 
+	if k.ConsumerFetchDefault != 0 {
+		cfg.Consumer.Fetch.Default = int32(k.ConsumerFetchDefault)
+	}
+
+	switch strings.ToLower(k.ConnectionStrategy) {
+	default:
+		return fmt.Errorf("invalid connection strategy %q", k.ConnectionStrategy)
+	case "defer", "startup", "":
+	}
+
 	k.config = cfg
+
+	if len(k.TopicRegexps) == 0 {
+		k.allWantedTopics = k.Topics
+	} else {
+		if err := k.compileTopicRegexps(); err != nil {
+			return err
+		}
+		// We have regexps, so we're going to need a client to ask
+		// the broker for topics
+		client, err := sarama.NewClient(k.Brokers, k.config)
+		if err != nil {
+			return err
+		}
+		k.topicClient = client
+	}
+
 	return nil
 }
 
-func (k *KafkaConsumer) Start(acc telegraf.Accumulator) error {
+func (k *KafkaConsumer) compileTopicRegexps() error {
+	// While we can add new topics matching extant regexps, we can't
+	// update that list on the fly.  We compile them once at startup.
+	// Changing them is a configuration change and requires a restart.
+
+	k.regexps = make([]regexp.Regexp, 0, len(k.TopicRegexps))
+	for _, r := range k.TopicRegexps {
+		re, err := regexp.Compile(r)
+		if err != nil {
+			return fmt.Errorf("regular expression %q did not compile: '%w", r, err)
+		}
+		k.regexps = append(k.regexps, *re)
+	}
+	return nil
+}
+
+func (k *KafkaConsumer) refreshTopics() error {
+	// We have instantiated a new generic Kafka client, so we can ask
+	// it for all the topics it knows about.  Then we build
+	// regexps from our strings, loop over those, loop over the
+	// topics, and if we find a match, add that topic to
+	// out topic set, which then we turn back into a list at the end.
+
+	if len(k.regexps) == 0 {
+		return nil
+	}
+
+	allDiscoveredTopics, err := k.topicClient.Topics()
+	if err != nil {
+		return err
+	}
+	k.Log.Debugf("discovered topics: %v", allDiscoveredTopics)
+
+	extantTopicSet := make(map[string]bool, len(allDiscoveredTopics))
+	for _, t := range allDiscoveredTopics {
+		extantTopicSet[t] = true
+	}
+	// Even if a topic specified by a literal string (that is, k.Topics)
+	// does not appear in the topic list, we want to keep it around, in
+	// case it pops back up--it is not guaranteed to be matched by any
+	// of our regular expressions.  Therefore, we pretend that it's in
+	// extantTopicSet, even if it isn't.
+	//
+	// Assuming that literally-specified topics are usually in the topics
+	// present on the broker, this should not need a resizing (although if
+	// you have many topics that you don't care about, it will be too big)
+	wantedTopicSet := make(map[string]bool, len(allDiscoveredTopics))
+	for _, t := range k.Topics {
+		// Get our pre-specified topics
+		k.Log.Debugf("adding literally-specified topic %s", t)
+		wantedTopicSet[t] = true
+	}
+	for _, t := range allDiscoveredTopics {
+		// Add topics that match regexps
+		for _, r := range k.regexps {
+			if r.MatchString(t) {
+				wantedTopicSet[t] = true
+				k.Log.Debugf("adding regexp-matched topic %q", t)
+				break
+			}
+		}
+	}
+	topicList := make([]string, 0, len(wantedTopicSet))
+	for t := range wantedTopicSet {
+		topicList = append(topicList, t)
+	}
+	sort.Strings(topicList)
+	fingerprint := strings.Join(topicList, ";")
+	if fingerprint != k.fingerprint {
+		k.Log.Infof("updating topics: replacing %q with %q", k.allWantedTopics, topicList)
+	}
+	k.topicLock.Lock()
+	k.fingerprint = fingerprint
+	k.allWantedTopics = topicList
+	k.topicLock.Unlock()
+	return nil
+}
+
+func (k *KafkaConsumer) create() error {
 	var err error
 	k.consumer, err = k.ConsumerCreator.Create(
 		k.Brokers,
 		k.ConsumerGroup,
 		k.config,
 	)
-	if err != nil {
-		return err
+
+	return err
+}
+
+func (k *KafkaConsumer) startErrorAdder(acc telegraf.Accumulator) {
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		for err := range k.consumer.Errors() {
+			acc.AddError(fmt.Errorf("channel: %w", err))
+		}
+	}()
+}
+
+func (k *KafkaConsumer) Start(acc telegraf.Accumulator) error {
+	var err error
+
+	// If TopicRegexps is set, add matches to Topics
+	if len(k.TopicRegexps) > 0 {
+		if err := k.refreshTopics(); err != nil {
+			return err
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	k.cancel = cancel
 
+	if k.ConnectionStrategy != "defer" {
+		err = k.create()
+		if err != nil {
+			return fmt.Errorf("create consumer: %w", err)
+		}
+		k.startErrorAdder(acc)
+	}
+
 	// Start consumer goroutine
 	k.wg.Add(1)
 	go func() {
+		var err error
 		defer k.wg.Done()
+
+		if k.consumer == nil {
+			err = k.create()
+			if err != nil {
+				acc.AddError(fmt.Errorf("create consumer async: %w", err))
+				return
+			}
+		}
+
+		k.startErrorAdder(acc)
+
 		for ctx.Err() == nil {
 			handler := NewConsumerGroupHandler(acc, k.MaxUndeliveredMessages, k.parser, k.Log)
 			handler.MaxMessageLen = k.MaxMessageLen
 			handler.TopicTag = k.TopicTag
-			err := k.consumer.Consume(ctx, k.Topics, handler)
+			handler.MsgHeaderToMetricName = k.MsgHeaderAsMetricName
+			//if message headers list specified, put it as map to handler
+			msgHeadersMap := make(map[string]bool, len(k.MsgHeadersAsTags))
+			if len(k.MsgHeadersAsTags) > 0 {
+				for _, header := range k.MsgHeadersAsTags {
+					if k.MsgHeaderAsMetricName != header {
+						msgHeadersMap[header] = true
+					}
+				}
+			}
+			handler.MsgHeadersToTags = msgHeadersMap
+
+			// We need to copy allWantedTopics; the Consume() is
+			// long-running and we can easily deadlock if our
+			// topic-update-checker fires.
+			topics := make([]string, len(k.allWantedTopics))
+			k.topicLock.Lock()
+			copy(topics, k.allWantedTopics)
+			k.topicLock.Unlock()
+			err := k.consumer.Consume(ctx, topics, handler)
 			if err != nil {
-				acc.AddError(err)
-				// Ignore returned error as we cannot do anything about it anyway
-				//nolint:errcheck,revive
-				internal.SleepContext(ctx, reconnectDelay)
+				acc.AddError(fmt.Errorf("consume: %w", err))
+				internal.SleepContext(ctx, reconnectDelay) //nolint:errcheck // ignore returned error as we cannot do anything about it anyway
 			}
 		}
 		err = k.consumer.Close()
 		if err != nil {
-			acc.AddError(err)
-		}
-	}()
-
-	k.wg.Add(1)
-	go func() {
-		defer k.wg.Done()
-		for err := range k.consumer.Errors() {
-			acc.AddError(err)
+			acc.AddError(fmt.Errorf("close: %w", err))
 		}
 	}()
 
@@ -183,6 +361,15 @@ func (k *KafkaConsumer) Gather(_ telegraf.Accumulator) error {
 }
 
 func (k *KafkaConsumer) Stop() {
+	if k.ticker != nil {
+		k.ticker.Stop()
+	}
+	// Lock so that a topic refresh cannot start while we are stopping.
+	k.topicLock.Lock()
+	defer k.topicLock.Unlock()
+	if k.topicClient != nil {
+		k.topicClient.Close()
+	}
 	k.cancel()
 	k.wg.Wait()
 }
@@ -194,7 +381,7 @@ type Message struct {
 	session sarama.ConsumerGroupSession
 }
 
-func NewConsumerGroupHandler(acc telegraf.Accumulator, maxUndelivered int, parser parsers.Parser, log telegraf.Logger) *ConsumerGroupHandler {
+func NewConsumerGroupHandler(acc telegraf.Accumulator, maxUndelivered int, parser telegraf.Parser, log telegraf.Logger) *ConsumerGroupHandler {
 	handler := &ConsumerGroupHandler{
 		acc:         acc.WithTracking(maxUndelivered),
 		sem:         make(chan empty, maxUndelivered),
@@ -207,12 +394,14 @@ func NewConsumerGroupHandler(acc telegraf.Accumulator, maxUndelivered int, parse
 
 // ConsumerGroupHandler is a sarama.ConsumerGroupHandler implementation.
 type ConsumerGroupHandler struct {
-	MaxMessageLen int
-	TopicTag      string
+	MaxMessageLen         int
+	TopicTag              string
+	MsgHeadersToTags      map[string]bool
+	MsgHeaderToMetricName string
 
 	acc    telegraf.TrackingAccumulator
 	sem    semaphore
-	parser parsers.Parser
+	parser telegraf.Parser
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 
@@ -298,6 +487,28 @@ func (h *ConsumerGroupHandler) Handle(session sarama.ConsumerGroupSession, msg *
 		return err
 	}
 
+	headerKey := ""
+	// Check if any message header should override metric name or should be pass as tag
+	if len(h.MsgHeadersToTags) > 0 || h.MsgHeaderToMetricName != "" {
+		for _, header := range msg.Headers {
+			//convert to a string as the header and value are byte arrays.
+			headerKey = string(header.Key)
+			if _, exists := h.MsgHeadersToTags[headerKey]; exists {
+				// If message header should be pass as tag then add it to the metrics
+				for _, metric := range metrics {
+					metric.AddTag(headerKey, string(header.Value))
+				}
+			} else {
+				if h.MsgHeaderToMetricName == headerKey {
+					for _, metric := range metrics {
+						metric.SetName(string(header.Value))
+					}
+				}
+			}
+		}
+	}
+
+	// Add topic name as tag with TopicTag name specified in the config
 	if len(h.TopicTag) > 0 {
 		for _, metric := range metrics {
 			metric.AddTag(h.TopicTag, msg.Topic)

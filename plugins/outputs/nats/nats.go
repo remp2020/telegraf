@@ -9,23 +9,23 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type NATS struct {
-	Servers     []string `toml:"servers"`
-	Secure      bool     `toml:"secure"`
-	Name        string   `toml:"name"`
-	Username    string   `toml:"username"`
-	Password    string   `toml:"password"`
-	Credentials string   `toml:"credentials"`
-	Subject     string   `toml:"subject"`
+	Servers     []string      `toml:"servers"`
+	Secure      bool          `toml:"secure"`
+	Name        string        `toml:"name"`
+	Username    config.Secret `toml:"username"`
+	Password    config.Secret `toml:"password"`
+	Credentials string        `toml:"credentials"`
+	Subject     string        `toml:"subject"`
 
 	tls.ClientConfig
 
@@ -51,8 +51,19 @@ func (n *NATS) Connect() error {
 	}
 
 	// override authentication, if any was specified
-	if n.Username != "" && n.Password != "" {
-		opts = append(opts, nats.UserInfo(n.Username, n.Password))
+	if !n.Username.Empty() && !n.Password.Empty() {
+		username, err := n.Username.Get()
+		if err != nil {
+			return fmt.Errorf("getting username failed: %w", err)
+		}
+		password, err := n.Password.Get()
+		if err != nil {
+			username.Destroy()
+			return fmt.Errorf("getting password failed: %w", err)
+		}
+		opts = append(opts, nats.UserInfo(username.String(), password.String()))
+		username.Destroy()
+		password.Destroy()
 	}
 
 	if n.Credentials != "" {
@@ -97,7 +108,7 @@ func (n *NATS) Write(metrics []telegraf.Metric) error {
 
 		err = n.conn.Publish(n.Subject, buf)
 		if err != nil {
-			return fmt.Errorf("FAILED to send NATS message: %s", err)
+			return fmt.Errorf("FAILED to send NATS message: %w", err)
 		}
 	}
 	return nil

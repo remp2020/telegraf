@@ -17,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/serializers/influx"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -36,7 +35,7 @@ type Client interface {
 
 type InfluxDB struct {
 	URLs             []string          `toml:"urls"`
-	Token            string            `toml:"token"`
+	Token            config.Secret     `toml:"token"`
 	Organization     string            `toml:"organization"`
 	Bucket           string            `toml:"bucket"`
 	BucketTag        string            `toml:"bucket_tag"`
@@ -47,6 +46,8 @@ type InfluxDB struct {
 	UserAgent        string            `toml:"user_agent"`
 	ContentEncoding  string            `toml:"content_encoding"`
 	UintSupport      bool              `toml:"influx_uint_support"`
+	PingTimeout      config.Duration   `toml:"ping_timeout"`
+	ReadIdleTimeout  config.Duration   `toml:"read_idle_timeout"`
 	tls.ClientConfig
 
 	Log telegraf.Logger `toml:"-"`
@@ -66,14 +67,14 @@ func (i *InfluxDB) Connect() error {
 	for _, u := range i.URLs {
 		parts, err := url.Parse(u)
 		if err != nil {
-			return fmt.Errorf("error parsing url [%q]: %v", u, err)
+			return fmt.Errorf("error parsing url [%q]: %w", u, err)
 		}
 
 		var proxy *url.URL
 		if len(i.HTTPProxy) > 0 {
 			proxy, err = url.Parse(i.HTTPProxy)
 			if err != nil {
-				return fmt.Errorf("error parsing proxy_url [%s]: %v", i.HTTPProxy, err)
+				return fmt.Errorf("error parsing proxy_url [%s]: %w", i.HTTPProxy, err)
 			}
 		}
 
@@ -126,6 +127,11 @@ func (i *InfluxDB) getHTTPClient(address *url.URL, proxy *url.URL) (Client, erro
 		return nil, err
 	}
 
+	serializer := &influx.Serializer{UintSupport: i.UintSupport}
+	if err := serializer.Init(); err != nil {
+		return nil, err
+	}
+
 	httpConfig := &HTTPConfig{
 		URL:              address,
 		Token:            i.Token,
@@ -139,25 +145,18 @@ func (i *InfluxDB) getHTTPClient(address *url.URL, proxy *url.URL) (Client, erro
 		UserAgent:        i.UserAgent,
 		ContentEncoding:  i.ContentEncoding,
 		TLSConfig:        tlsConfig,
-		Serializer:       i.newSerializer(),
+		Serializer:       serializer,
+		PingTimeout:      i.PingTimeout,
+		ReadIdleTimeout:  i.ReadIdleTimeout,
 		Log:              i.Log,
 	}
 
 	c, err := NewHTTPClient(httpConfig)
 	if err != nil {
-		return nil, fmt.Errorf("error creating HTTP client [%s]: %v", address, err)
+		return nil, fmt.Errorf("error creating HTTP client [%s]: %w", address, err)
 	}
 
 	return c, nil
-}
-
-func (i *InfluxDB) newSerializer() *influx.Serializer {
-	serializer := influx.NewSerializer()
-	if i.UintSupport {
-		serializer.SetFieldTypeSupport(influx.UintSupport)
-	}
-
-	return serializer
 }
 
 func init() {

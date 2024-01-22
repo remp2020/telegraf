@@ -8,17 +8,24 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type CGroup struct {
 	Paths []string `toml:"paths"`
 	Files []string `toml:"files"`
+
+	logged map[string]bool
 }
 
 func (*CGroup) SampleConfig() string {
 	return sampleConfig
+}
+
+func (cg *CGroup) Init() error {
+	cg.logged = make(map[string]bool)
+
+	return nil
 }
 
 func init() {

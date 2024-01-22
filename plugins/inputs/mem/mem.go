@@ -11,7 +11,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -32,7 +31,7 @@ func (ms *MemStats) Init() error {
 func (ms *MemStats) Gather(acc telegraf.Accumulator) error {
 	vm, err := ms.ps.VMStat()
 	if err != nil {
-		return fmt.Errorf("error getting virtual memory info: %s", err)
+		return fmt.Errorf("error getting virtual memory info: %w", err)
 	}
 
 	fields := map[string]interface{}{

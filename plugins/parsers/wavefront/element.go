@@ -63,8 +63,7 @@ func (ep *ValueParser) parse(p *PointParser, pt *Point) error {
 	p.unscan()
 
 	pt.Value = p.writeBuf.String()
-	_, err := strconv.ParseFloat(pt.Value, 64)
-	if err != nil {
+	if _, err := strconv.ParseFloat(pt.Value, 64); err != nil {
 		return fmt.Errorf("invalid metric value %s", pt.Value)
 	}
 	return nil
@@ -89,7 +88,7 @@ func (ep *TimestampParser) parse(p *PointParser, pt *Point) error {
 	}
 
 	p.writeBuf.Reset()
-	for tok != EOF && tok == Number {
+	for tok == Number {
 		p.writeBuf.WriteString(lit)
 		tok, lit = p.scan()
 	}
@@ -131,7 +130,7 @@ func (ep *LoopedParser) parse(p *PointParser, pt *Point) error {
 			return err
 		}
 		err = ep.wsParser.parse(p, pt)
-		if err == ErrEOF {
+		if errors.Is(err, ErrEOF) {
 			break
 		}
 	}
@@ -165,7 +164,7 @@ func (ep *TagParser) parse(p *PointParser, pt *Point) error {
 
 func (ep *WhiteSpaceParser) parse(p *PointParser, _ *Point) error {
 	tok := Ws
-	for tok != EOF && tok == Ws {
+	for tok == Ws {
 		tok, _ = p.scan()
 	}
 

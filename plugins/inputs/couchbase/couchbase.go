@@ -4,6 +4,7 @@ package couchbase
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"sync"
@@ -13,23 +14,32 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/filter"
+	"github.com/influxdata/telegraf/internal/choice"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type Couchbase struct {
-	Servers []string
-
+	Servers             []string `toml:"servers"`
 	BucketStatsIncluded []string `toml:"bucket_stats_included"`
+	ClusterBucketStats  bool     `toml:"cluster_bucket_stats"`
+	NodeBucketStats     bool     `toml:"node_bucket_stats"`
+	AdditionalStats     []string `toml:"additional_stats"`
 
 	bucketInclude filter.Filter
 	client        *http.Client
 
 	tls.ClientConfig
+}
+
+type autoFailover struct {
+	Count    int  `json:"count"`
+	Enabled  bool `json:"enabled"`
+	MaxCount int  `json:"maxCount"`
+	Timeout  int  `json:"timeout"`
 }
 
 var regexpURI = regexp.MustCompile(`(\S+://)?(\S+\:\S+@)`)
@@ -85,32 +95,94 @@ func (cb *Couchbase) gatherServer(acc telegraf.Accumulator, addr string) error {
 		acc.AddFields("couchbase_node", fields, tags)
 	}
 
-	for bucketName := range pool.BucketMap {
-		tags := map[string]string{"cluster": escapedAddr, "bucket": bucketName}
-		bs := pool.BucketMap[bucketName].BasicStats
-		fields := make(map[string]interface{})
-		cb.addBucketField(fields, "quota_percent_used", bs["quotaPercentUsed"])
-		cb.addBucketField(fields, "ops_per_sec", bs["opsPerSec"])
-		cb.addBucketField(fields, "disk_fetches", bs["diskFetches"])
-		cb.addBucketField(fields, "item_count", bs["itemCount"])
-		cb.addBucketField(fields, "disk_used", bs["diskUsed"])
-		cb.addBucketField(fields, "data_used", bs["dataUsed"])
-		cb.addBucketField(fields, "mem_used", bs["memUsed"])
+	cluster := regexpURI.ReplaceAllString(addr, "${1}")
+	for name, bucket := range pool.BucketMap {
+		if cb.ClusterBucketStats {
+			fields := cb.basicBucketStats(bucket.BasicStats)
+			tags := map[string]string{"cluster": cluster, "bucket": name}
 
-		err := cb.gatherDetailedBucketStats(addr, bucketName, fields)
-		if err != nil {
-			return err
+			err := cb.gatherDetailedBucketStats(addr, name, "", fields)
+			if err != nil {
+				return err
+			}
+
+			acc.AddFields("couchbase_bucket", fields, tags)
 		}
 
-		acc.AddFields("couchbase_bucket", fields, tags)
+		if cb.NodeBucketStats {
+			for _, node := range bucket.Nodes() {
+				fields := cb.basicBucketStats(bucket.BasicStats)
+				tags := map[string]string{"cluster": cluster, "bucket": name, "hostname": node.Hostname}
+
+				err := cb.gatherDetailedBucketStats(addr, name, node.Hostname, fields)
+				if err != nil {
+					return err
+				}
+
+				acc.AddFields("couchbase_node_bucket", fields, tags)
+			}
+		}
+	}
+
+	if choice.Contains("autofailover", cb.AdditionalStats) {
+		tags := map[string]string{"cluster": cluster}
+		fields, err := cb.gatherAutoFailoverStats(addr)
+		if err != nil {
+			return fmt.Errorf("unable to collect autofailover settings: %w", err)
+		}
+
+		acc.AddFields("couchbase_autofailover", fields, tags)
 	}
 
 	return nil
 }
 
-func (cb *Couchbase) gatherDetailedBucketStats(server, bucket string, fields map[string]interface{}) error {
+func (cb *Couchbase) gatherAutoFailoverStats(server string) (map[string]any, error) {
+	var fields map[string]any
+
+	url := server + "/settings/autoFailover"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fields, err
+	}
+
+	r, err := cb.client.Do(req)
+	if err != nil {
+		return fields, err
+	}
+	defer r.Body.Close()
+
+	var stats autoFailover
+	if err := json.NewDecoder(r.Body).Decode(&stats); err != nil {
+		return fields, err
+	}
+
+	fields = map[string]any{
+		"count":     stats.Count,
+		"enabled":   stats.Enabled,
+		"max_count": stats.MaxCount,
+		"timeout":   stats.Timeout,
+	}
+
+	return fields, nil
+}
+
+// basicBucketStats gets the basic bucket statistics
+func (cb *Couchbase) basicBucketStats(basicStats map[string]interface{}) map[string]interface{} {
+	fields := make(map[string]interface{})
+	cb.addBucketField(fields, "quota_percent_used", basicStats["quotaPercentUsed"])
+	cb.addBucketField(fields, "ops_per_sec", basicStats["opsPerSec"])
+	cb.addBucketField(fields, "disk_fetches", basicStats["diskFetches"])
+	cb.addBucketField(fields, "item_count", basicStats["itemCount"])
+	cb.addBucketField(fields, "disk_used", basicStats["diskUsed"])
+	cb.addBucketField(fields, "data_used", basicStats["dataUsed"])
+	cb.addBucketField(fields, "mem_used", basicStats["memUsed"])
+	return fields
+}
+
+func (cb *Couchbase) gatherDetailedBucketStats(server, bucket string, nodeHostname string, fields map[string]interface{}) error {
 	extendedBucketStats := &BucketStats{}
-	err := cb.queryDetailedBucketStats(server, bucket, extendedBucketStats)
+	err := cb.queryDetailedBucketStats(server, bucket, nodeHostname, extendedBucketStats)
 	if err != nil {
 		return err
 	}
@@ -349,9 +421,15 @@ func (cb *Couchbase) addBucketFieldChecked(fields map[string]interface{}, fieldK
 	cb.addBucketField(fields, fieldKey, values[len(values)-1])
 }
 
-func (cb *Couchbase) queryDetailedBucketStats(server, bucket string, bucketStats *BucketStats) error {
+func (cb *Couchbase) queryDetailedBucketStats(server, bucket string, nodeHostname string, bucketStats *BucketStats) error {
+	url := server + "/pools/default/buckets/" + bucket
+	if nodeHostname != "" {
+		url += "/nodes/" + nodeHostname
+	}
+	url += "/stats?"
+
 	// Set up an HTTP request to get the complete set of bucket stats.
-	req, err := http.NewRequest("GET", server+"/pools/default/buckets/"+bucket+"/stats?", nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
@@ -399,6 +477,7 @@ func init() {
 	inputs.Add("couchbase", func() telegraf.Input {
 		return &Couchbase{
 			BucketStatsIncluded: []string{"quota_percent_used", "ops_per_sec", "disk_fetches", "item_count", "disk_used", "data_used", "mem_used"},
+			ClusterBucketStats:  true,
 		}
 	})
 }

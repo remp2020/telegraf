@@ -4,6 +4,7 @@ package github
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,7 +20,6 @@ import (
 	"github.com/influxdata/telegraf/selfstat"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -149,10 +149,11 @@ func (g *GitHub) Gather(acc telegraf.Accumulator) error {
 }
 
 func (g *GitHub) handleRateLimit(response *githubLib.Response, err error) {
+	var rlErr *githubLib.RateLimitError
 	if err == nil {
 		g.RateLimit.Set(int64(response.Rate.Limit))
 		g.RateRemaining.Set(int64(response.Rate.Remaining))
-	} else if _, ok := err.(*githubLib.RateLimitError); ok {
+	} else if errors.As(err, &rlErr) {
 		g.RateLimitErrors.Incr(1)
 	}
 }

@@ -2,7 +2,7 @@ package csv
 
 import (
 	"fmt"
-	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +10,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -104,8 +105,8 @@ func TestTimestamp(t *testing.T) {
 	metrics, err := p.Parse([]byte(testCSV))
 
 	require.NoError(t, err)
-	require.Equal(t, metrics[0].Time().UnixNano(), int64(1243094706000000000))
-	require.Equal(t, metrics[1].Time().UnixNano(), int64(1257609906000000000))
+	require.Equal(t, int64(1243094706000000000), metrics[0].Time().UnixNano())
+	require.Equal(t, int64(1257609906000000000), metrics[1].Time().UnixNano())
 }
 
 func TestTimestampYYYYMMDDHHmm(t *testing.T) {
@@ -126,8 +127,8 @@ func TestTimestampYYYYMMDDHHmm(t *testing.T) {
 	metrics, err := p.Parse([]byte(testCSV))
 
 	require.NoError(t, err)
-	require.Equal(t, metrics[0].Time().UnixNano(), int64(1243094700000000000))
-	require.Equal(t, metrics[1].Time().UnixNano(), int64(1247328300000000000))
+	require.Equal(t, int64(1243094700000000000), metrics[0].Time().UnixNano())
+	require.Equal(t, int64(1247328300000000000), metrics[1].Time().UnixNano())
 }
 func TestTimestampError(t *testing.T) {
 	p := &Parser{
@@ -162,8 +163,8 @@ func TestTimestampUnixFormat(t *testing.T) {
 1257609906,80,test_name2`
 	metrics, err := p.Parse([]byte(testCSV))
 	require.NoError(t, err)
-	require.Equal(t, metrics[0].Time().UnixNano(), int64(1243094706000000000))
-	require.Equal(t, metrics[1].Time().UnixNano(), int64(1257609906000000000))
+	require.Equal(t, int64(1243094706000000000), metrics[0].Time().UnixNano())
+	require.Equal(t, int64(1257609906000000000), metrics[1].Time().UnixNano())
 }
 
 func TestTimestampUnixMSFormat(t *testing.T) {
@@ -182,8 +183,8 @@ func TestTimestampUnixMSFormat(t *testing.T) {
 1257609906123,80,test_name2`
 	metrics, err := p.Parse([]byte(testCSV))
 	require.NoError(t, err)
-	require.Equal(t, metrics[0].Time().UnixNano(), int64(1243094706123000000))
-	require.Equal(t, metrics[1].Time().UnixNano(), int64(1257609906123000000))
+	require.Equal(t, int64(1243094706123000000), metrics[0].Time().UnixNano())
+	require.Equal(t, int64(1257609906123000000), metrics[1].Time().UnixNano())
 }
 
 func TestQuotedCharacter(t *testing.T) {
@@ -219,6 +220,24 @@ func TestDelimiter(t *testing.T) {
 	metrics, err := p.Parse([]byte(testCSV))
 	require.NoError(t, err)
 	require.Equal(t, "3,4", metrics[0].Fields()["first"])
+}
+
+func TestNullDelimiter(t *testing.T) {
+	p := &Parser{
+		HeaderRowCount: 0,
+		Delimiter:      "\u0000",
+		ColumnNames:    []string{"first", "second", "third"},
+		TimeFunc:       DefaultTime,
+	}
+	err := p.Init()
+	require.NoError(t, err)
+
+	testCSV := strings.Join([]string{"3.4", "70", "test_name"}, "\u0000")
+	metrics, err := p.Parse([]byte(testCSV))
+	require.NoError(t, err)
+	require.Equal(t, float64(3.4), metrics[0].Fields()["first"])
+	require.Equal(t, int64(70), metrics[0].Fields()["second"])
+	require.Equal(t, "test_name", metrics[0].Fields()["third"])
 }
 
 func TestValueConversion(t *testing.T) {
@@ -392,8 +411,7 @@ hello,80,test_name2`
 	testCSVRows := []string{"garbage nonsense\r\n", "line1,line2,line3\r\n", "hello,80,test_name2\r\n"}
 
 	metrics, err = p.Parse([]byte(testCSVRows[0]))
-	require.Error(t, io.EOF, err)
-	require.Error(t, err)
+	require.ErrorIs(t, err, parsers.ErrEOF)
 	require.Nil(t, metrics)
 	m, err := p.ParseLine(testCSVRows[1])
 	require.NoError(t, err)
@@ -467,8 +485,7 @@ func TestMultiHeader(t *testing.T) {
 	require.NoError(t, err)
 
 	metrics, err = p.Parse([]byte(testCSVRows[0]))
-	require.Error(t, io.EOF, err)
-	require.Error(t, err)
+	require.ErrorIs(t, err, parsers.ErrEOF)
 	require.Nil(t, metrics)
 	m, err := p.ParseLine(testCSVRows[1])
 	require.NoError(t, err)
@@ -492,7 +509,7 @@ func TestParseStream(t *testing.T) {
 
 	metrics, err := p.Parse([]byte(csvHeader))
 	require.NoError(t, err)
-	require.Len(t, metrics, 0)
+	require.Empty(t, metrics)
 	m, err := p.ParseLine(csvBody)
 	require.NoError(t, err)
 	testutil.RequireMetricEqual(t,
@@ -522,7 +539,7 @@ func TestParseLineMultiMetricErrorMessage(t *testing.T) {
 
 	metrics, err := p.Parse([]byte(csvHeader))
 	require.NoError(t, err)
-	require.Len(t, metrics, 0)
+	require.Empty(t, metrics)
 	m, err := p.ParseLine(csvOneRow)
 	require.NoError(t, err)
 	testutil.RequireMetricEqual(t,
@@ -656,8 +673,8 @@ func TestTimestampTimezone(t *testing.T) {
 	metrics, err := p.Parse([]byte(testCSV))
 
 	require.NoError(t, err)
-	require.Equal(t, metrics[0].Time().UnixNano(), int64(1243094706000000000))
-	require.Equal(t, metrics[1].Time().UnixNano(), int64(1257609906000000000))
+	require.Equal(t, int64(1243094706000000000), metrics[0].Time().UnixNano())
+	require.Equal(t, int64(1257609906000000000), metrics[1].Time().UnixNano())
 }
 
 func TestEmptyMeasurementName(t *testing.T) {
@@ -843,8 +860,8 @@ func TestParseMetadataSeparators(t *testing.T) {
 	}
 	err = p.Init()
 	require.Error(t, err)
-	require.Equal(t, err.Error(), "initializing separators failed: "+
-		"csv_metadata_separators required when specifying csv_metadata_rows")
+	require.Equal(t, "initializing separators failed: "+
+		"csv_metadata_separators required when specifying csv_metadata_rows", err.Error())
 	p = &Parser{
 		ColumnNames:        []string{"a", "b"},
 		MetadataRows:       1,
@@ -853,8 +870,8 @@ func TestParseMetadataSeparators(t *testing.T) {
 	err = p.Init()
 	require.NoError(t, err)
 	require.Len(t, p.metadataSeparatorList, 4)
-	require.Len(t, p.MetadataTrimSet, 0)
-	require.Equal(t, p.metadataSeparatorList, metadataPattern{":=", ",", "=", ":"})
+	require.Empty(t, p.MetadataTrimSet)
+	require.Equal(t, metadataPattern{":=", ",", "=", ":"}, p.metadataSeparatorList)
 	p = &Parser{
 		ColumnNames:        []string{"a", "b"},
 		MetadataRows:       1,
@@ -865,7 +882,7 @@ func TestParseMetadataSeparators(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, p.metadataSeparatorList, 4)
 	require.Len(t, p.MetadataTrimSet, 3)
-	require.Equal(t, p.metadataSeparatorList, metadataPattern{":=", ",", ":", "="})
+	require.Equal(t, metadataPattern{":=", ",", ":", "="}, p.metadataSeparatorList)
 }
 
 func TestParseMetadataRow(t *testing.T) {
@@ -880,13 +897,13 @@ func TestParseMetadataRow(t *testing.T) {
 	m := p.parseMetadataRow("# this is a not matching string")
 	require.Nil(t, m)
 	m = p.parseMetadataRow("# key1 : value1 \r\n")
-	require.Equal(t, m, map[string]string{"# key1 ": " value1 "})
+	require.Equal(t, map[string]string{"# key1 ": " value1 "}, m)
 	m = p.parseMetadataRow("key2=1234\n")
-	require.Equal(t, m, map[string]string{"key2": "1234"})
+	require.Equal(t, map[string]string{"key2": "1234"}, m)
 	m = p.parseMetadataRow(" file created : 2021-10-08T12:34:18+10:00 \r\n")
-	require.Equal(t, m, map[string]string{" file created ": " 2021-10-08T12:34:18+10:00 "})
+	require.Equal(t, map[string]string{" file created ": " 2021-10-08T12:34:18+10:00 "}, m)
 	m = p.parseMetadataRow("file created: 2021-10-08T12:34:18\t\r\r\n")
-	require.Equal(t, m, map[string]string{"file created": " 2021-10-08T12:34:18\t"})
+	require.Equal(t, map[string]string{"file created": " 2021-10-08T12:34:18\t"}, m)
 	p = &Parser{
 		ColumnNames:        []string{"a", "b"},
 		MetadataRows:       5,
@@ -899,13 +916,13 @@ func TestParseMetadataRow(t *testing.T) {
 	m = p.parseMetadataRow("# this is a not matching string")
 	require.Nil(t, m)
 	m = p.parseMetadataRow("# key1 : value1 \r\n")
-	require.Equal(t, m, map[string]string{"key1": "value1"})
+	require.Equal(t, map[string]string{"key1": "value1"}, m)
 	m = p.parseMetadataRow("key2=1234\n")
-	require.Equal(t, m, map[string]string{"key2": "1234"})
+	require.Equal(t, map[string]string{"key2": "1234"}, m)
 	m = p.parseMetadataRow(" file created : 2021-10-08T12:34:18+10:00 \r\n")
-	require.Equal(t, m, map[string]string{"file created": "2021-10-08T12:34:18+10:00"})
+	require.Equal(t, map[string]string{"file created": "2021-10-08T12:34:18+10:00"}, m)
 	m = p.parseMetadataRow("file created: '2021-10-08T12:34:18'\r\n")
-	require.Equal(t, m, map[string]string{"file created": "2021-10-08T12:34:18"})
+	require.Equal(t, map[string]string{"file created": "2021-10-08T12:34:18"}, m)
 }
 
 func TestParseCSVFileWithMetadata(t *testing.T) {
@@ -994,12 +1011,11 @@ timestamp,type,name,status
 	rowIndex := 0
 	for ; rowIndex < 6; rowIndex++ {
 		m, err := p.ParseLine(testCSVRows[rowIndex])
-		require.Error(t, io.EOF, err)
-		require.Error(t, err)
+		require.ErrorIs(t, err, parsers.ErrEOF)
 		require.Nil(t, m)
 	}
 	m, err := p.ParseLine(testCSVRows[rowIndex])
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Nil(t, m)
 	rowIndex++
 	m, err = p.ParseLine(testCSVRows[rowIndex])
@@ -1018,31 +1034,546 @@ timestamp,type,name,status
 }
 
 func TestOverwriteDefaultTagsAndMetaDataTags(t *testing.T) {
-	// This tests makes sure that the default tags and metadata tags don't overwrite record data
-	// This test also covers the scenario where the metadata overwrites the default tag
-	p := &Parser{
-		ColumnNames:        []string{"first", "second", "third"},
-		TagColumns:         []string{"second", "third"},
-		TimeFunc:           DefaultTime,
-		MetadataRows:       2,
-		MetadataSeparators: []string{"="},
+	csv := []byte(`second=orange
+fourth=plain
+1.4,apple,hi
+`)
+	defaultTags := map[string]string{"third": "bye", "fourth": "car"}
+
+	tests := []struct {
+		name         string
+		tagOverwrite bool
+		expectedTags map[string]string
+	}{
+		{
+			name:         "Don't overwrite tags",
+			tagOverwrite: false,
+			expectedTags: map[string]string{"second": "orange", "third": "bye", "fourth": "car"},
+		},
+		{
+			name:         "Overwrite tags",
+			tagOverwrite: true,
+			expectedTags: map[string]string{"second": "apple", "third": "hi", "fourth": "plain"},
+		},
 	}
-	err := p.Init()
-	require.NoError(t, err)
-	p.SetDefaultTags(map[string]string{"third": "bye", "fourth": "car"})
-	m, err := p.ParseLine("second=orange")
-	require.Error(t, io.EOF, err)
-	require.Error(t, err)
-	require.Nil(t, m)
-	m, err = p.ParseLine("fourth=plain")
-	require.NoError(t, err)
-	require.Nil(t, m)
-	expectedFields := []map[string]interface{}{{"first": 1.4}}
-	expectedTags := []map[string]string{{"second": "orange", "third": "bye", "fourth": "car"}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Parser{
+				ColumnNames:        []string{"first", "second", "third"},
+				TagColumns:         []string{"second", "third"},
+				TagOverwrite:       tt.tagOverwrite,
+				MetadataRows:       2,
+				MetadataSeparators: []string{"="},
+			}
 
-	m, err = p.ParseLine("1.4,apple,hi")
-	require.NoError(t, err)
+			require.NoError(t, p.Init())
+			p.SetDefaultTags(defaultTags)
 
-	require.Equal(t, expectedFields[0], m.Fields())
-	require.Equal(t, expectedTags[0], m.Tags())
+			metrics, err := p.Parse(csv)
+			require.NoError(t, err)
+			require.Len(t, metrics, 1)
+			require.EqualValues(t, tt.expectedTags, metrics[0].Tags())
+		})
+	}
+}
+
+func TestParseCSVResetModeInvalid(t *testing.T) {
+	p := &Parser{
+		HeaderRowCount: 1,
+		ResetMode:      "garbage",
+	}
+	require.Error(t, p.Init(), `unknown reset mode "garbage"`)
+}
+
+func TestParseCSVResetModeNone(t *testing.T) {
+	testCSV := `garbage nonsense that needs be skipped
+
+# version= 1.0
+
+    invalid meta data that can be ignored.
+file created: 2021-10-08T12:34:18+10:00
+timestamp,type,name,status
+2020-11-23T08:19:27+00:00,Reader,R002,1
+#2020-11-04T13:23:04+00:00,Reader,R031,0
+2020-11-04T13:29:47+00:00,Coordinator,C001,0`
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Reader",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "R002",
+				"status": int64(1),
+			},
+			time.Date(2020, 11, 23, 8, 19, 27, 0, time.UTC),
+		),
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Coordinator",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "C001",
+				"status": int64(0),
+			},
+			time.Date(2020, 11, 4, 13, 29, 47, 0, time.UTC),
+		),
+	}
+
+	p := &Parser{
+		HeaderRowCount:     1,
+		SkipRows:           2,
+		MetadataRows:       4,
+		Comment:            "#",
+		TagColumns:         []string{"type"},
+		MetadataSeparators: []string{":", "="},
+		MetadataTrimSet:    " #",
+		TimestampColumn:    "timestamp",
+		TimestampFormat:    "2006-01-02T15:04:05Z07:00",
+		ResetMode:          "none",
+	}
+	require.NoError(t, p.Init())
+	// Set default Tags
+	p.SetDefaultTags(map[string]string{"test": "tag"})
+
+	// Do the parsing the first time
+	metrics, err := p.Parse([]byte(testCSV))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, metrics)
+
+	// Parsing another data line should work when not resetting
+	additionalCSV := "2021-12-01T19:01:00+00:00,Reader,R009,5\r\n"
+	additionalExpected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Reader",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "R009",
+				"status": int64(5),
+			},
+			time.Date(2021, 12, 1, 19, 1, 0, 0, time.UTC),
+		),
+	}
+	metrics, err = p.Parse([]byte(additionalCSV))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, additionalExpected, metrics)
+
+	// This should fail when not resetting but reading again due to the header etc
+	_, err = p.Parse([]byte(testCSV))
+	require.Error(
+		t,
+		err,
+		`parsing time "garbage nonsense that needs be skipped" as "2006-01-02T15:04:05Z07:00": cannot parse "garbage nonsense that needs be skipped" as "2006"`,
+	)
+}
+
+func TestParseCSVLinewiseResetModeNone(t *testing.T) {
+	testCSV := []string{
+		"garbage nonsense that needs be skipped",
+		"",
+		"# version= 1.0\r\n",
+		"",
+		"    invalid meta data that can be ignored.\r\n",
+		"file created: 2021-10-08T12:34:18+10:00",
+		"timestamp,type,name,status\n",
+		"2020-11-23T08:19:27+00:00,Reader,R002,1\r\n",
+		"#2020-11-04T13:23:04+00:00,Reader,R031,0\n",
+		"2020-11-04T13:29:47+00:00,Coordinator,C001,0",
+	}
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Reader",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "R002",
+				"status": int64(1),
+			},
+			time.Date(2020, 11, 23, 8, 19, 27, 0, time.UTC),
+		),
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Coordinator",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "C001",
+				"status": int64(0),
+			},
+			time.Date(2020, 11, 4, 13, 29, 47, 0, time.UTC),
+		),
+	}
+
+	p := &Parser{
+		HeaderRowCount:     1,
+		SkipRows:           2,
+		MetadataRows:       4,
+		Comment:            "#",
+		TagColumns:         []string{"type"},
+		MetadataSeparators: []string{":", "="},
+		MetadataTrimSet:    " #",
+		TimestampColumn:    "timestamp",
+		TimestampFormat:    "2006-01-02T15:04:05Z07:00",
+		ResetMode:          "none",
+	}
+	require.NoError(t, p.Init())
+
+	// Set default Tags
+	p.SetDefaultTags(map[string]string{"test": "tag"})
+
+	// Do the parsing the first time
+	var metrics []telegraf.Metric
+	for i, r := range testCSV {
+		m, err := p.ParseLine(r)
+		// Header lines should return "not enough data"
+		if i < p.SkipRows+p.MetadataRows {
+			require.ErrorIs(t, err, parsers.ErrEOF)
+			require.Nil(t, m)
+			continue
+		}
+		require.NoErrorf(t, err, "failed in row %d", i)
+		if m != nil {
+			metrics = append(metrics, m)
+		}
+	}
+	testutil.RequireMetricsEqual(t, expected, metrics)
+
+	// Parsing another data line should work when not resetting
+	additionalCSV := "2021-12-01T19:01:00+00:00,Reader,R009,5\r\n"
+	additionalExpected := metric.New(
+		"",
+		map[string]string{
+			"file created": "2021-10-08T12:34:18+10:00",
+			"test":         "tag",
+			"type":         "Reader",
+			"version":      "1.0",
+		},
+		map[string]interface{}{
+			"name":   "R009",
+			"status": int64(5),
+		},
+		time.Date(2021, 12, 1, 19, 1, 0, 0, time.UTC),
+	)
+	m, err := p.ParseLine(additionalCSV)
+	require.NoError(t, err)
+	testutil.RequireMetricEqual(t, additionalExpected, m)
+
+	// This should fail when not resetting but reading again due to the header etc
+	_, err = p.ParseLine(testCSV[0])
+	require.Error(
+		t,
+		err,
+		`parsing time "garbage nonsense that needs be skipped" as "2006-01-02T15:04:05Z07:00": cannot parse "garbage nonsense that needs be skipped" as "2006"`,
+	)
+}
+
+func TestParseCSVResetModeAlways(t *testing.T) {
+	testCSV := `garbage nonsense that needs be skipped
+
+# version= 1.0
+
+    invalid meta data that can be ignored.
+file created: 2021-10-08T12:34:18+10:00
+timestamp,type,name,status
+2020-11-23T08:19:27+00:00,Reader,R002,1
+#2020-11-04T13:23:04+00:00,Reader,R031,0
+2020-11-04T13:29:47+00:00,Coordinator,C001,0`
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Reader",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "R002",
+				"status": int64(1),
+			},
+			time.Date(2020, 11, 23, 8, 19, 27, 0, time.UTC),
+		),
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Coordinator",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "C001",
+				"status": int64(0),
+			},
+			time.Date(2020, 11, 4, 13, 29, 47, 0, time.UTC),
+		),
+	}
+
+	p := &Parser{
+		HeaderRowCount:     1,
+		SkipRows:           2,
+		MetadataRows:       4,
+		Comment:            "#",
+		TagColumns:         []string{"type", "category"},
+		MetadataSeparators: []string{":", "="},
+		MetadataTrimSet:    " #",
+		TimestampColumn:    "timestamp",
+		TimestampFormat:    "2006-01-02T15:04:05Z07:00",
+		ResetMode:          "always",
+	}
+	require.NoError(t, p.Init())
+	// Set default Tags
+	p.SetDefaultTags(map[string]string{"test": "tag"})
+
+	// Do the parsing the first time
+	metrics, err := p.Parse([]byte(testCSV))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, metrics)
+
+	// Parsing another data line should fail as it is interpreted as header
+	additionalCSV := "2021-12-01T19:01:00+00:00,Reader,R009,5\r\n"
+	metrics, err = p.Parse([]byte(additionalCSV))
+	require.ErrorIs(t, err, parsers.ErrEOF)
+	require.Nil(t, metrics)
+
+	// Prepare a second CSV with different column names
+	testCSV = `garbage nonsense that needs be skipped
+
+# version= 1.0
+
+    invalid meta data that can be ignored.
+file created: 2021-10-08T12:34:18+10:00
+timestamp,category,id,flag
+2020-11-23T08:19:27+00:00,Reader,R002,1
+#2020-11-04T13:23:04+00:00,Reader,R031,0
+2020-11-04T13:29:47+00:00,Coordinator,C001,0`
+
+	expected = []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"category":     "Reader",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"id":   "R002",
+				"flag": int64(1),
+			},
+			time.Date(2020, 11, 23, 8, 19, 27, 0, time.UTC),
+		),
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"category":     "Coordinator",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"id":   "C001",
+				"flag": int64(0),
+			},
+			time.Date(2020, 11, 4, 13, 29, 47, 0, time.UTC),
+		),
+	}
+
+	// This should work as the parser is reset
+	metrics, err = p.Parse([]byte(testCSV))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, metrics)
+}
+
+func TestParseCSVLinewiseResetModeAlways(t *testing.T) {
+	testCSV := []string{
+		"garbage nonsense that needs be skipped",
+		"",
+		"# version= 1.0\r\n",
+		"",
+		"    invalid meta data that can be ignored.\r\n",
+		"file created: 2021-10-08T12:34:18+10:00",
+		"timestamp,type,name,status\n",
+		"2020-11-23T08:19:27+00:00,Reader,R002,1\r\n",
+		"#2020-11-04T13:23:04+00:00,Reader,R031,0\n",
+		"2020-11-04T13:29:47+00:00,Coordinator,C001,0",
+	}
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Reader",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "R002",
+				"status": int64(1),
+			},
+			time.Date(2020, 11, 23, 8, 19, 27, 0, time.UTC),
+		),
+		metric.New(
+			"",
+			map[string]string{
+				"file created": "2021-10-08T12:34:18+10:00",
+				"test":         "tag",
+				"type":         "Coordinator",
+				"version":      "1.0",
+			},
+			map[string]interface{}{
+				"name":   "C001",
+				"status": int64(0),
+			},
+			time.Date(2020, 11, 4, 13, 29, 47, 0, time.UTC),
+		),
+	}
+
+	p := &Parser{
+		HeaderRowCount:     1,
+		SkipRows:           2,
+		MetadataRows:       4,
+		Comment:            "#",
+		TagColumns:         []string{"type"},
+		MetadataSeparators: []string{":", "="},
+		MetadataTrimSet:    " #",
+		TimestampColumn:    "timestamp",
+		TimestampFormat:    "2006-01-02T15:04:05Z07:00",
+		ResetMode:          "always",
+	}
+	require.NoError(t, p.Init())
+
+	// Set default Tags
+	p.SetDefaultTags(map[string]string{"test": "tag"})
+
+	// Do the parsing the first time
+	var metrics []telegraf.Metric
+	for i, r := range testCSV {
+		m, err := p.ParseLine(r)
+		// Header lines should return "not enough data"
+		if i < p.SkipRows+p.MetadataRows {
+			require.ErrorIs(t, err, parsers.ErrEOF)
+			require.Nil(t, m)
+			continue
+		}
+		require.NoErrorf(t, err, "failed in row %d", i)
+		if m != nil {
+			metrics = append(metrics, m)
+		}
+	}
+	testutil.RequireMetricsEqual(t, expected, metrics)
+
+	// Parsing another data line should work in line-wise parsing as
+	// reset-mode "always" is ignored.
+	additionalCSV := "2021-12-01T19:01:00+00:00,Reader,R009,5\r\n"
+	additionalExpected := metric.New(
+		"",
+		map[string]string{
+			"file created": "2021-10-08T12:34:18+10:00",
+			"test":         "tag",
+			"type":         "Reader",
+			"version":      "1.0",
+		},
+		map[string]interface{}{
+			"name":   "R009",
+			"status": int64(5),
+		},
+		time.Date(2021, 12, 1, 19, 1, 0, 0, time.UTC),
+	)
+	m, err := p.ParseLine(additionalCSV)
+	require.NoError(t, err)
+	testutil.RequireMetricEqual(t, additionalExpected, m)
+
+	// This should fail as reset-mode "always" is ignored in line-wise parsing
+	_, err = p.ParseLine(testCSV[0])
+	require.Error(
+		t,
+		err,
+		`parsing time "garbage nonsense that needs be skipped" as "2006-01-02T15:04:05Z07:00": cannot parse "garbage nonsense that needs be skipped" as "2006"`,
+	)
+}
+
+const benchmarkData = `tags_host,tags_platform,tags_sdkver,value,timestamp
+myhost,python,3.11.5,5,1653643420
+myhost,python,3.11.4,4,1653643420
+`
+
+func TestBenchmarkData(t *testing.T) {
+	plugin := &Parser{
+		MetricName:      "benchmark",
+		HeaderRowCount:  1,
+		TimestampColumn: "timestamp",
+		TimestampFormat: "unix",
+		TagColumns:      []string{"tags_host", "tags_platform", "tags_sdkver"},
+	}
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"benchmark",
+			map[string]string{
+				"tags_host":     "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.5",
+			},
+			map[string]interface{}{
+				"value": 5,
+			},
+			time.Unix(1653643420, 0),
+		),
+		metric.New(
+			"benchmark",
+			map[string]string{
+				"tags_host":     "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.4",
+			},
+			map[string]interface{}{
+				"value": 4,
+			},
+			time.Unix(1653643420, 0),
+		),
+	}
+
+	actual, err := plugin.Parse([]byte(benchmarkData))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, actual, testutil.SortMetrics())
+}
+
+func BenchmarkParsing(b *testing.B) {
+	plugin := &Parser{
+		MetricName:      "benchmark",
+		HeaderRowCount:  1,
+		TimestampColumn: "timestamp",
+		TimestampFormat: "unix",
+		TagColumns:      []string{"tags_host", "tags_platform", "tags_sdkver"},
+	}
+	require.NoError(b, plugin.Init())
+
+	for n := 0; n < b.N; n++ {
+		_, _ = plugin.Parse([]byte(benchmarkData))
+	}
 }

@@ -1,7 +1,6 @@
 package ecs
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -21,7 +20,7 @@ var pauseStatsPreRead, _ = time.Parse(time.RFC3339Nano, "2018-11-19T15:39:59.933
 var nginxStatsRead, _ = time.Parse(time.RFC3339Nano, "2018-11-19T15:40:00.93733207Z")
 var nginxStatsPreRead, _ = time.Parse(time.RFC3339Nano, "2018-11-19T15:39:59.934291009Z")
 
-var validStats = map[string]types.StatsJSON{
+var validStats = map[string]*types.StatsJSON{
 	pauseStatsKey: {
 		Stats: types.Stats{
 			Read:    pauseStatsRead,
@@ -774,8 +773,7 @@ func TestResolveEndpoint(t *testing.T) {
 		name   string
 		given  Ecs
 		exp    Ecs
-		preF   func()
-		afterF func()
+		setEnv func(*testing.T)
 	}{
 		{
 			name: "Endpoint is explicitly set => use v2 metadata",
@@ -799,11 +797,8 @@ func TestResolveEndpoint(t *testing.T) {
 		},
 		{
 			name: "Endpoint is not set, ECS_CONTAINER_METADATA_URI is set => use v3 metadata",
-			preF: func() {
-				require.NoError(t, os.Setenv("ECS_CONTAINER_METADATA_URI", "v3-endpoint.local"))
-			},
-			afterF: func() {
-				require.NoError(t, os.Unsetenv("ECS_CONTAINER_METADATA_URI"))
+			setEnv: func(t *testing.T) {
+				t.Setenv("ECS_CONTAINER_METADATA_URI", "v3-endpoint.local")
 			},
 			given: Ecs{
 				EndpointURL: "",
@@ -813,14 +808,24 @@ func TestResolveEndpoint(t *testing.T) {
 				metadataVersion: 3,
 			},
 		},
+		{
+			name: "Endpoint is not set, ECS_CONTAINER_METADATA_URI_V4 is set => use v4 metadata",
+			setEnv: func(t *testing.T) {
+				t.Setenv("ECS_CONTAINER_METADATA_URI_V4", "v4-endpoint.local")
+			},
+			given: Ecs{
+				EndpointURL: "",
+			},
+			exp: Ecs{
+				EndpointURL:     "v4-endpoint.local",
+				metadataVersion: 4,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.preF != nil {
-				tt.preF()
-			}
-			if tt.afterF != nil {
-				defer tt.afterF()
+			if tt.setEnv != nil {
+				tt.setEnv(t)
 			}
 
 			act := tt.given

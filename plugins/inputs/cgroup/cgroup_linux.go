@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package cgroup
 
@@ -55,7 +54,11 @@ func (g *CGroup) gatherDir(acc telegraf.Accumulator, dir string) error {
 
 		fd := fileData{data: raw, path: file.path}
 		if err := fd.parse(fields); err != nil {
-			return err
+			if !g.logged[file.path] {
+				acc.AddError(err)
+			}
+			g.logged[file.path] = true
+			continue
 		}
 	}
 
@@ -106,6 +109,8 @@ func (g *CGroup) generateDirs(list chan<- pathInfo) {
 }
 
 func (g *CGroup) generateFiles(dir string, list chan<- pathInfo) {
+	dir = strings.Replace(dir, "\\", "\\\\", -1)
+
 	defer close(list)
 	for _, file := range g.Files {
 		// getting all file paths that match the pattern 'dir + file'
@@ -169,7 +174,7 @@ type fileFormat struct {
 	parser  func(measurement string, fields map[string]interface{}, b []byte)
 }
 
-const keyPattern = "[[:alnum:]:_]+"
+const keyPattern = "[[:alnum:]:_.]+"
 const valuePattern = "[\\d-]+"
 
 var fileFormats = [...]fileFormat{

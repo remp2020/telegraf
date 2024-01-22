@@ -19,7 +19,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs/postgresql"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -38,7 +37,9 @@ type Postgresql struct {
 type query []struct {
 	Sqlquery    string
 	Script      string
-	Version     int
+	Version     int  `deprecated:"1.28.0;use minVersion to specify minimal DB version this query supports"`
+	MinVersion  int  `toml:"min_version"`
+	MaxVersion  int  `toml:"max_version"`
 	Withdbname  bool `deprecated:"1.22.4;use the sqlquery option to specify database to use"`
 	Tagvalue    string
 	Measurement string
@@ -59,6 +60,9 @@ func (p *Postgresql) Init() error {
 			if err != nil {
 				return err
 			}
+		}
+		if p.Query[i].MinVersion == 0 {
+			p.Query[i].MinVersion = p.Query[i].Version
 		}
 	}
 	p.Service.IsPgBouncer = !p.PreparedStatements
@@ -121,7 +125,9 @@ func (p *Postgresql) Gather(acc telegraf.Accumulator) error {
 		}
 		sqlQuery += queryAddon
 
-		if p.Query[i].Version <= dbVersion {
+		maxVer := p.Query[i].MaxVersion
+
+		if p.Query[i].MinVersion <= dbVersion && (maxVer == 0 || maxVer > dbVersion) {
 			p.gatherMetricsFromQuery(acc, sqlQuery, p.Query[i].Tagvalue, p.Query[i].Timestamp, measName)
 		}
 	}
@@ -148,9 +154,7 @@ func (p *Postgresql) gatherMetricsFromQuery(acc telegraf.Accumulator, sqlQuery s
 	p.AdditionalTags = nil
 	if tagValue != "" {
 		tagList := strings.Split(tagValue, ",")
-		for t := range tagList {
-			p.AdditionalTags = append(p.AdditionalTags, tagList[t])
-		}
+		p.AdditionalTags = append(p.AdditionalTags, tagList...)
 	}
 
 	p.Timestamp = timestamp
@@ -171,7 +175,6 @@ type scanner interface {
 func (p *Postgresql) accRow(measName string, row scanner, acc telegraf.Accumulator, columns []string) error {
 	var (
 		err        error
-		columnVars []interface{}
 		dbname     bytes.Buffer
 		tagAddress string
 		timestamp  time.Time
@@ -184,13 +187,18 @@ func (p *Postgresql) accRow(measName string, row scanner, acc telegraf.Accumulat
 		columnMap[column] = new(interface{})
 	}
 
+	columnVars := make([]interface{}, 0, len(columnMap))
 	// populate the array of interface{} with the pointers in the right order
 	for i := 0; i < len(columnMap); i++ {
 		columnVars = append(columnVars, columnMap[columns[i]])
 	}
 
+	if tagAddress, err = p.SanitizedAddress(); err != nil {
+		return err
+	}
+
 	// deconstruct array of variables and send to Scan
-	if err = row.Scan(columnVars...); err != nil {
+	if err := row.Scan(columnVars...); err != nil {
 		return err
 	}
 
@@ -198,22 +206,20 @@ func (p *Postgresql) accRow(measName string, row scanner, acc telegraf.Accumulat
 		// extract the database name from the column map
 		switch datname := (*c).(type) {
 		case string:
-			if _, err := dbname.WriteString(datname); err != nil {
-				return err
-			}
+			dbname.WriteString(datname)
 		default:
-			if _, err := dbname.WriteString("postgres"); err != nil {
+			database, err := p.GetConnectDatabase(tagAddress)
+			if err != nil {
 				return err
 			}
+			dbname.WriteString(database)
 		}
 	} else {
-		if _, err := dbname.WriteString("postgres"); err != nil {
+		database, err := p.GetConnectDatabase(tagAddress)
+		if err != nil {
 			return err
 		}
-	}
-
-	if tagAddress, err = p.SanitizedAddress(); err != nil {
-		return err
+		dbname.WriteString(database)
 	}
 
 	// Process the additional tags

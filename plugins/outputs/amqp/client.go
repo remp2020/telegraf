@@ -1,6 +1,7 @@
 package amqp
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/common/proxy"
 )
 
 type ClientConfig struct {
@@ -26,6 +28,7 @@ type ClientConfig struct {
 	tlsConfig         *tls.Config
 	timeout           time.Duration
 	auth              []amqp.Authentication
+	dialer            *proxy.ProxiedDialer
 	log               telegraf.Logger
 }
 
@@ -35,8 +38,8 @@ type client struct {
 	config  *ClientConfig
 }
 
-// Connect opens a connection to one of the brokers at random
-func Connect(config *ClientConfig) (*client, error) {
+// newClient opens a connection to one of the brokers at random
+func newClient(config *ClientConfig) (*client, error) {
 	client := &client{
 		config: config,
 	}
@@ -50,7 +53,7 @@ func Connect(config *ClientConfig) (*client, error) {
 				TLSClientConfig: config.tlsConfig,
 				SASL:            config.auth, // if nil, it will be PLAIN taken from url
 				Dial: func(network, addr string) (net.Conn, error) {
-					return net.DialTimeout(network, addr, config.timeout)
+					return config.dialer.DialTimeout(network, addr, config.timeout)
 				},
 			})
 		if err == nil {
@@ -67,7 +70,7 @@ func Connect(config *ClientConfig) (*client, error) {
 
 	channel, err := client.conn.Channel()
 	if err != nil {
-		return nil, fmt.Errorf("error opening channel: %v", err)
+		return nil, fmt.Errorf("error opening channel: %w", err)
 	}
 	client.channel = channel
 
@@ -107,7 +110,7 @@ func (c *client) DeclareExchange() error {
 		)
 	}
 	if err != nil {
-		return fmt.Errorf("error declaring exchange: %v", err)
+		return fmt.Errorf("error declaring exchange: %w", err)
 	}
 	return nil
 }
@@ -115,7 +118,8 @@ func (c *client) DeclareExchange() error {
 func (c *client) Publish(key string, body []byte) error {
 	// Note that since the channel is not in confirm mode, the absence of
 	// an error does not indicate successful delivery.
-	return c.channel.Publish(
+	return c.channel.PublishWithContext(
+		context.Background(),
 		c.config.exchange, // exchange
 		key,               // routing key
 		false,             // mandatory
@@ -135,7 +139,7 @@ func (c *client) Close() error {
 	}
 
 	err := c.conn.Close()
-	if err != nil && err != amqp.ErrClosed {
+	if err != nil && !errors.Is(err, amqp.ErrClosed) {
 		return err
 	}
 	return nil

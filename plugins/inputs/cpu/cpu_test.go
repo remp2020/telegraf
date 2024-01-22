@@ -11,6 +11,14 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 )
 
+func NewCPUStats(ps system.PS) *CPUStats {
+	return &CPUStats{
+		ps:             ps,
+		CollectCPUTime: true,
+		ReportActive:   true,
+	}
+}
+
 func TestCPUStats(t *testing.T) {
 	var mps system.MockPS
 	defer mps.AssertExpectations(t)
@@ -103,14 +111,15 @@ func TestCPUStats(t *testing.T) {
 // if the measurement is of the wrong type, or if no matching measurements are found
 //
 // Parameters:
-//     t *testing.T            : Testing object to use
-//     acc testutil.Accumulator: Accumulator to examine
-//     field string            : Name of field to examine
-//     expectedValue float64   : Value to search for within the measurement
-//     delta float64           : Maximum acceptable distance of an accumulated value
-//                               from the expectedValue parameter. Useful when
-//                               floating-point arithmetic imprecision makes looking
-//                               for an exact match impractical
+//
+//	t *testing.T            : Testing object to use
+//	acc testutil.Accumulator: Accumulator to examine
+//	field string            : Name of field to examine
+//	expectedValue float64   : Value to search for within the measurement
+//	delta float64           : Maximum acceptable distance of an accumulated value
+//	                          from the expectedValue parameter. Useful when
+//	                          floating-point arithmetic imprecision makes looking
+//	                          for an exact match impractical
 func assertContainsTaggedFloat(
 	t *testing.T,
 	acc *testutil.Accumulator,
@@ -131,14 +140,14 @@ func assertContainsTaggedFloat(
 							return
 						}
 					} else {
-						require.Fail(t, fmt.Sprintf("Measurement \"%s\" does not have type float64", measurement))
+						require.Fail(t, fmt.Sprintf("Measurement %q does not have type float64", measurement))
 					}
 				}
 			}
 		}
 	}
 	msg := fmt.Sprintf(
-		"Could not find measurement \"%s\" with requested tags within %f of %f, Actual: %f",
+		"Could not find measurement %q with requested tags within %f of %f, Actual: %f",
 		measurement, delta, expectedValue, actualValue)
 	require.Fail(t, msg)
 }

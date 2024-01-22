@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -33,17 +33,18 @@ const (
 )
 
 type Loki struct {
-	Domain       string            `toml:"domain"`
-	Endpoint     string            `toml:"endpoint"`
-	Timeout      config.Duration   `toml:"timeout"`
-	Username     string            `toml:"username"`
-	Password     string            `toml:"password"`
-	Headers      map[string]string `toml:"http_headers"`
-	ClientID     string            `toml:"client_id"`
-	ClientSecret string            `toml:"client_secret"`
-	TokenURL     string            `toml:"token_url"`
-	Scopes       []string          `toml:"scopes"`
-	GZipRequest  bool              `toml:"gzip_request"`
+	Domain          string            `toml:"domain"`
+	Endpoint        string            `toml:"endpoint"`
+	Timeout         config.Duration   `toml:"timeout"`
+	Username        config.Secret     `toml:"username"`
+	Password        config.Secret     `toml:"password"`
+	Headers         map[string]string `toml:"http_headers"`
+	ClientID        string            `toml:"client_id"`
+	ClientSecret    string            `toml:"client_secret"`
+	TokenURL        string            `toml:"token_url"`
+	Scopes          []string          `toml:"scopes"`
+	GZipRequest     bool              `toml:"gzip_request"`
+	MetricNameLabel string            `toml:"metric_name_label"`
 
 	url    string
 	client *http.Client
@@ -120,7 +121,9 @@ func (l *Loki) Write(metrics []telegraf.Metric) error {
 	})
 
 	for _, m := range metrics {
-		m.AddTag("__name", m.Name())
+		if l.MetricNameLabel != "" {
+			m.AddTag(l.MetricNameLabel, m.Name())
+		}
 
 		tags := m.TagList()
 		var line string
@@ -129,7 +132,7 @@ func (l *Loki) Write(metrics []telegraf.Metric) error {
 			line += fmt.Sprintf("%s=\"%v\" ", f.Key, f.Value)
 		}
 
-		s.insertLog(tags, Log{fmt.Sprintf("%d", m.Time().UnixNano()), line})
+		s.insertLog(tags, Log{strconv.FormatInt(m.Time().UnixNano(), 10), line})
 	}
 
 	return l.writeMetrics(s)
@@ -144,10 +147,7 @@ func (l *Loki) writeMetrics(s Streams) error {
 	var reqBodyBuffer io.Reader = bytes.NewBuffer(bs)
 
 	if l.GZipRequest {
-		rc, err := internal.CompressWithGzip(reqBodyBuffer)
-		if err != nil {
-			return err
-		}
+		rc := internal.CompressWithGzip(reqBodyBuffer)
 		defer rc.Close()
 		reqBodyBuffer = rc
 	}
@@ -157,12 +157,23 @@ func (l *Loki) writeMetrics(s Streams) error {
 		return err
 	}
 
-	if l.Username != "" {
-		req.SetBasicAuth(l.Username, l.Password)
+	if !l.Username.Empty() {
+		username, err := l.Username.Get()
+		if err != nil {
+			return fmt.Errorf("getting username failed: %w", err)
+		}
+		password, err := l.Password.Get()
+		if err != nil {
+			username.Destroy()
+			return fmt.Errorf("getting password failed: %w", err)
+		}
+		req.SetBasicAuth(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 	}
 
 	for k, v := range l.Headers {
-		if strings.ToLower(k) == "host" {
+		if strings.EqualFold(k, "host") {
 			req.Host = v
 		}
 		req.Header.Set(k, v)
@@ -181,7 +192,8 @@ func (l *Loki) writeMetrics(s Streams) error {
 	_ = resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("when writing to [%s] received status code: %d", l.url, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("when writing to [%s] received status code, %d: %s", l.url, resp.StatusCode, body)
 	}
 
 	return nil
@@ -189,6 +201,8 @@ func (l *Loki) writeMetrics(s Streams) error {
 
 func init() {
 	outputs.Add("loki", func() telegraf.Output {
-		return &Loki{}
+		return &Loki{
+			MetricNameLabel: "__name",
+		}
 	})
 }

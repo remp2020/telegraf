@@ -27,6 +27,15 @@ Cassandra plugin produces one or more measurements for each metric configured,
 adding Server's name as `host` tag. More than one measurement is generated when
 querying table metrics with a wildcard for the keyspace or table name.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -49,7 +58,7 @@ querying table metrics with a wildcard for the keyspace or table name.
 
 ## Example Output
 
-```shell
+```text
 javaMemory,host=myHost,mname=HeapMemoryUsage HeapMemoryUsage_committed=1040187392,HeapMemoryUsage_init=1050673152,HeapMemoryUsage_max=1040187392,HeapMemoryUsage_used=368155000 1459551767230567084
 ```
 

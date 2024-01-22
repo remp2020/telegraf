@@ -4,17 +4,16 @@ package nsq_consumer
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"sync"
 
-	nsq "github.com/nsqio/go-nsq"
+	"github.com/nsqio/go-nsq"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -34,7 +33,7 @@ func (l *logger) Output(_ int, s string) error {
 	return nil
 }
 
-//NSQConsumer represents the configuration of the plugin
+// NSQConsumer represents the configuration of the plugin
 type NSQConsumer struct {
 	Server      string   `toml:"server" deprecated:"1.5.0;use 'nsqd' instead"`
 	Nsqd        []string `toml:"nsqd"`
@@ -45,7 +44,7 @@ type NSQConsumer struct {
 
 	MaxUndeliveredMessages int `toml:"max_undelivered_messages"`
 
-	parser   parsers.Parser
+	parser   telegraf.Parser
 	consumer *nsq.Consumer
 
 	Log telegraf.Logger
@@ -61,7 +60,7 @@ func (*NSQConsumer) SampleConfig() string {
 }
 
 // SetParser takes the data_format from the config and finds the right parser for that format
-func (n *NSQConsumer) SetParser(parser parsers.Parser) {
+func (n *NSQConsumer) SetParser(parser telegraf.Parser) {
 	n.parser = parser
 }
 
@@ -118,14 +117,14 @@ func (n *NSQConsumer) Start(ac telegraf.Accumulator) error {
 
 	if len(n.Nsqlookupd) > 0 {
 		err := n.consumer.ConnectToNSQLookupds(n.Nsqlookupd)
-		if err != nil && err != nsq.ErrAlreadyConnected {
+		if err != nil && !errors.Is(err, nsq.ErrAlreadyConnected) {
 			return err
 		}
 	}
 
 	if len(n.Nsqd) > 0 {
 		err := n.consumer.ConnectToNSQDs(n.Nsqd)
-		if err != nil && err != nsq.ErrAlreadyConnected {
+		if err != nil && !errors.Is(err, nsq.ErrAlreadyConnected) {
 			return err
 		}
 	}

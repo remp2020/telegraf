@@ -20,7 +20,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -36,6 +35,7 @@ type PubSub struct {
 	PublishNumGoroutines  int             `toml:"publish_num_go_routines"`
 	PublishTimeout        config.Duration `toml:"publish_timeout"`
 	Base64Data            bool            `toml:"base64_data"`
+	ContentEncoding       string          `toml:"content_encoding"`
 
 	Log telegraf.Logger `toml:"-"`
 
@@ -46,6 +46,7 @@ type PubSub struct {
 
 	serializer     serializers.Serializer
 	publishResults []publishResult
+	encoder        internal.ContentEncoder
 }
 
 func (*PubSub) SampleConfig() string {
@@ -57,17 +58,10 @@ func (ps *PubSub) SetSerializer(serializer serializers.Serializer) {
 }
 
 func (ps *PubSub) Connect() error {
-	if ps.Topic == "" {
-		return fmt.Errorf(`"topic" is required`)
-	}
-
-	if ps.Project == "" {
-		return fmt.Errorf(`"project" is required`)
-	}
-
 	if ps.stubTopic == nil {
 		return ps.initPubSubClient()
 	}
+
 	return nil
 }
 
@@ -90,9 +84,9 @@ func (ps *PubSub) Write(metrics []telegraf.Metric) error {
 	cctx, cancel := context.WithCancel(context.Background())
 
 	// Publish all messages - each call to Publish returns a future.
-	ps.publishResults = make([]publishResult, len(msgs))
-	for i, m := range msgs {
-		ps.publishResults[i] = ps.t.Publish(cctx, m)
+	ps.publishResults = make([]publishResult, 0, len(msgs))
+	for _, m := range msgs {
+		ps.publishResults = append(ps.publishResults, ps.t.Publish(cctx, m))
 	}
 
 	// topic.Stop() forces all published messages to be sent, even
@@ -123,7 +117,7 @@ func (ps *PubSub) initPubSubClient() error {
 		option.WithUserAgent(internal.ProductToken()),
 	)
 	if err != nil {
-		return fmt.Errorf("unable to generate PubSub client: %v", err)
+		return fmt.Errorf("unable to generate PubSub client: %w", err)
 	}
 	ps.c = client
 	return nil
@@ -169,9 +163,11 @@ func (ps *PubSub) toMessages(metrics []telegraf.Metric) ([]*pubsub.Message, erro
 			return nil, err
 		}
 
-		if ps.Base64Data {
-			encoded := base64.StdEncoding.EncodeToString(b)
-			b = []byte(encoded)
+		b = ps.encodeB64Data(b)
+
+		b, err = ps.compressData(b)
+		if err != nil {
+			return nil, fmt.Errorf("unable to compress message with %s: %w", ps.ContentEncoding, err)
 		}
 
 		msg := &pubsub.Message{Data: b}
@@ -181,28 +177,58 @@ func (ps *PubSub) toMessages(metrics []telegraf.Metric) ([]*pubsub.Message, erro
 		return []*pubsub.Message{msg}, nil
 	}
 
-	msgs := make([]*pubsub.Message, len(metrics))
-	for i, m := range metrics {
+	msgs := make([]*pubsub.Message, 0, len(metrics))
+	for _, m := range metrics {
 		b, err := ps.serializer.Serialize(m)
 		if err != nil {
 			ps.Log.Debugf("Could not serialize metric: %v", err)
 			continue
 		}
 
-		if ps.Base64Data {
-			encoded := base64.StdEncoding.EncodeToString(b)
-			b = []byte(encoded)
+		b = ps.encodeB64Data(b)
+
+		b, err = ps.compressData(b)
+		if err != nil {
+			ps.Log.Errorf("Unable to compress message with %s: %v", ps.ContentEncoding, err)
+			continue
 		}
 
-		msgs[i] = &pubsub.Message{
+		msg := &pubsub.Message{
 			Data: b,
 		}
 		if ps.Attributes != nil {
-			msgs[i].Attributes = ps.Attributes
+			msg.Attributes = ps.Attributes
 		}
+		msgs = append(msgs, msg)
 	}
 
 	return msgs, nil
+}
+
+func (ps *PubSub) encodeB64Data(data []byte) []byte {
+	if ps.Base64Data {
+		encoded := base64.StdEncoding.EncodeToString(data)
+		data = []byte(encoded)
+	}
+
+	return data
+}
+
+func (ps *PubSub) compressData(data []byte) ([]byte, error) {
+	if ps.ContentEncoding == "identity" {
+		return data, nil
+	}
+
+	data, err := ps.encoder.Encode(data)
+	if err != nil {
+		return nil, err
+	}
+
+	compressedData := make([]byte, len(data))
+	copy(compressedData, data)
+	data = compressedData
+
+	return data, nil
 }
 
 func (ps *PubSub) waitForResults(ctx context.Context, cancel context.CancelFunc) error {
@@ -228,6 +254,31 @@ func (ps *PubSub) waitForResults(ctx context.Context, cancel context.CancelFunc)
 
 	wg.Wait()
 	return pErr
+}
+
+func (ps *PubSub) Init() error {
+	if ps.Topic == "" {
+		return fmt.Errorf(`"topic" is required`)
+	}
+
+	if ps.Project == "" {
+		return fmt.Errorf(`"project" is required`)
+	}
+
+	switch ps.ContentEncoding {
+	case "", "identity":
+		ps.ContentEncoding = "identity"
+	case "gzip":
+		var err error
+		ps.encoder, err = internal.NewContentEncoder(ps.ContentEncoding)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("invalid value %q for content_encoding", ps.ContentEncoding)
+	}
+
+	return nil
 }
 
 func init() {

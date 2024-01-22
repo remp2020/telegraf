@@ -5,6 +5,7 @@ import (
 	"bufio"
 	_ "embed"
 	"errors"
+	"fmt"
 	"net"
 	"net/textproto"
 	"regexp"
@@ -12,10 +13,10 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/internal/choice"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -57,7 +58,8 @@ func (n *NetResponse) TCPGather() (map[string]string, map[string]interface{}, er
 	responseTime := time.Since(start).Seconds()
 	// Handle error
 	if err != nil {
-		if e, ok := err.(net.Error); ok && e.Timeout() {
+		var e net.Error
+		if errors.As(err, &e) && e.Timeout() {
 			setResult(Timeout, fields, tags, n.Expect)
 		} else {
 			setResult(ConnectionFailed, fields, tags, n.Expect)
@@ -120,18 +122,14 @@ func (n *NetResponse) UDPGather() (map[string]string, map[string]interface{}, er
 	// Handle error
 	if err != nil {
 		setResult(ConnectionFailed, fields, tags, n.Expect)
-		// Error encoded in result
-		//nolint:nilerr
-		return tags, fields, nil
+		return tags, fields, nil //nolint:nilerr // error encoded in result
 	}
 	// Connecting
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	// Handle error
 	if err != nil {
 		setResult(ConnectionFailed, fields, tags, n.Expect)
-		// Error encoded in result
-		//nolint:nilerr
-		return tags, fields, nil
+		return tags, fields, nil //nolint:nilerr // error encoded in result
 	}
 	defer conn.Close()
 	// Send string
@@ -152,9 +150,7 @@ func (n *NetResponse) UDPGather() (map[string]string, map[string]interface{}, er
 	// Handle error
 	if err != nil {
 		setResult(ReadFailed, fields, tags, n.Expect)
-		// Error encoded in result
-		//nolint:nilerr
-		return tags, fields, nil
+		return tags, fields, nil //nolint:nilerr // error encoded in result
 	}
 
 	// Looking for string in answer
@@ -171,10 +167,9 @@ func (n *NetResponse) UDPGather() (map[string]string, map[string]interface{}, er
 	return tags, fields, nil
 }
 
-// Gather is called by telegraf when the plugin is executed on its interval.
-// It will call either UDPGather or TCPGather based on the configuration and
-// also fill an Accumulator that is supplied.
-func (n *NetResponse) Gather(acc telegraf.Accumulator) error {
+// Init performs one time setup of the plugin and returns an error if the
+// configuration is invalid.
+func (n *NetResponse) Init() error {
 	// Set default values
 	if n.Timeout == 0 {
 		n.Timeout = config.Duration(time.Second)
@@ -198,8 +193,26 @@ func (n *NetResponse) Gather(acc telegraf.Accumulator) error {
 		n.Address = "localhost:" + port
 	}
 	if port == "" {
-		return errors.New("bad port")
+		return errors.New("bad port in config option address")
 	}
+
+	if err := choice.Check(n.Protocol, []string{"tcp", "udp"}); err != nil {
+		return fmt.Errorf("config option protocol: %w", err)
+	}
+
+	return nil
+}
+
+// Gather is called by telegraf when the plugin is executed on its interval.
+// It will call either UDPGather or TCPGather based on the configuration and
+// also fill an Accumulator that is supplied.
+func (n *NetResponse) Gather(acc telegraf.Accumulator) error {
+	// Prepare host and port
+	host, port, err := net.SplitHostPort(n.Address)
+	if err != nil {
+		return err
+	}
+
 	// Prepare data
 	tags := map[string]string{"server": host, "port": port}
 	var fields map[string]interface{}
@@ -219,8 +232,6 @@ func (n *NetResponse) Gather(acc telegraf.Accumulator) error {
 			return err
 		}
 		tags["protocol"] = "udp"
-	default:
-		return errors.New("bad protocol")
 	}
 
 	// Merge the tags

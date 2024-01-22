@@ -22,10 +22,8 @@ import (
 	"github.com/influxdata/telegraf/internal/choice"
 	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -50,6 +48,7 @@ type HTTPListenerV2 struct {
 	Paths          []string          `toml:"paths"`
 	PathTag        bool              `toml:"path_tag"`
 	Methods        []string          `toml:"methods"`
+	HTTPHeaders    map[string]string `toml:"http_headers"`
 	DataSource     string            `toml:"data_source"`
 	ReadTimeout    config.Duration   `toml:"read_timeout"`
 	WriteTimeout   config.Duration   `toml:"write_timeout"`
@@ -70,7 +69,7 @@ type HTTPListenerV2 struct {
 
 	listener net.Listener
 
-	parsers.Parser
+	telegraf.Parser
 	acc telegraf.Accumulator
 }
 
@@ -82,7 +81,7 @@ func (h *HTTPListenerV2) Gather(_ telegraf.Accumulator) error {
 	return nil
 }
 
-func (h *HTTPListenerV2) SetParser(parser parsers.Parser) {
+func (h *HTTPListenerV2) SetParser(parser telegraf.Parser) {
 	h.Parser = parser
 }
 
@@ -137,8 +136,6 @@ func (h *HTTPListenerV2) createHTTPServer() *http.Server {
 // Stop cleans up all resources
 func (h *HTTPListenerV2) Stop() {
 	if h.listener != nil {
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
 		h.listener.Close()
 	}
 	h.wg.Wait()
@@ -171,6 +168,10 @@ func (h *HTTPListenerV2) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 
 	if !choice.Contains(req.URL.Path, h.Paths) {
 		handler = http.NotFound
+	}
+
+	for key, value := range h.HTTPHeaders {
+		res.Header().Set(key, value)
 	}
 
 	h.authenticateIfSet(handler, res, req)

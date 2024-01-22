@@ -11,7 +11,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -41,10 +40,10 @@ func (ts *Teamspeak) connect() error {
 
 	if len(ts.Nickname) > 0 {
 		for _, vserver := range ts.VirtualServers {
-			if err = ts.client.Use(vserver); err != nil {
+			if err := ts.client.Use(vserver); err != nil {
 				return err
 			}
-			if err = ts.client.SetNick(ts.Nickname); err != nil {
+			if err := ts.client.SetNick(ts.Nickname); err != nil {
 				return err
 			}
 		}

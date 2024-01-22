@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,18 +16,18 @@ import (
 
 	awsV2 "github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"golang.org/x/oauth2"
+	"google.golang.org/api/idtoken"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/config/aws"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
+	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
 	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers"
-	"golang.org/x/oauth2"
-	"google.golang.org/api/idtoken"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -44,8 +45,8 @@ const (
 type HTTP struct {
 	URL                     string            `toml:"url"`
 	Method                  string            `toml:"method"`
-	Username                string            `toml:"username"`
-	Password                string            `toml:"password"`
+	Username                config.Secret     `toml:"username"`
+	Password                config.Secret     `toml:"password"`
 	Headers                 map[string]string `toml:"headers"`
 	ContentEncoding         string            `toml:"content_encoding"`
 	UseBatchFormat          bool              `toml:"use_batch_format"`
@@ -85,7 +86,7 @@ func (h *HTTP) Connect() error {
 		h.Method = http.MethodPost
 	}
 	h.Method = strings.ToUpper(h.Method)
-	if h.Method != http.MethodPost && h.Method != http.MethodPut {
+	if h.Method != http.MethodPost && h.Method != http.MethodPut && h.Method != http.MethodPatch {
 		return fmt.Errorf("invalid method [%s] %s", h.URL, h.Method)
 	}
 
@@ -105,11 +106,8 @@ func (h *HTTP) Close() error {
 }
 
 func (h *HTTP) Write(metrics []telegraf.Metric) error {
-	var reqBody []byte
-
 	if h.UseBatchFormat {
-		var err error
-		reqBody, err = h.serializer.SerializeBatch(metrics)
+		reqBody, err := h.serializer.SerializeBatch(metrics)
 		if err != nil {
 			return err
 		}
@@ -118,8 +116,7 @@ func (h *HTTP) Write(metrics []telegraf.Metric) error {
 	}
 
 	for _, metric := range metrics {
-		var err error
-		reqBody, err = h.serializer.Serialize(metric)
+		reqBody, err := h.serializer.Serialize(metric)
 		if err != nil {
 			return err
 		}
@@ -136,10 +133,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 
 	var err error
 	if h.ContentEncoding == "gzip" {
-		rc, err := internal.CompressWithGzip(reqBodyBuffer)
-		if err != nil {
-			return err
-		}
+		rc := internal.CompressWithGzip(reqBodyBuffer)
 		defer rc.Close()
 		reqBodyBuffer = rc
 	}
@@ -157,7 +151,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 		reqBodyBuffer = buf
 
 		// sha256 is hex encoded
-		hash := fmt.Sprintf("%x", sum)
+		hash := hex.EncodeToString(sum[:])
 		payloadHash = &hash
 	}
 
@@ -181,8 +175,19 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 		}
 	}
 
-	if h.Username != "" || h.Password != "" {
-		req.SetBasicAuth(h.Username, h.Password)
+	if !h.Username.Empty() || !h.Password.Empty() {
+		username, err := h.Username.Get()
+		if err != nil {
+			return fmt.Errorf("getting username failed: %w", err)
+		}
+		password, err := h.Password.Get()
+		if err != nil {
+			username.Destroy()
+			return fmt.Errorf("getting password failed: %w", err)
+		}
+		req.SetBasicAuth(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 	}
 
 	// google api auth
@@ -200,7 +205,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 		req.Header.Set("Content-Encoding", "gzip")
 	}
 	for k, v := range h.Headers {
-		if strings.ToLower(k) == "host" {
+		if strings.EqualFold(k, "host") {
 			req.Host = v
 		}
 		req.Header.Set(k, v)
@@ -231,7 +236,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 
 	_, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("when writing to [%s] received error: %v", h.URL, err)
+		return fmt.Errorf("when writing to [%s] received error: %w", h.URL, err)
 	}
 
 	return nil
@@ -254,12 +259,12 @@ func (h *HTTP) getAccessToken(ctx context.Context, audience string) (*oauth2.Tok
 
 	ts, err := idtoken.NewTokenSource(ctx, audience, idtoken.WithCredentialsFile(h.CredentialsFile))
 	if err != nil {
-		return nil, fmt.Errorf("error creating oauth2 token source: %s", err)
+		return nil, fmt.Errorf("error creating oauth2 token source: %w", err)
 	}
 
 	token, err := ts.Token()
 	if err != nil {
-		return nil, fmt.Errorf("error fetching oauth2 token: %s", err)
+		return nil, fmt.Errorf("error fetching oauth2 token: %w", err)
 	}
 
 	h.oauth2Token = token

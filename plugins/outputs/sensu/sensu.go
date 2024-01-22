@@ -23,7 +23,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -214,10 +213,7 @@ func (s *Sensu) writeMetrics(reqBody []byte) error {
 	method := http.MethodPost
 
 	if s.ContentEncoding == "gzip" {
-		rc, err := internal.CompressWithGzip(reqBodyBuffer)
-		if err != nil {
-			return err
-		}
+		rc := internal.CompressWithGzip(reqBodyBuffer)
 		defer rc.Close()
 		reqBodyBuffer = rc
 	}
@@ -355,7 +351,7 @@ func (s *Sensu) setEntity() error {
 		} else {
 			defaultHostname, err := os.Hostname()
 			if err != nil {
-				return fmt.Errorf("resolving hostname failed: %v", err)
+				return fmt.Errorf("resolving hostname failed: %w", err)
 			}
 			entityName = defaultHostname
 		}

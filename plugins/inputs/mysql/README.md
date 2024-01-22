@@ -18,6 +18,20 @@ This plugin gathers the statistic data from MySQL server
 * File events statistics
 * Table schema statistics
 
+In order to gather metrics from the performance schema, it must first be enabled
+in mySQL configuration. See the performance schema [quick start][quick-start].
+
+[quick-start]: https://dev.mysql.com/doc/refman/8.0/en/performance-schema-quick-start.html
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -49,7 +63,8 @@ This plugin gathers the statistic data from MySQL server
   ## if the list is empty, then metrics are gathered from all database tables
   # table_schema_databases = []
 
-  ## gather metrics from INFORMATION_SCHEMA.TABLES for databases provided above list
+  ## gather metrics from INFORMATION_SCHEMA.TABLES for databases provided
+  ## in the list above
   # gather_table_schema = false
 
   ## gather thread state counts from INFORMATION_SCHEMA.PROCESSLIST
@@ -103,8 +118,6 @@ This plugin gathers the statistic data from MySQL server
   ## list of events to be gathered for gather_perf_sum_per_acc_per_event
   ## in case of empty list all events will be gathered
   # perf_summary_events                       = []
-  #
-  # gather_perf_events_statements = false
 
   ## the limits for metrics form perf_events_statements
   # perf_events_statements_digest_text_limit = 120
@@ -115,7 +128,7 @@ This plugin gathers the statistic data from MySQL server
   ##   example: interval_slow = "30m"
   # interval_slow = ""
 
-  ## Optional TLS Config (will be used if tls=custom parameter specified in server uri)
+  ## Optional TLS Config (used if tls=custom parameter specified in server uri)
   # tls_ca = "/etc/telegraf/ca.pem"
   # tls_cert = "/etc/telegraf/cert.pem"
   # tls_key = "/etc/telegraf/key.pem"
@@ -231,9 +244,11 @@ differences.
 Requires to be turned on in configuration.
   * binary_size_bytes(int, number)
   * binary_files_count(int, number)
-* Process list - connection metrics from processlist for each user. It has the following tags
+* Process list - connection metrics from processlist for each user. It has the
+  following tags
   * connections(int, number)
-* User Statistics - connection metrics from user statistics for each user. It has the following fields
+* User Statistics - connection metrics from user statistics for each user.
+  It has the following fields
   * access_denied
   * binlog_bytes_written
   * busy_time
@@ -281,8 +296,8 @@ and process. It has following fields:
 for them. It has following fields:
   * auto_increment_column(int, number)
   * auto_increment_column_max(int, number)
-* InnoDB metrics - all metrics of information_schema.INNODB_METRICS with a status "enabled". For MariaDB,
-`mariadb_dialect = true` to use `ENABLED=1`.
+* InnoDB metrics - all metrics of information_schema.INNODB_METRICS with a
+  status "enabled". For MariaDB, `mariadb_dialect = true` to use `ENABLED=1`.
 * Perf table lock waits - gathers total number and time for SQL and external
 lock waits events for each table and operation. It has following fields.
 The unit of fields varies by the tags.
@@ -316,7 +331,7 @@ The unit of fields varies by the tags.
   * events_statements_sort_merge_passes_totals(float, number)
   * events_statements_sort_rows_total(float, number)
   * events_statements_no_index_used_total(float, number)
-* Table schema - gathers statistics of each schema. It has following measurements
+* Table schema - gathers statistics per schema. It has following measurements
   * info_schema_table_rows(float, number)
   * info_schema_table_size_data_length(float, number)
   * info_schema_table_size_index_length(float, number)
@@ -348,7 +363,8 @@ The unit of fields varies by the tags.
   * sql_lock_waits_total(fields including this tag have numeric unit)
   * external_lock_waits_total(fields including this tag have numeric unit)
   * sql_lock_waits_seconds_total(fields including this tag have millisecond unit)
-  * external_lock_waits_seconds_total(fields including this tag have millisecond unit)
+  * external_lock_waits_seconds_total(fields including this tag have
+    millisecond unit)
 * Perf events statements has following tags
   * event_name
 * Perf file events statuses has following tags
@@ -366,3 +382,5 @@ The unit of fields varies by the tags.
   * engine
   * row_format
   * create_options
+
+## Example Output

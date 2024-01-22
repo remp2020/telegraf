@@ -4,9 +4,14 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"math/rand"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,8 +21,10 @@ import (
 	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/common/oauth"
 	httpplugin "github.com/influxdata/telegraf/plugins/inputs/http"
-	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/plugins/parsers/csv"
+	"github.com/influxdata/telegraf/plugins/parsers/influx"
+	"github.com/influxdata/telegraf/plugins/parsers/json"
+	"github.com/influxdata/telegraf/plugins/parsers/value"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -39,10 +46,9 @@ func TestHTTPWithJSONFormat(t *testing.T) {
 	metricName := "metricName"
 
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
-		return parsers.NewParser(&parsers.Config{
-			DataFormat: "json",
-			MetricName: "metricName",
-		})
+		p := &json.Parser{MetricName: "metricName"}
+		err := p.Init()
+		return p, err
 	})
 
 	var acc testutil.Accumulator
@@ -55,7 +61,7 @@ func TestHTTPWithJSONFormat(t *testing.T) {
 	var metric = acc.Metrics[0]
 	require.Equal(t, metric.Measurement, metricName)
 	require.Len(t, acc.Metrics[0].Fields, 1)
-	require.Equal(t, acc.Metrics[0].Fields["a"], 1.2)
+	require.Equal(t, 1.2, acc.Metrics[0].Fields["a"])
 	require.Equal(t, acc.Metrics[0].Tags["url"], address)
 }
 
@@ -83,10 +89,9 @@ func TestHTTPHeaders(t *testing.T) {
 	}
 
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
-		return parsers.NewParser(&parsers.Config{
-			DataFormat: "json",
-			MetricName: "metricName",
-		})
+		p := &json.Parser{MetricName: "metricName"}
+		err := p.Init()
+		return p, err
 	})
 
 	var acc testutil.Accumulator
@@ -117,10 +122,9 @@ func TestHTTPContentLengthHeader(t *testing.T) {
 	}
 
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
-		return parsers.NewParser(&parsers.Config{
-			DataFormat: "json",
-			MetricName: "metricName",
-		})
+		p := &json.Parser{MetricName: "metricName"}
+		err := p.Init()
+		return p, err
 	})
 
 	var acc testutil.Accumulator
@@ -141,10 +145,9 @@ func TestInvalidStatusCode(t *testing.T) {
 	}
 
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
-		return parsers.NewParser(&parsers.Config{
-			DataFormat: "json",
-			MetricName: "metricName",
-		})
+		p := &json.Parser{MetricName: "metricName"}
+		err := p.Init()
+		return p, err
 	})
 
 	var acc testutil.Accumulator
@@ -166,10 +169,9 @@ func TestSuccessStatusCodes(t *testing.T) {
 	}
 
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
-		return parsers.NewParser(&parsers.Config{
-			DataFormat: "json",
-			MetricName: "metricName",
-		})
+		p := &json.Parser{MetricName: "metricName"}
+		err := p.Init()
+		return p, err
 	})
 
 	var acc testutil.Accumulator
@@ -194,10 +196,9 @@ func TestMethod(t *testing.T) {
 	}
 
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
-		return parsers.NewParser(&parsers.Config{
-			DataFormat: "json",
-			MetricName: "metricName",
-		})
+		p := &json.Parser{MetricName: "metricName"}
+		err := p.Init()
+		return p, err
 	})
 
 	var acc testutil.Accumulator
@@ -281,7 +282,7 @@ func TestBodyAndContentEncoding(t *testing.T) {
 				Log:             testutil.Logger{},
 			},
 			queryHandlerFunc: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, r.Header.Get("Content-Encoding"), "gzip")
+				require.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 
 				gr, err := gzip.NewReader(r.Body)
 				require.NoError(t, err)
@@ -299,7 +300,9 @@ func TestBodyAndContentEncoding(t *testing.T) {
 			})
 
 			tt.plugin.SetParserFunc(func() (telegraf.Parser, error) {
-				return parsers.NewParser(&parsers.Config{DataFormat: "influx"})
+				parser := &influx.Parser{}
+				err := parser.Init()
+				return parser, err
 			})
 
 			var acc testutil.Accumulator
@@ -333,7 +336,7 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 				Log:  testutil.Logger{},
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Len(t, r.Header["Authorization"], 0)
+				require.Empty(t, r.Header["Authorization"])
 				w.WriteHeader(http.StatusOK)
 			},
 		},
@@ -379,7 +382,12 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 			})
 
 			tt.plugin.SetParserFunc(func() (telegraf.Parser, error) {
-				return parsers.NewValueParser("metric", "string", "", nil)
+				p := &value.Parser{
+					MetricName: "metric",
+					DataType:   "string",
+				}
+				err := p.Init()
+				return p, err
 			})
 
 			err = tt.plugin.Init()
@@ -430,6 +438,77 @@ func TestHTTPWithCSVFormat(t *testing.T) {
 				"b": 3.1415,
 			},
 			time.Unix(0, 0),
+		),
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Init())
+	require.NoError(t, acc.GatherError(plugin.Gather))
+	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
+
+	// Run the parser a second time to test for correct stateful handling
+	acc.ClearMetrics()
+	require.NoError(t, acc.GatherError(plugin.Gather))
+	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
+}
+
+const (
+	httpOverUnixScheme = "http+unix"
+)
+
+func TestConnectionOverUnixSocket(t *testing.T) {
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/data" {
+			w.Header().Set("Content-Type", "text/csv")
+			_, _ = w.Write([]byte(simpleCSVWithHeader))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	unixListenAddr := filepath.Join(os.TempDir(), fmt.Sprintf("httptestserver.%d.sock", rand.Intn(1_000_000)))
+	t.Cleanup(func() { os.Remove(unixListenAddr) })
+
+	unixListener, err := net.Listen("unix", unixListenAddr)
+	require.NoError(t, err)
+
+	ts.Listener = unixListener
+	ts.Start()
+	defer ts.Close()
+
+	// NOTE: Remove ":" from windows filepath and replace all "\" with "/".
+	//       This is *required* so that the unix socket path plays well with unixtransport.
+	replacer := strings.NewReplacer(":", "", "\\", "/")
+	sockPath := replacer.Replace(unixListenAddr)
+
+	address := fmt.Sprintf("%s://%s:/data", httpOverUnixScheme, sockPath)
+	plugin := &httpplugin.HTTP{
+		URLs: []string{address},
+		Log:  testutil.Logger{},
+	}
+
+	plugin.SetParserFunc(func() (telegraf.Parser, error) {
+		parser := &csv.Parser{
+			MetricName:  "metricName",
+			SkipRows:    3,
+			ColumnNames: []string{"a", "b", "c"},
+			TagColumns:  []string{"c"},
+		}
+		err := parser.Init()
+		return parser, err
+	})
+
+	expected := []telegraf.Metric{
+		testutil.MustMetric("metricName",
+			map[string]string{
+				"url": address,
+				"c":   "ok",
+			},
+			map[string]interface{}{
+				"a": 1.2,
+				"b": 3.1415,
+			},
+			time.Unix(22000, 0),
 		),
 	}
 

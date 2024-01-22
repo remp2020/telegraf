@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/plugins/serializers"
+	"github.com/influxdata/telegraf/plugins/serializers/influx"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestOutputShim(t *testing.T) {
@@ -32,7 +33,8 @@ func TestOutputShim(t *testing.T) {
 		wg.Done()
 	}()
 
-	serializer, _ := serializers.NewInfluxSerializer()
+	serializer := &influx.Serializer{}
+	require.NoError(t, serializer.Init())
 
 	m := metric.New("thing",
 		map[string]string{

@@ -1,8 +1,5 @@
 //go:generate ../../../tools/readme_config_includer/generator
-//go:build !windows
-// +build !windows
-
-// bcache doesn't aim for Windows
+//go:build linux
 
 package bcache
 
@@ -19,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -130,7 +126,7 @@ func (b *Bcache) Gather(acc telegraf.Accumulator) error {
 			}
 		}
 		if err := b.gatherBcache(bdev, acc); err != nil {
-			return fmt.Errorf("gathering bcache failed: %v", err)
+			return fmt.Errorf("gathering bcache failed: %w", err)
 		}
 	}
 	return nil

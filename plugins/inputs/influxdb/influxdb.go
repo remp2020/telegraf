@@ -18,7 +18,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -124,13 +123,21 @@ type memstats struct {
 	GCCPUFraction float64    `json:"GCCPUFraction"`
 }
 
+type system struct {
+	CurrentTime string `json:"currentTime"`
+	Started     string `json:"started"`
+	Uptime      uint64 `json:"uptime"`
+}
+
 // Gathers data from a particular URL
 // Parameters:
-//     acc    : The telegraf Accumulator to use
-//     url    : endpoint to send request to
+//
+//	acc    : The telegraf Accumulator to use
+//	url    : endpoint to send request to
 //
 // Returns:
-//     error: Any error that may have occurred
+//
+//	error: Any error that may have occurred
 func (i *InfluxDB) gatherURL(
 	acc telegraf.Accumulator,
 	url string,
@@ -147,7 +154,7 @@ func (i *InfluxDB) gatherURL(
 		req.SetBasicAuth(i.Username, i.Password)
 	}
 
-	req.Header.Set("User-Agent", "Telegraf/"+internal.Version())
+	req.Header.Set("User-Agent", "Telegraf/"+internal.Version)
 
 	resp, err := i.client.Do(req)
 	if err != nil {
@@ -188,6 +195,24 @@ func (i *InfluxDB) gatherURL(
 		}
 
 		if keyStr, ok := key.(string); ok {
+			if keyStr == "system" {
+				var p system
+				if err := dec.Decode(&p); err != nil {
+					continue
+				}
+
+				acc.AddFields("influxdb_system",
+					map[string]interface{}{
+						"current_time": p.CurrentTime,
+						"started":      p.Started,
+						"uptime":       p.Uptime,
+					},
+					map[string]string{
+						"url": url,
+					},
+				)
+			}
+
 			if keyStr == "memstats" {
 				var m memstats
 				if err := dec.Decode(&m); err != nil {

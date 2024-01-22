@@ -3,6 +3,15 @@
 The GCP PubSub plugin publishes metrics to a [Google Cloud PubSub][pubsub] topic
 as one of the supported [output data formats][].
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -14,6 +23,10 @@ as one of the supported [output data formats][].
 
   ## Required. Name of PubSub topic to publish metrics to.
   topic = "my-topic"
+
+  ## Content encoding for message payloads, can be set to "gzip" or
+  ## "identity" to apply no encoding.
+  # content_encoding = "identity"
 
   ## Required. Data format to consume.
   ## Each data format has its own unique set of configuration options.
@@ -51,6 +64,10 @@ as one of the supported [output data formats][].
 
   ## Optional. If true, published PubSub message data will be base64-encoded.
   # base64_data = false
+
+  ## NOTE: Due to the way TOML is parsed, tables must be at the END of the
+  ## plugin definition, otherwise additional config options are read as part of
+  ## the table
 
   ## Optional. PubSub attributes to add to metrics.
   # [outputs.cloud_pubsub.attributes]

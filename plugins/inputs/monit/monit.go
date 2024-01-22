@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -236,7 +235,7 @@ func (m *Monit) Gather(acc telegraf.Accumulator) error {
 	decoder := xml.NewDecoder(resp.Body)
 	decoder.CharsetReader = charset.NewReaderLabel
 	if err := decoder.Decode(&status); err != nil {
-		return fmt.Errorf("error parsing input: %v", err)
+		return fmt.Errorf("error parsing input: %w", err)
 	}
 
 	tags := map[string]string{
@@ -339,9 +338,8 @@ func linkMode(s Service) string {
 		return "duplex"
 	} else if s.Link.Duplex == 0 {
 		return "simplex"
-	} else {
-		return "unknown"
 	}
+	return "unknown"
 }
 
 func serviceStatus(s Service) string {

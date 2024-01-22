@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -70,9 +69,19 @@ var subMap = map[string]int{
 	"final-sigterm": 0x000b,
 	"failed":        0x000c,
 	"auto-restart":  0x000d,
+	"condition":     0x000e,
+	"cleaning":      0x000f,
 
 	// automount_state_table, offset 0x0010
-	"waiting": 0x0010,
+	// continuation of service_state_table
+	"waiting":                    0x0010,
+	"reload-signal":              0x0011,
+	"reload-notify":              0x0012,
+	"final-watchdog":             0x0013,
+	"dead-before-auto-restart":   0x0014,
+	"failed-before-auto-restart": 0x0015,
+	"dead-resources-pinned":      0x0016,
+	"auto-restart-queued":        0x0017,
 
 	// device_state_table, offset 0x0020
 	"tentative": 0x0020,
@@ -197,20 +206,20 @@ func setSystemctl(timeout config.Duration, unitType string, pattern string) (*by
 	// create patterns parameters if provided in config
 	if pattern != "" {
 		psplit := strings.SplitN(pattern, " ", -1)
-		for v := range psplit {
-			params = append(params, psplit[v])
-		}
+		params = append(params, psplit...)
 	}
-	params = append(params, "--all", "--plain")
-	// add type as configured in config
-	params = append(params, fmt.Sprintf("--type=%s", unitType))
-	params = append(params, "--no-legend")
+	params = append(params,
+		"--all", "--plain",
+		// add type as configured in config
+		"--type="+unitType,
+		"--no-legend",
+	)
 	cmd := exec.Command(systemctlPath, params...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err = internal.RunTimeout(cmd, time.Duration(timeout))
 	if err != nil {
-		return &out, fmt.Errorf("error running systemctl %s: %s", strings.Join(params, " "), err)
+		return &out, fmt.Errorf("error running systemctl %q: %w", strings.Join(params, " "), err)
 	}
 	return &out, nil
 }

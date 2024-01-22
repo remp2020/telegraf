@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/influxdata/telegraf"
@@ -24,14 +25,15 @@ import (
 	"github.com/influxdata/telegraf/selfstat"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 const (
 	// defaultMaxBodySize is the default maximum request body size, in bytes.
 	// if the request body is over this size, we will return an HTTP 413 error.
-	defaultMaxBodySize = 32 * 1024 * 1024
+	defaultMaxBodySize  = 32 * 1024 * 1024
+	defaultReadTimeout  = 10 * time.Second
+	defaultWriteTimeout = 10 * time.Second
 )
 
 var ErrEOF = errors.New("EOF")
@@ -50,10 +52,12 @@ type InfluxDBV2Listener struct {
 	port           int
 	tlsint.ServerConfig
 
-	MaxBodySize config.Size `toml:"max_body_size"`
-	Token       string      `toml:"token"`
-	BucketTag   string      `toml:"bucket_tag"`
-	ParserType  string      `toml:"parser_type"`
+	ReadTimeout  config.Duration `toml:"read_timeout"`
+	WriteTimeout config.Duration `toml:"write_timeout"`
+	MaxBodySize  config.Size     `toml:"max_body_size"`
+	Token        string          `toml:"token"`
+	BucketTag    string          `toml:"bucket_tag"`
+	ParserType   string          `toml:"parser_type"`
 
 	timeFunc influx.TimeFunc
 
@@ -118,6 +122,13 @@ func (h *InfluxDBV2Listener) Init() error {
 		h.MaxBodySize = config.Size(defaultMaxBodySize)
 	}
 
+	if h.ReadTimeout < config.Duration(time.Second) {
+		h.ReadTimeout = config.Duration(defaultReadTimeout)
+	}
+	if h.WriteTimeout < config.Duration(time.Second) {
+		h.WriteTimeout = config.Duration(defaultWriteTimeout)
+	}
+
 	return nil
 }
 
@@ -131,9 +142,11 @@ func (h *InfluxDBV2Listener) Start(acc telegraf.Accumulator) error {
 	}
 
 	h.server = http.Server{
-		Addr:      h.ServiceAddress,
-		Handler:   h,
-		TLSConfig: tlsConf,
+		Addr:         h.ServiceAddress,
+		Handler:      h,
+		TLSConfig:    tlsConf,
+		ReadTimeout:  time.Duration(h.ReadTimeout),
+		WriteTimeout: time.Duration(h.WriteTimeout),
 	}
 
 	var listener net.Listener
@@ -153,7 +166,7 @@ func (h *InfluxDBV2Listener) Start(acc telegraf.Accumulator) error {
 
 	go func() {
 		err = h.server.Serve(h.listener)
-		if err != http.ErrServerClosed {
+		if !errors.Is(err, http.ErrServerClosed) {
 			h.Log.Infof("Error serving HTTP on %s", h.ServiceAddress)
 		}
 	}()
@@ -234,7 +247,6 @@ func (h *InfluxDBV2Listener) handleWrite() http.HandlerFunc {
 
 		var readErr error
 		var bytes []byte
-		//body = http.MaxBytesReader(res, req.Body, 1000000) //p.MaxBodySize.Size)
 		bytes, readErr = io.ReadAll(body)
 		if readErr != nil {
 			h.Log.Debugf("Error parsing the request body: %v", readErr.Error())
@@ -249,8 +261,31 @@ func (h *InfluxDBV2Listener) handleWrite() http.HandlerFunc {
 		var metrics []telegraf.Metric
 		var err error
 		if h.ParserType == "upstream" {
-			parser := influx_upstream.NewParser()
+			parser := influx_upstream.Parser{}
+			err = parser.Init()
+			if !errors.Is(err, ErrEOF) && err != nil {
+				h.Log.Debugf("Error initializing parser: %v", err.Error())
+				return
+			}
 			parser.SetTimeFunc(influx_upstream.TimeFunc(h.timeFunc))
+
+			if precisionStr != "" {
+				precision := getPrecisionMultiplier(precisionStr)
+				if err = parser.SetTimePrecision(precision); err != nil {
+					h.Log.Debugf("Error setting precision of parser: %v", err)
+					return
+				}
+			}
+
+			metrics, err = parser.Parse(bytes)
+		} else {
+			parser := influx.Parser{}
+			err = parser.Init()
+			if !errors.Is(err, ErrEOF) && err != nil {
+				h.Log.Debugf("Error initializing parser: %v", err.Error())
+				return
+			}
+			parser.SetTimeFunc(h.timeFunc)
 
 			if precisionStr != "" {
 				precision := getPrecisionMultiplier(precisionStr)
@@ -258,20 +293,9 @@ func (h *InfluxDBV2Listener) handleWrite() http.HandlerFunc {
 			}
 
 			metrics, err = parser.Parse(bytes)
-		} else {
-			metricHandler := influx.NewMetricHandler()
-			parser := influx.NewParser(metricHandler)
-			parser.SetTimeFunc(h.timeFunc)
-
-			if precisionStr != "" {
-				precision := getPrecisionMultiplier(precisionStr)
-				metricHandler.SetTimePrecision(precision)
-			}
-
-			metrics, err = parser.Parse(bytes)
 		}
 
-		if err != ErrEOF && err != nil {
+		if !errors.Is(err, ErrEOF) && err != nil {
 			h.Log.Debugf("Error parsing the request body: %v", err.Error())
 			if err := badRequest(res, Invalid, err.Error()); err != nil {
 				h.Log.Debugf("error in bad-request: %v", err)
@@ -300,7 +324,7 @@ func tooLarge(res http.ResponseWriter, maxLength int64) error {
 	b, _ := json.Marshal(map[string]string{
 		"code":      fmt.Sprint(Invalid),
 		"message":   "http: request body too large",
-		"maxLength": fmt.Sprint(maxLength)})
+		"maxLength": strconv.FormatInt(maxLength, 10)})
 	_, err := res.Write(b)
 	return err
 }

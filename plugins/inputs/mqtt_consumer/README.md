@@ -3,6 +3,35 @@
 The [MQTT][mqtt] consumer plugin reads from the specified MQTT topics
 and creates metrics using one of the supported [input data formats][].
 
+## Service Input <!-- @/docs/includes/service_input.md -->
+
+This plugin is a service input. Normal plugins gather metrics determined by the
+interval setting. Service plugins start a service to listens and waits for
+metrics or events to occur. Service plugins have two key differences from
+normal plugins:
+
+1. The global or plugin specific `interval` setting may not apply
+2. The CLI options of `--test`, `--test-wait`, and `--once` may not produce
+   output for this plugin
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username` and
+`password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -38,21 +67,25 @@ and creates metrics using one of the supported [input data formats][].
   ## Connection timeout for initial connection in seconds
   # connection_timeout = "30s"
 
-  ## Maximum messages to read from the broker that have not been written by an
-  ## output.  For best throughput set based on the number of metrics within
-  ## each message and the size of the output's metric_batch_size.
+  ## Max undelivered messages
+  ## This plugin uses tracking metrics, which ensure messages are read to
+  ## outputs before acknowledging them to the original broker to ensure data
+  ## is not lost. This option sets the maximum messages to read from the
+  ## broker that have not been written by an output.
   ##
-  ## For example, if each message from the queue contains 10 metrics and the
-  ## output metric_batch_size is 1000, setting this to 100 will ensure that a
-  ## full batch is collected and the write is triggered immediately without
-  ## waiting until the next flush_interval.
+  ## This value needs to be picked with awareness of the agent's
+  ## metric_batch_size value as well. Setting max undelivered messages too high
+  ## can result in a constant stream of data batches to the output. While
+  ## setting it too low may never flush the broker's messages.
   # max_undelivered_messages = 1000
 
   ## Persistent session disables clearing of the client session on connection.
   ## In order for this option to work you must also set client_id to identify
   ## the client.  To receive messages that arrived while the client is offline,
   ## also set the qos option to 1 or 2 and don't forget to also set the QoS when
-  ## publishing.
+  ## publishing. Finally, using a persistent session will use the initial
+  ## connection topics and not subscribe to any new topics even after
+  ## reconnecting or restarting without a change in client ID.
   # persistent_session = false
 
   ## If unset, a random client ID will be generated.
@@ -68,6 +101,12 @@ and creates metrics using one of the supported [input data formats][].
   # tls_key = "/etc/telegraf/key.pem"
   ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
+
+  ## Client trace messages
+  ## When set to true, and debug mode enabled in the agent settings, the MQTT
+  ## client's messages are included in telegraf logs. These messages are very
+  ## noisey, but essential for debugging issues.
+  # client_trace = false
 
   ## Data format to consume.
   ## Each data format has its own unique set of configuration options, read
@@ -193,6 +232,16 @@ sensors,site=CLE,version=v1,device_name=device5 temp=390,rpm=45.0,ph=1.45
 `topic=telegraf/host01/cpu`
 
 - example when [[inputs.mqtt_consumer.topic_parsing]] is set
+
+- when [[inputs.internal]] is set:
+  - payload_size (int): get the cumulative size in bytes that have been received from incoming messages
+  - messages_received (int): count of the number of messages that have been received from mqtt
+
+This will result in the following metric:
+
+```text
+internal_mqtt_consumer host=pop-os version=1.24.0 messages_received=622i payload_size=37942i 1657282270000000000
+```
 
 [mqtt]: https://mqtt.org
 [input data formats]: /docs/DATA_FORMATS_INPUT.md

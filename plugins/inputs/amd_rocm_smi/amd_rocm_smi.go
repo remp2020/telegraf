@@ -17,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -38,12 +37,8 @@ func (rsmi *ROCmSMI) Gather(acc telegraf.Accumulator) error {
 		return fmt.Errorf("rocm-smi binary not found in path %s, cannot query GPUs statistics", rsmi.BinPath)
 	}
 
-	data, err := rsmi.pollROCmSMI()
-	if err != nil {
-		return err
-	}
-
-	err = gatherROCmSMI(data, acc)
+	data := rsmi.pollROCmSMI()
+	err := gatherROCmSMI(data, acc)
 	if err != nil {
 		return err
 	}
@@ -60,7 +55,7 @@ func init() {
 	})
 }
 
-func (rsmi *ROCmSMI) pollROCmSMI() ([]byte, error) {
+func (rsmi *ROCmSMI) pollROCmSMI() []byte {
 	// Construct and execute metrics query, there currently exist (ROCm v4.3.x) a "-a" option
 	// that does not provide all the information, so each needed parameter is set manually
 	cmd := exec.Command(rsmi.BinPath,
@@ -103,9 +98,8 @@ func (rsmi *ROCmSMI) pollROCmSMI() ([]byte, error) {
 		"--showtoponuma",
 		"--json")
 
-	ret, _ := internal.StdOutputTimeout(cmd,
-		time.Duration(rsmi.Timeout))
-	return ret, nil
+	ret, _ := internal.StdOutputTimeout(cmd, time.Duration(rsmi.Timeout))
+	return ret
 }
 
 func gatherROCmSMI(ret []byte, acc telegraf.Accumulator) error {
@@ -137,13 +131,14 @@ type metric struct {
 
 func genTagsFields(gpus map[string]GPU, system map[string]sysInfo) []metric {
 	metrics := []metric{}
-	for cardID, payload := range gpus {
+	for cardID := range gpus {
 		if strings.Contains(cardID, "card") {
 			tags := map[string]string{
 				"name": cardID,
 			}
 			fields := map[string]interface{}{}
 
+			payload := gpus[cardID]
 			totVRAM, _ := strconv.ParseInt(payload.GpuVRAMTotalMemory, 10, 64)
 			usdVRAM, _ := strconv.ParseInt(payload.GpuVRAMTotalUsedMemory, 10, 64)
 			strFree := strconv.FormatInt(totVRAM-usdVRAM, 10)

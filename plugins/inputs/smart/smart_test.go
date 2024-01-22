@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGatherAttributes(t *testing.T) {
 	s := newSmart()
 	s.Attributes = true
 
-	assert.Equal(t, time.Second*30, time.Duration(s.Timeout))
+	require.Equal(t, time.Second*30, time.Duration(s.Timeout))
 
 	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
 		if len(args) > 0 {
@@ -38,7 +38,7 @@ func TestGatherAttributes(t *testing.T) {
 		s.PathSmartctl = "this_path_to_smartctl_does_not_exist"
 		err := s.Init()
 
-		assert.Error(t, err)
+		require.Error(t, err)
 	})
 
 	t.Run("Smartctl presence", func(t *testing.T) {
@@ -52,7 +52,7 @@ func TestGatherAttributes(t *testing.T) {
 			err := s.Gather(&acc)
 
 			require.NoError(t, err)
-			assert.Equal(t, 65, acc.NFields(), "Wrong number of fields gathered")
+			require.Equal(t, 68, acc.NFields(), "Wrong number of fields gathered")
 
 			for _, test := range testsAda0Attributes {
 				acc.AssertContainsTaggedFields(t, "smart_attribute", test.fields, test.tags)
@@ -69,7 +69,7 @@ func TestGatherAttributes(t *testing.T) {
 			err := s.Gather(&acc)
 
 			require.NoError(t, err)
-			assert.Equal(t, 32, acc.NFields(), "Wrong number of fields gathered")
+			require.Equal(t, 32, acc.NFields(), "Wrong number of fields gathered")
 
 			testutil.RequireMetricsEqual(t, testSmartctlNVMeAttributes, acc.GetTelegrafMetrics(),
 				testutil.SortMetrics(), testutil.IgnoreTime())
@@ -147,7 +147,7 @@ func TestGatherNoAttributes(t *testing.T) {
 	s := newSmart()
 	s.Attributes = false
 
-	assert.Equal(t, time.Second*30, time.Duration(s.Timeout))
+	require.Equal(t, time.Second*30, time.Duration(s.Timeout))
 
 	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
 		if len(args) > 0 {
@@ -171,7 +171,7 @@ func TestGatherNoAttributes(t *testing.T) {
 		err := s.Gather(&acc)
 
 		require.NoError(t, err)
-		assert.Equal(t, 8, acc.NFields(), "Wrong number of fields gathered")
+		require.Equal(t, 11, acc.NFields(), "Wrong number of fields gathered")
 		acc.AssertDoesNotContainMeasurement(t, "smart_attribute")
 
 		for _, test := range testsAda0Device {
@@ -184,9 +184,9 @@ func TestGatherNoAttributes(t *testing.T) {
 }
 
 func TestExcludedDev(t *testing.T) {
-	assert.Equal(t, true, excludedDev([]string{"/dev/pass6"}, "/dev/pass6 -d atacam"), "Should be excluded.")
-	assert.Equal(t, false, excludedDev([]string{}, "/dev/pass6 -d atacam"), "Shouldn't be excluded.")
-	assert.Equal(t, false, excludedDev([]string{"/dev/pass6"}, "/dev/pass1 -d atacam"), "Shouldn't be excluded.")
+	require.True(t, excludedDev([]string{"/dev/pass6"}, "/dev/pass6 -d atacam"), "Should be excluded.")
+	require.False(t, excludedDev([]string{}, "/dev/pass6 -d atacam"), "Shouldn't be excluded.")
+	require.False(t, excludedDev([]string{"/dev/pass6"}, "/dev/pass1 -d atacam"), "Shouldn't be excluded.")
 }
 
 var (
@@ -212,8 +212,8 @@ func TestGatherSATAInfo(t *testing.T) {
 	wg.Add(1)
 
 	sampleSmart.gatherDisk(acc, "", wg)
-	assert.Equal(t, 101, acc.NFields(), "Wrong number of fields gathered")
-	assert.Equal(t, uint64(20), acc.NMetrics(), "Wrong number of metrics gathered")
+	require.Equal(t, 106, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(20), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
 func TestGatherSATAInfo65(t *testing.T) {
@@ -228,8 +228,8 @@ func TestGatherSATAInfo65(t *testing.T) {
 
 	wg.Add(1)
 	sampleSmart.gatherDisk(acc, "", wg)
-	assert.Equal(t, 91, acc.NFields(), "Wrong number of fields gathered")
-	assert.Equal(t, uint64(18), acc.NMetrics(), "Wrong number of metrics gathered")
+	require.Equal(t, 96, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(18), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
 func TestGatherHgstSAS(t *testing.T) {
@@ -244,8 +244,8 @@ func TestGatherHgstSAS(t *testing.T) {
 
 	wg.Add(1)
 	sampleSmart.gatherDisk(acc, "", wg)
-	assert.Equal(t, 6, acc.NFields(), "Wrong number of fields gathered")
-	assert.Equal(t, uint64(4), acc.NMetrics(), "Wrong number of metrics gathered")
+	require.Equal(t, 6, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(4), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
 func TestGatherHtSAS(t *testing.T) {
@@ -264,6 +264,23 @@ func TestGatherHtSAS(t *testing.T) {
 	testutil.RequireMetricsEqual(t, testHtsasAtributtes, acc.GetTelegrafMetrics(), testutil.SortMetrics(), testutil.IgnoreTime())
 }
 
+func TestGatherLongFormEnduranceAttrib(t *testing.T) {
+	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+		return []byte(mockHGST), nil
+	}
+
+	var (
+		acc = &testutil.Accumulator{}
+		wg  = &sync.WaitGroup{}
+	)
+
+	wg.Add(1)
+
+	sampleSmart.gatherDisk(acc, "", wg)
+	require.Equal(t, 7, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(5), acc.NMetrics(), "Wrong number of metrics gathered")
+}
+
 func TestGatherSSD(t *testing.T) {
 	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
 		return []byte(ssdInfoData), nil
@@ -276,8 +293,8 @@ func TestGatherSSD(t *testing.T) {
 
 	wg.Add(1)
 	sampleSmart.gatherDisk(acc, "", wg)
-	assert.Equal(t, 105, acc.NFields(), "Wrong number of fields gathered")
-	assert.Equal(t, uint64(26), acc.NMetrics(), "Wrong number of metrics gathered")
+	require.Equal(t, 110, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(26), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
 func TestGatherSSDRaid(t *testing.T) {
@@ -292,8 +309,8 @@ func TestGatherSSDRaid(t *testing.T) {
 
 	wg.Add(1)
 	sampleSmart.gatherDisk(acc, "", wg)
-	assert.Equal(t, 74, acc.NFields(), "Wrong number of fields gathered")
-	assert.Equal(t, uint64(15), acc.NMetrics(), "Wrong number of metrics gathered")
+	require.Equal(t, 77, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(15), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
 func TestGatherNVMe(t *testing.T) {
@@ -380,25 +397,25 @@ func TestGatherIntelNVMeDeprecatedFormatMetrics(t *testing.T) {
 func Test_findVIDFromNVMeOutput(t *testing.T) {
 	device, err := findNVMeDeviceInfo(nvmeIdentifyController)
 
-	assert.Nil(t, err)
-	assert.Equal(t, "0x8086", device.vendorID)
-	assert.Equal(t, "CVFT5123456789ABCD", device.serialNumber)
-	assert.Equal(t, "INTEL SSDPEDABCDEFG", device.model)
+	require.NoError(t, err)
+	require.Equal(t, "0x8086", device.vendorID)
+	require.Equal(t, "CVFT5123456789ABCD", device.serialNumber)
+	require.Equal(t, "INTEL SSDPEDABCDEFG", device.model)
 }
 
 func Test_checkForNVMeDevices(t *testing.T) {
 	devices := []string{"sda1", "nvme0", "sda2", "nvme2"}
 	expectedNVMeDevices := []string{"nvme0", "nvme2"}
 	resultNVMeDevices := distinguishNVMeDevices(devices, expectedNVMeDevices)
-	assert.Equal(t, expectedNVMeDevices, resultNVMeDevices)
+	require.Equal(t, expectedNVMeDevices, resultNVMeDevices)
 }
 
 func Test_contains(t *testing.T) {
 	devices := []string{"/dev/sda", "/dev/nvme1"}
 	device := "/dev/nvme1"
 	deviceNotIncluded := "/dev/nvme5"
-	assert.True(t, contains(devices, device))
-	assert.False(t, contains(devices, deviceNotIncluded))
+	require.True(t, contains(devices, device))
+	require.False(t, contains(devices, deviceNotIncluded))
 }
 
 func Test_difference(t *testing.T) {
@@ -406,7 +423,7 @@ func Test_difference(t *testing.T) {
 	secondDevices := []string{"/dev/sda", "/dev/nvme1"}
 	expected := []string{"/dev/nvme2"}
 	result := difference(devices, secondDevices)
-	assert.Equal(t, expected, result)
+	require.Equal(t, expected, result)
 }
 
 func Test_integerOverflow(t *testing.T) {
@@ -1394,11 +1411,14 @@ var (
 	}{
 		{
 			map[string]interface{}{
-				"exit_status":     int(0),
-				"health_ok":       bool(true),
-				"read_error_rate": int64(0),
-				"temp_c":          int64(34),
-				"udma_crc_errors": int64(0),
+				"exit_status":               int(0),
+				"health_ok":                 bool(true),
+				"read_error_rate":           int64(0),
+				"temp_c":                    int64(34),
+				"udma_crc_errors":           int64(0),
+				"wear_leveling_count":       int64(185),
+				"pending_sector_count":      int64(0),
+				"reallocated_sectors_count": int64(0),
 			},
 			map[string]string{
 				"device":    "ada0",
@@ -1810,6 +1830,52 @@ ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH FAIL RAW_VALUE
                             |||____ S speed/performance
                             ||_____ O updated online
                             |______ P prefailure warning
+`
+
+	mockHGST = `
+smartctl 6.6 2016-05-31 r4324 [x86_64-linux-4.9.0-3-amd64] (local build)
+Copyright (C) 2002-16, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Vendor:               HGST
+Product:              HUSMM1640ASS200
+Revision:             A360
+Compliance:           SPC-4
+User Capacity:        400,088,457,216 bytes [400 GB]
+Logical block size:   512 bytes
+Physical block size:  4096 bytes
+LU is resource provisioned, LBPRZ=1
+Rotation Rate:        Solid State Device
+Form Factor:          2.5 inches
+Logical Unit id:      0x5000cca04ec26364
+Serial number:        ZZZZZZZZZ
+Device type:          disk
+Transport protocol:   SAS (SPL-3)
+Local Time is:        Mon Nov  6 10:20:33 2017 CET
+SMART support is:     Available - device has SMART capability.
+SMART support is:     Enabled
+Temperature Warning:  Enabled
+Read Cache is:        Enabled
+Writeback Cache is:   Enabled
+
+=== START OF READ SMART DATA SECTION ===
+SMART Health Status: OK
+
+Percentage used endurance indicator: 0%
+Current Drive Temperature:     28 C
+Drive Trip Temperature:        70 C
+
+Manufactured in week 30 of year 2017
+Specified cycle count over device lifetime:  0
+Accumulated start-stop cycles:  0
+Specified load-unload count over device lifetime:  0
+Accumulated load-unload cycles:  0
+defect list format 6 unknown
+Elements in grown defect list: 0
+
+Vendor (Seagate) cache information
+  Blocks sent to initiator = 3400674574336
+
 `
 
 	htSASInfoData = `smartctl 6.6 2016-05-31 r4324 [x86_64-linux-4.15.18-12-pve] (local build)

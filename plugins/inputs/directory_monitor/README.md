@@ -1,6 +1,6 @@
 # Directory Monitor Input Plugin
 
-This plugin monitors a single directory (without looking at sub-directories),
+This plugin monitors a single directory (traversing sub-directories),
 and takes in each file placed in the directory.  The plugin will gather all
 files in the directory at the configured interval, and parse the ones that
 haven't been picked up yet.
@@ -13,16 +13,28 @@ directly after they've been in the directory for the length of the configurable
 the monitored directory. If you absolutely must write files directly, they must
 be guaranteed to finish writing before the `directory_duration_threshold`.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
 # Ingests files in a directory and then moves them to a target directory.
 [[inputs.directory_monitor]]
-  ## The directory to monitor and read files from.
+  ## The directory to monitor and read files from (including sub-directories if "recursive" is true).
   directory = ""
   #
-  ## The directory to move finished files to.
+  ## The directory to move finished files to (maintaining directory hierarchy from source).
   finished_directory = ""
+  #
+  ## Setting recursive to true will make the plugin recursively walk the directory and process all sub-directories.
+  # recursive = false
   #
   ## The directory to move files to upon file error.
   ## If not provided, erroring files will stay in the monitored directory.
@@ -34,7 +46,7 @@ be guaranteed to finish writing before the `directory_duration_threshold`.
   # directory_duration_threshold = "50ms"
   #
   ## A list of the only file names to monitor, if necessary. Supports regex. If left blank, all files are ingested.
-  # files_to_monitor = ["^.*\.csv"]
+  # files_to_monitor = ["^.*\\.csv"]
   #
   ## A list of files to ignore, if necessary. Supports regex.
   # files_to_ignore = [".DS_Store"]
@@ -56,7 +68,7 @@ be guaranteed to finish writing before the `directory_duration_threshold`.
   #
   ## Specify if the file can be read completely at once or if it needs to be read line by line (default).
   ## Possible values: "line-by-line", "at-once"
-  # parse_method = "line-by-line" 
+  # parse_method = "line-by-line"
   #
   ## The dataformat to be read from the files.
   ## Each data format has its own unique set of configuration options, read
@@ -69,3 +81,24 @@ be guaranteed to finish writing before the `directory_duration_threshold`.
 
 The format of metrics produced by this plugin depends on the content and data
 format of the file.
+
+When the [internal][] input is enabled:
+
+- internal_directory_monitor
+  - fields:
+    - files_processed - How many files have been processed (counter)
+    - files_dropped - How many files have been dropped (counter)
+- internal_directory_monitor
+  - tags:
+    - directory - The monitored directory
+  - fields:
+    - files_processed_per_dir - How many files have been processed (counter)
+    - files_dropped_per_dir - How many files have been dropped (counter)
+    - files_queue_per_dir - How many files to be processed (gauge)
+
+## Example Output
+
+The metrics produced by this plugin depends on the content and data
+format of the file.
+
+[internal]: /plugins/inputs/internal

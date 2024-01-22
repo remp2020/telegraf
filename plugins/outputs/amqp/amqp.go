@@ -4,6 +4,8 @@ package amqp
 import (
 	"bytes"
 	_ "embed"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,12 +14,12 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
+	"github.com/influxdata/telegraf/plugins/common/proxy"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -47,8 +49,8 @@ type AMQP struct {
 	ExchangePassive    bool              `toml:"exchange_passive"`
 	ExchangeDurability string            `toml:"exchange_durability"`
 	ExchangeArguments  map[string]string `toml:"exchange_arguments"`
-	Username           string            `toml:"username"`
-	Password           string            `toml:"password"`
+	Username           config.Secret     `toml:"username"`
+	Password           config.Secret     `toml:"password"`
 	MaxMessages        int               `toml:"max_messages"`
 	AuthMethod         string            `toml:"auth_method"`
 	RoutingTag         string            `toml:"routing_tag"`
@@ -63,6 +65,7 @@ type AMQP struct {
 	ContentEncoding    string            `toml:"content_encoding"`
 	Log                telegraf.Logger   `toml:"-"`
 	tls.ClientConfig
+	proxy.TCPProxy
 
 	serializer   serializers.Serializer
 	connect      func(*ClientConfig) (Client, error)
@@ -158,8 +161,9 @@ func (q *AMQP) Write(metrics []telegraf.Metric) error {
 		if err != nil {
 			// If this is the first attempt to publish and the connection is
 			// closed, try to reconnect and retry once.
-			//nolint: revive // Simplifying if-else with early return will reduce clarity
-			if aerr, ok := err.(*amqp.Error); first && ok && aerr == amqp.ErrClosed {
+
+			var aerr *amqp.Error
+			if first && errors.As(err, &aerr) && errors.Is(aerr, amqp.ErrClosed) {
 				q.client = nil
 				err := q.publish(key, body)
 				if err != nil {
@@ -217,10 +221,7 @@ func (q *AMQP) serialize(metrics []telegraf.Metric) ([]byte, error) {
 			q.Log.Debugf("Could not serialize metric: %v", err)
 			continue
 		}
-		_, err = buf.Write(octets)
-		if err != nil {
-			return nil, err
-		}
+		buf.Write(octets)
 	}
 	body := buf.Bytes()
 	return body, nil
@@ -283,14 +284,30 @@ func (q *AMQP) makeClientConfig() (*ClientConfig, error) {
 	}
 	clientConfig.tlsConfig = tlsConfig
 
+	dialer, err := q.TCPProxy.Proxy()
+	if err != nil {
+		return nil, err
+	}
+	clientConfig.dialer = dialer
+
 	var auth []amqp.Authentication
-	if strings.ToUpper(q.AuthMethod) == "EXTERNAL" {
+	if strings.EqualFold(q.AuthMethod, "EXTERNAL") {
 		auth = []amqp.Authentication{&externalAuth{}}
-	} else if q.Username != "" || q.Password != "" {
+	} else if !q.Username.Empty() || !q.Password.Empty() {
+		username, err := q.Username.Get()
+		if err != nil {
+			return nil, fmt.Errorf("getting username failed: %w", err)
+		}
+		defer username.Destroy()
+		password, err := q.Password.Get()
+		if err != nil {
+			return nil, fmt.Errorf("getting password failed: %w", err)
+		}
+		defer password.Destroy()
 		auth = []amqp.Authentication{
 			&amqp.PlainAuth{
-				Username: q.Username,
-				Password: q.Password,
+				Username: username.String(),
+				Password: password.String(),
 			},
 		}
 	}
@@ -300,7 +317,7 @@ func (q *AMQP) makeClientConfig() (*ClientConfig, error) {
 }
 
 func connect(clientConfig *ClientConfig) (Client, error) {
-	return Connect(clientConfig)
+	return newClient(clientConfig)
 }
 
 func init() {

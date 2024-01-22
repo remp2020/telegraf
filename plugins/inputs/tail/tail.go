@@ -1,6 +1,5 @@
 //go:generate ../../../tools/readme_config_includer/generator
 //go:build !solaris
-// +build !solaris
 
 package tail
 
@@ -23,10 +22,8 @@ import (
 	"github.com/influxdata/telegraf/plugins/common/encoding"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/parsers"
-	"github.com/influxdata/telegraf/plugins/parsers/csv"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -57,7 +54,7 @@ type Tail struct {
 	Log        telegraf.Logger `toml:"-"`
 	tailers    map[string]*tail.Tail
 	offsets    map[string]int64
-	parserFunc parsers.ParserFunc
+	parserFunc telegraf.ParserFunc
 	wg         sync.WaitGroup
 
 	acc telegraf.TrackingAccumulator
@@ -102,10 +99,27 @@ func (t *Tail) Init() error {
 			t.filterColors = true
 		}
 	}
+	// init offsets
+	t.offsets = make(map[string]int64)
 
 	var err error
 	t.decoder, err = encoding.NewDecoder(t.CharacterEncoding)
 	return err
+}
+
+func (t *Tail) GetState() interface{} {
+	return t.offsets
+}
+
+func (t *Tail) SetState(state interface{}) error {
+	offsetsState, ok := state.(map[string]int64)
+	if !ok {
+		return errors.New("state has to be of type 'map[string]int64'")
+	}
+	for k, v := range offsetsState {
+		t.offsets[k] = v
+	}
+	return nil
 }
 
 func (t *Tail) Gather(_ telegraf.Accumulator) error {
@@ -141,8 +155,6 @@ func (t *Tail) Start(acc telegraf.Accumulator) error {
 
 	err = t.tailNewFiles(t.FromBeginning)
 
-	// clear offsets
-	t.offsets = make(map[string]int64)
 	// assumption that once Start is called, all parallel plugins have already been initialized
 	offsetsMutex.Lock()
 	offsets = make(map[string]int64)
@@ -223,7 +235,12 @@ func (t *Tail) tailNewFiles(fromBeginning bool) error {
 				t.Log.Debugf("Tail removed for %q", tailer.Filename)
 
 				if err := tailer.Err(); err != nil {
-					t.Log.Errorf("Tailing %q: %s", tailer.Filename, err.Error())
+					if strings.HasSuffix(err.Error(), "permission denied") {
+						t.Log.Errorf("Deleting tailer for %q due to: %v", tailer.Filename, err)
+						delete(t.tailers, tailer.Filename)
+					} else {
+						t.Log.Errorf("Tailing %q: %s", tailer.Filename, err.Error())
+					}
 				}
 			}()
 
@@ -234,25 +251,20 @@ func (t *Tail) tailNewFiles(fromBeginning bool) error {
 }
 
 // ParseLine parses a line of text.
-func parseLine(parser parsers.Parser, line string) ([]telegraf.Metric, error) {
-	switch parser.(type) {
-	case *csv.Parser:
-		m, err := parser.Parse([]byte(line))
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, nil
-			}
-			return nil, err
+func parseLine(parser telegraf.Parser, line string) ([]telegraf.Metric, error) {
+	m, err := parser.Parse([]byte(line))
+	if err != nil {
+		if errors.Is(err, parsers.ErrEOF) {
+			return nil, nil
 		}
-		return m, err
-	default:
-		return parser.Parse([]byte(line))
+		return nil, err
 	}
+	return m, err
 }
 
 // Receiver is launched as a goroutine to continuously watch a tailed logfile
 // for changes, parse any incoming msgs, and add to the accumulator.
-func (t *Tail) receiver(parser parsers.Parser, tailer *tail.Tail) {
+func (t *Tail) receiver(parser telegraf.Parser, tailer *tail.Tail) {
 	// holds the individual lines of multi-line log entries.
 	var buffer bytes.Buffer
 
@@ -364,6 +376,7 @@ func (t *Tail) Stop() {
 			offset, err := tailer.Tell()
 			if err == nil {
 				t.Log.Debugf("Recording offset %d for %q", offset, tailer.Filename)
+				t.offsets[tailer.Filename] = offset
 			} else {
 				t.Log.Errorf("Recording offset for %q: %s", tailer.Filename, err.Error())
 			}
@@ -385,7 +398,7 @@ func (t *Tail) Stop() {
 	offsetsMutex.Unlock()
 }
 
-func (t *Tail) SetParserFunc(fn parsers.ParserFunc) {
+func (t *Tail) SetParserFunc(fn telegraf.ParserFunc) {
 	t.parserFunc = fn
 }
 

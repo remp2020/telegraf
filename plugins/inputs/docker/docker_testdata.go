@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/api/types/volume"
 )
 
 var info = types.Info{
@@ -42,12 +43,31 @@ var info = types.Info{
 				Secure:   true,
 			},
 		}, InsecureRegistryCIDRs: []*registry.NetIPNet{{IP: []byte{127, 0, 0, 0}, Mask: []byte{255, 0, 0, 0}}}, Mirrors: []string{}},
-	OperatingSystem:   "Linux Mint LMDE (containerized)",
-	BridgeNfIptables:  true,
-	HTTPSProxy:        "",
-	Labels:            []string{},
-	MemoryLimit:       false,
-	DriverStatus:      [][2]string{{"Pool Name", "docker-8:1-1182287-pool"}, {"Base Device Size", "10.74 GB"}, {"Pool Blocksize", "65.54 kB"}, {"Backing Filesystem", "extfs"}, {"Data file", "/dev/loop0"}, {"Metadata file", "/dev/loop1"}, {"Data Space Used", "17.3 GB"}, {"Data Space Total", "107.4 GB"}, {"Data Space Available", "36.53 GB"}, {"Metadata Space Used", "20.97 MB"}, {"Metadata Space Total", "2.147 GB"}, {"Metadata Space Available", "2.127 GB"}, {"Udev Sync Supported", "true"}, {"Deferred Removal Enabled", "false"}, {"Data loop file", "/var/lib/docker/devicemapper/devicemapper/data"}, {"Metadata loop file", "/var/lib/docker/devicemapper/devicemapper/metadata"}, {"Library Version", "1.02.115 (2016-01-25)"}, {"Thin Pool Minimum Free Space", "10.74GB"}},
+	OperatingSystem:  "Linux Mint LMDE (containerized)",
+	BridgeNfIptables: true,
+	HTTPSProxy:       "",
+	Labels:           []string{},
+	MemoryLimit:      false,
+	DriverStatus: [][2]string{
+		{"Pool Name", "docker-8:1-1182287-pool"},
+		{"Base Device Size", "10.74 GB"},
+		{"Pool Blocksize", "65.54 kB"},
+		{"Backing Filesystem", "extfs"},
+		{"Data file", "/dev/loop0"},
+		{"Metadata file", "/dev/loop1"},
+		{"Data Space Used", "17.3 GB"},
+		{"Data Space Total", "107.4 GB"},
+		{"Data Space Available", "36.53 GB"},
+		{"Metadata Space Used", "20.97 MB"},
+		{"Metadata Space Total", "2.147 GB"},
+		{"Metadata Space Available", "2.127 GB"},
+		{"Udev Sync Supported", "true"},
+		{"Deferred Removal Enabled", "false"},
+		{"Data loop file", "/var/lib/docker/devicemapper/devicemapper/data"},
+		{"Metadata loop file", "/var/lib/docker/devicemapper/devicemapper/metadata"},
+		{"Library Version", "1.02.115 (2016-01-25)"},
+		{"Thin Pool Minimum Free Space", "10.74GB"},
+	},
 	NFd:               19,
 	HTTPProxy:         "",
 	Driver:            "devicemapper",
@@ -523,3 +543,17 @@ func containerInspect() types.ContainerJSON {
 		},
 	}
 }
+
+var diskUsage = types.DiskUsage{
+	LayersSize: 1e10,
+	Containers: []*types.Container{
+		{Names: []string{"/some_container"}, Image: "some_image:1.0.0-alpine", SizeRw: 0, SizeRootFs: 123456789},
+	},
+	Images: []*types.ImageSummary{
+		{ID: "sha256:some_imageid", RepoTags: []string{"some_image_tag:1.0.0-alpine"}, Size: 123456789, SharedSize: 0},
+		{ID: "sha256:7f4a1cc74046ce48cd918693cd6bf4b2683f4ce0d7be3f7148a21df9f06f5b5f", RepoTags: []string{"telegraf:latest"}, Size: 425484494, SharedSize: 0},
+	},
+	Volumes: []*volume.Volume{{Name: "some_volume", UsageData: &volume.UsageData{Size: 123456789}}},
+}
+
+var version = "1.43"

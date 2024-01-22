@@ -20,9 +20,9 @@ func (d *xmlDocument) QueryAll(node dataNode, expr string) ([]dataNode, error) {
 		return nil, err
 	}
 
-	nodes := make([]dataNode, len(native))
-	for i, n := range native {
-		nodes[i] = n
+	nodes := make([]dataNode, 0, len(native))
+	for _, n := range native {
+		nodes = append(nodes, n)
 	}
 	return nodes, nil
 }
@@ -42,7 +42,8 @@ func (d *xmlDocument) GetNodePath(node, relativeTo dataNode, sep string) string 
 	// Climb up the tree and collect the node names
 	n := nativeNode.Parent
 	for n != nil && n != nativeRelativeTo {
-		names = append(names, n.Data)
+		nodeName := d.GetNodeName(n, sep, false)
+		names = append(names, nodeName)
 		n = n.Parent
 	}
 
@@ -57,6 +58,13 @@ func (d *xmlDocument) GetNodePath(node, relativeTo dataNode, sep string) string 
 	}
 
 	return nodepath[:len(nodepath)-1]
+}
+
+func (d *xmlDocument) GetNodeName(node dataNode, _ string, _ bool) string {
+	// If this panics it's a programming error as we changed the document type while processing
+	nativeNode := node.(*xmlquery.Node)
+
+	return nativeNode.Data
 }
 
 func (d *xmlDocument) OutputXML(node dataNode) string {

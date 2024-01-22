@@ -156,6 +156,34 @@ This plugin will format the events in the following way:
 }
 ```
 
+### Timestamp Timezone
+
+Elasticsearch documents use RFC3339 timestamps, which include timezone
+information (for example `2017-01-01T00:00:00-08:00`). By default, the Telegraf
+system's configured timezone will be used.
+
+However, this may not always be desirable: Elasticsearch preserves timezone
+information and includes it when returning associated documents. This can cause
+issues for some pipelines. In particular, those that do not parse retrieved
+timestamps and instead assume that the timezone returned will always be
+consistent.
+
+Telegraf honours the timezone configured in the environment variable `TZ`, so
+the timezone sent to Elasticsearch can be amended without needing to change the
+timezone configured in the host system:
+
+```sh
+export TZ="America/Los_Angeles"
+export TZ="UTC"
+```
+
+If Telegraf is being run as a system service, this can be configured in the
+following way on Linux:
+
+```sh
+echo TZ="UTC" | sudo tee -a /etc/default/telegraf
+```
+
 ## OpenSearch Support
 
 OpenSearch is a fork of Elasticsearch hosted by AWS. The OpenSearch server will
@@ -194,6 +222,24 @@ POST https://es.us-east-1.amazonaws.com/2021-01-01/opensearch/upgradeDomain
 ```
 
 [3]: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/rename.html#rename-upgrade
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username`,
+`password` and `auth_bearer_token` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
 
 ## Configuration
 
@@ -256,7 +302,7 @@ POST https://es.us-east-1.amazonaws.com/2021-01-01/opensearch/upgradeDomain
   ## Set to true if you want telegraf to overwrite an existing template
   overwrite_template = false
   ## If set to true a unique ID hash will be sent as sha256(concat(timestamp,measurement,series-hash)) string
-  ## it will enable data resend and update metric points avoiding duplicated metrics with diferent id's
+  ## it will enable data resend and update metric points avoiding duplicated metrics with different id's
   force_document_id = false
 
   ## Specifies the handling of NaN and Inf values.
@@ -283,9 +329,9 @@ POST https://es.us-east-1.amazonaws.com/2021-01-01/opensearch/upgradeDomain
 
 If you are using authentication within your Elasticsearch cluster, you need to
 create a account and create a role with at least the manage role in the Cluster
-Privileges category.  Overwise, your account will not be able to connect to your
-Elasticsearch cluster and send logs to your cluster.  After that, you need to
-add "create_indice" and "write" permission to your specific index pattern.
+Privileges category.  Otherwise, your account will not be able to connect to
+your Elasticsearch cluster and send logs to your cluster.  After that, you need
+to add "create_indice" and "write" permission to your specific index pattern.
 
 ### Required parameters
 
@@ -327,7 +373,7 @@ the `default_tag_value` will be used instead.
   existing template.
 * `force_document_id`: Set to true will compute a unique hash from as
   sha256(concat(timestamp,measurement,series-hash)),enables resend or update
-  data withoud ES duplicated documents.
+  data without ES duplicated documents.
 * `float_handling`: Specifies how to handle `NaN` and infinite field
   values. `"none"` (default) will do nothing, `"drop"` will drop the field and
   `replace` will replace the field value by the number in

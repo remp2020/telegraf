@@ -10,6 +10,24 @@ For an introduction to AMQP see:
 - [amqp: concepts](https://www.rabbitmq.com/tutorials/amqp-concepts.html)
 - [rabbitmq: getting started](https://www.rabbitmq.com/getstarted.html)
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username` and
+`password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -90,6 +108,10 @@ For an introduction to AMQP see:
   ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
 
+  ## Optional Proxy Configuration
+  # use_proxy = false
+  # proxy_url = "localhost:8888"
+
   ## If true use batch serialization format instead of line based delimiting.
   ## Only applies to data formats which are not line based such as JSON.
   ## Recommended to set to true.
@@ -120,3 +142,10 @@ Exchange types that do not use a routing key, `direct` and `header`, always use
 the empty string as the routing key.
 
 Metrics are published in batches based on the final routing key.
+
+### Proxy
+
+If you want to use a proxy, you need to set `use_proxy = true`. This will
+use the system's proxy settings to determine the proxy URL. If you need to
+specify a proxy URL manually, you can do so by using `proxy_url`, overriding
+the system settings.

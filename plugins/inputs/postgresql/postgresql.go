@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	// Blank import required to register driver
 	_ "github.com/jackc/pgx/v4/stdlib"
 
 	"github.com/influxdata/telegraf"
@@ -14,7 +15,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -105,7 +105,6 @@ type scanner interface {
 }
 
 func (p *Postgresql) accRow(row scanner, acc telegraf.Accumulator, columns []string) error {
-	var columnVars []interface{}
 	var dbname bytes.Buffer
 
 	// this is where we'll store the column name with its *interface{}
@@ -115,13 +114,19 @@ func (p *Postgresql) accRow(row scanner, acc telegraf.Accumulator, columns []str
 		columnMap[column] = new(interface{})
 	}
 
+	columnVars := make([]interface{}, 0, len(columnMap))
 	// populate the array of interface{} with the pointers in the right order
 	for i := 0; i < len(columnMap); i++ {
 		columnVars = append(columnVars, columnMap[columns[i]])
 	}
 
+	tagAddress, err := p.SanitizedAddress()
+	if err != nil {
+		return err
+	}
+
 	// deconstruct array of variables and send to Scan
-	err := row.Scan(columnVars...)
+	err = row.Scan(columnVars...)
 
 	if err != nil {
 		return err
@@ -129,25 +134,17 @@ func (p *Postgresql) accRow(row scanner, acc telegraf.Accumulator, columns []str
 	if columnMap["datname"] != nil {
 		// extract the database name from the column map
 		if dbNameStr, ok := (*columnMap["datname"]).(string); ok {
-			if _, err := dbname.WriteString(dbNameStr); err != nil {
-				return err
-			}
+			dbname.WriteString(dbNameStr)
 		} else {
 			// PG 12 adds tracking of global objects to pg_stat_database
-			if _, err := dbname.WriteString("postgres_global"); err != nil {
-				return err
-			}
+			dbname.WriteString("postgres_global")
 		}
 	} else {
-		if _, err := dbname.WriteString("postgres"); err != nil {
+		database, err := p.GetConnectDatabase(tagAddress)
+		if err != nil {
 			return err
 		}
-	}
-
-	var tagAddress string
-	tagAddress, err = p.SanitizedAddress()
-	if err != nil {
-		return err
+		dbname.WriteString(database)
 	}
 
 	tags := map[string]string{"server": tagAddress, "db": dbname.String()}

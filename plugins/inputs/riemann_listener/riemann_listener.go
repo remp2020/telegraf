@@ -27,7 +27,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -154,7 +153,7 @@ func (rsl *riemannListener) removeConnection(c net.Conn) {
 /*
 readMessages will read Riemann messages in binary format
 from the TCP connection. byte Array p size will depend on the size
-of the riemann  message as sent by the cleint
+of the riemann  message as sent by the client
 */
 func readMessages(r io.Reader, p []byte) error {
 	for len(p) > 0 {
@@ -327,7 +326,7 @@ func (rsl *RiemannSocketListener) Start(acc telegraf.Accumulator) error {
 			rsl.listen(ctx)
 		}()
 	default:
-		return fmt.Errorf("unknown protocol '%s' in '%s'", protocol, rsl.ServiceAddress)
+		return fmt.Errorf("unknown protocol %q in %q", protocol, rsl.ServiceAddress)
 	}
 
 	return nil

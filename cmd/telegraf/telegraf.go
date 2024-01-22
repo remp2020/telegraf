@@ -3,126 +3,138 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
-	"net/http"
-	_ "net/http/pprof" // Comment this line to disable pprof endpoint.
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/coreos/go-systemd/daemon"
-
 	"github.com/fatih/color"
-
 	"github.com/influxdata/tail/watch"
+	"gopkg.in/tomb.v1"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/agent"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
-	"github.com/influxdata/telegraf/internal/goplugin"
 	"github.com/influxdata/telegraf/logger"
-	_ "github.com/influxdata/telegraf/plugins/aggregators/all"
+	"github.com/influxdata/telegraf/plugins/aggregators"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	_ "github.com/influxdata/telegraf/plugins/inputs/all"
 	"github.com/influxdata/telegraf/plugins/outputs"
-	_ "github.com/influxdata/telegraf/plugins/outputs/all"
-	_ "github.com/influxdata/telegraf/plugins/parsers/all"
-	_ "github.com/influxdata/telegraf/plugins/processors/all"
-	"gopkg.in/tomb.v1"
-)
-
-type sliceFlags []string
-
-func (i *sliceFlags) String() string {
-	s := strings.Join(*i, " ")
-	return "[" + s + "]"
-}
-
-func (i *sliceFlags) Set(value string) error {
-	*i = append(*i, value)
-	return nil
-}
-
-// If you update these, update usage.go and usage_windows.go
-var fDebug = flag.Bool("debug", false,
-	"turn on debug logging")
-var pprofAddr = flag.String("pprof-addr", "",
-	"pprof address to listen on, not activate pprof if empty")
-var fQuiet = flag.Bool("quiet", false,
-	"run in quiet mode")
-var fTest = flag.Bool("test", false, "enable test mode: gather metrics, print them out, and exit. Note: Test mode only runs inputs, not processors, aggregators, or outputs")
-var fTestWait = flag.Int("test-wait", 0, "wait up to this many seconds for service inputs to complete in test mode")
-
-var fConfigs sliceFlags
-var fConfigDirs sliceFlags
-var fWatchConfig = flag.String("watch-config", "", "Monitoring config changes [notify, poll]")
-var fVersion = flag.Bool("version", false, "display the version and exit")
-var fSampleConfig = flag.Bool("sample-config", false,
-	"print out full sample configuration")
-var fPidfile = flag.String("pidfile", "", "file to write our pid to")
-var fDeprecationList = flag.Bool("deprecation-list", false,
-	"print all deprecated plugins or plugin options.")
-var fSectionFilters = flag.String("section-filter", "",
-	"filter the sections to print, separator is ':'. Valid values are 'agent', 'global_tags', 'outputs', 'processors', 'aggregators' and 'inputs'")
-var fInputFilters = flag.String("input-filter", "",
-	"filter the inputs to enable, separator is :")
-var fInputList = flag.Bool("input-list", false,
-	"print available input plugins.")
-var fOutputFilters = flag.String("output-filter", "",
-	"filter the outputs to enable, separator is :")
-var fOutputList = flag.Bool("output-list", false,
-	"print available output plugins.")
-var fAggregatorFilters = flag.String("aggregator-filter", "",
-	"filter the aggregators to enable, separator is :")
-var fProcessorFilters = flag.String("processor-filter", "",
-	"filter the processors to enable, separator is :")
-var fUsage = flag.String("usage", "",
-	"print usage for a plugin, ie, 'telegraf --usage mysql'")
-
-//nolint:varcheck,unused // False positive - this var is used for non-default build tag: windows
-var fService = flag.String("service", "",
-	"operate on the service (windows only)")
-
-//nolint:varcheck,unused // False positive - this var is used for non-default build tag: windows
-var fServiceName = flag.String("service-name", "telegraf",
-	"service name (windows only)")
-
-//nolint:varcheck,unused // False positive - this var is used for non-default build tag: windows
-var fServiceDisplayName = flag.String("service-display-name", "Telegraf Data Collector Service",
-	"service display name (windows only)")
-
-//nolint:varcheck,unused // False positive - this var is used for non-default build tag: windows
-var fServiceAutoRestart = flag.Bool("service-auto-restart", false,
-	"auto restart service on failure (windows only)")
-
-//nolint:varcheck,unused // False positive - this var is used for non-default build tag: windows
-var fServiceRestartDelay = flag.String("service-restart-delay", "5m",
-	"delay before service auto restart, default is 5m (windows only)")
-
-//nolint:varcheck,unused // False positive - this var is used for non-default build tag: windows
-var fRunAsConsole = flag.Bool("console", false,
-	"run as console application (windows only)")
-var fPlugins = flag.String("plugin-directory", "",
-	"path to directory containing external plugins")
-var fRunOnce = flag.Bool("once", false, "run one gather and exit")
-
-var (
-	version string
-	commit  string
-	branch  string
+	"github.com/influxdata/telegraf/plugins/parsers"
+	"github.com/influxdata/telegraf/plugins/processors"
+	"github.com/influxdata/telegraf/plugins/secretstores"
 )
 
 var stop chan struct{}
 
-func reloadLoop(
-	inputFilters []string,
-	outputFilters []string,
-) {
+type GlobalFlags struct {
+	config         []string
+	configDir      []string
+	testWait       int
+	watchConfig    string
+	pidFile        string
+	plugindDir     string
+	password       string
+	oldEnvBehavior bool
+	test           bool
+	debug          bool
+	once           bool
+	quiet          bool
+	unprotected    bool
+}
+
+type WindowFlags struct {
+	service             string
+	serviceName         string
+	serviceDisplayName  string
+	serviceRestartDelay string
+	serviceAutoRestart  bool
+	console             bool
+}
+
+type App interface {
+	Init(<-chan error, Filters, GlobalFlags, WindowFlags)
+	Run() error
+
+	// Secret store commands
+	ListSecretStores() ([]string, error)
+	GetSecretStore(string) (telegraf.SecretStore, error)
+}
+
+type Telegraf struct {
+	pprofErr <-chan error
+
+	inputFilters       []string
+	outputFilters      []string
+	configFiles        []string
+	secretstoreFilters []string
+
+	GlobalFlags
+	WindowFlags
+}
+
+func (t *Telegraf) Init(pprofErr <-chan error, f Filters, g GlobalFlags, w WindowFlags) {
+	t.pprofErr = pprofErr
+	t.inputFilters = f.input
+	t.outputFilters = f.output
+	t.secretstoreFilters = f.secretstore
+	t.GlobalFlags = g
+	t.WindowFlags = w
+
+	// Disable secret protection before performing any other operation
+	if g.unprotected {
+		log.Println("W! Running without secret protection!")
+		config.DisableSecretProtection()
+	}
+
+	// Set global password
+	if g.password != "" {
+		config.Password = config.NewSecret([]byte(g.password))
+	}
+
+	// Set environment replacement behavior
+	config.OldEnvVarReplacement = g.oldEnvBehavior
+}
+
+func (t *Telegraf) ListSecretStores() ([]string, error) {
+	c, err := t.loadConfiguration()
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(c.SecretStores))
+	for k := range c.SecretStores {
+		ids = append(ids, k)
+	}
+	return ids, nil
+}
+
+func (t *Telegraf) GetSecretStore(id string) (telegraf.SecretStore, error) {
+	t.quiet = true
+	c, err := t.loadConfiguration()
+	if err != nil {
+		return nil, err
+	}
+
+	store, found := c.SecretStores[id]
+	if !found {
+		return nil, errors.New("unknown secret store")
+	}
+
+	return store, nil
+}
+
+func (t *Telegraf) reloadLoop() error {
+	reloadConfig := false
+	cfg, err := t.loadConfiguration()
+	if err != nil {
+		return err
+	}
+
 	reload := make(chan bool, 1)
 	reload <- true
 	for <-reload {
@@ -132,10 +144,10 @@ func reloadLoop(
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, os.Interrupt, syscall.SIGHUP,
 			syscall.SIGTERM, syscall.SIGINT)
-		if *fWatchConfig != "" {
-			for _, fConfig := range fConfigs {
+		if t.watchConfig != "" {
+			for _, fConfig := range t.configFiles {
 				if _, err := os.Stat(fConfig); err == nil {
-					go watchLocalConfig(signals, fConfig)
+					go t.watchLocalConfig(signals, fConfig)
 				} else {
 					log.Printf("W! Cannot watch config %s: %s", fConfig, err)
 				}
@@ -145,27 +157,33 @@ func reloadLoop(
 			select {
 			case sig := <-signals:
 				if sig == syscall.SIGHUP {
-					log.Printf("I! Reloading Telegraf config")
+					log.Println("I! Reloading Telegraf config")
 					<-reload
 					reload <- true
 				}
+				cancel()
+			case err := <-t.pprofErr:
+				log.Printf("E! pprof server failed: %v", err)
 				cancel()
 			case <-stop:
 				cancel()
 			}
 		}()
 
-		err := runAgent(ctx, inputFilters, outputFilters)
-		if err != nil && err != context.Canceled {
-			log.Fatalf("E! [telegraf] Error running agent: %v", err)
+		err := t.runAgent(ctx, cfg, reloadConfig)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("[telegraf] Error running agent: %w", err)
 		}
+		reloadConfig = true
 	}
+
+	return nil
 }
 
-func watchLocalConfig(signals chan os.Signal, fConfig string) {
+func (t *Telegraf) watchLocalConfig(signals chan os.Signal, fConfig string) {
 	var mytomb tomb.Tomb
 	var watcher watch.FileWatcher
-	if *fWatchConfig == "poll" {
+	if t.watchConfig == "poll" {
 		watcher = watch.NewPollingFileWatcher(fConfig)
 	} else {
 		watcher = watch.NewInotifyFileWatcher(fConfig)
@@ -202,56 +220,69 @@ func watchLocalConfig(signals chan os.Signal, fConfig string) {
 	signals <- syscall.SIGHUP
 }
 
-func runAgent(ctx context.Context,
-	inputFilters []string,
-	outputFilters []string,
-) error {
+func (t *Telegraf) loadConfiguration() (*config.Config, error) {
 	// If no other options are specified, load the config file and run.
 	c := config.NewConfig()
-	c.OutputFilters = outputFilters
-	c.InputFilters = inputFilters
+	c.Agent.Quiet = t.quiet
+	c.OutputFilters = t.outputFilters
+	c.InputFilters = t.inputFilters
+	c.SecretStoreFilters = t.secretstoreFilters
+
+	var configFiles []string
+
+	configFiles = append(configFiles, t.config...)
+	for _, fConfigDirectory := range t.configDir {
+		files, err := config.WalkDirectory(fConfigDirectory)
+		if err != nil {
+			return c, err
+		}
+		configFiles = append(configFiles, files...)
+	}
+
+	// load default config paths if none are found
+	if len(configFiles) == 0 {
+		defaultFiles, err := config.GetDefaultConfigPath()
+		if err != nil {
+			return nil, fmt.Errorf("unable to load default config paths: %w", err)
+		}
+		configFiles = append(configFiles, defaultFiles...)
+	}
+
+	t.configFiles = configFiles
+	if err := c.LoadAll(configFiles...); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+func (t *Telegraf) runAgent(ctx context.Context, c *config.Config, reloadConfig bool) error {
 	var err error
-	// providing no "config" flag should load default config
-	if len(fConfigs) == 0 {
-		err = c.LoadConfig("")
-		if err != nil {
-			return err
-		}
-	}
-	for _, fConfig := range fConfigs {
-		err = c.LoadConfig(fConfig)
-		if err != nil {
+	if reloadConfig {
+		if c, err = t.loadConfiguration(); err != nil {
 			return err
 		}
 	}
 
-	for _, fConfigDirectory := range fConfigDirs {
-		err = c.LoadDirectory(fConfigDirectory)
-		if err != nil {
-			return err
-		}
+	if !(t.test || t.testWait != 0) && len(c.Outputs) == 0 {
+		return errors.New("no outputs found, did you provide a valid config file?")
 	}
-
-	if !(*fTest || *fTestWait != 0) && len(c.Outputs) == 0 {
-		return errors.New("Error: no outputs found, did you provide a valid config file?")
-	}
-	if *fPlugins == "" && len(c.Inputs) == 0 {
-		return errors.New("Error: no inputs found, did you provide a valid config file?")
+	if t.plugindDir == "" && len(c.Inputs) == 0 {
+		return errors.New("no inputs found, did you provide a valid config file?")
 	}
 
 	if int64(c.Agent.Interval) <= 0 {
-		return fmt.Errorf("Agent interval must be positive, found %v", c.Agent.Interval)
+		return fmt.Errorf("agent interval must be positive, found %v", c.Agent.Interval)
 	}
 
 	if int64(c.Agent.FlushInterval) <= 0 {
-		return fmt.Errorf("Agent flush_interval must be positive; found %v", c.Agent.Interval)
+		return fmt.Errorf("agent flush_interval must be positive; found %v", c.Agent.Interval)
 	}
 
 	// Setup logging as configured.
-	telegraf.Debug = c.Agent.Debug || *fDebug
+	telegraf.Debug = c.Agent.Debug || t.debug
 	logConfig := logger.LogConfig{
 		Debug:               telegraf.Debug,
-		Quiet:               c.Agent.Quiet || *fQuiet,
+		Quiet:               c.Agent.Quiet || t.quiet,
 		LogTarget:           c.Agent.LogTarget,
 		Logfile:             c.Agent.Logfile,
 		RotationInterval:    c.Agent.LogfileRotationInterval,
@@ -260,13 +291,24 @@ func runAgent(ctx context.Context,
 		LogWithTimezone:     c.Agent.LogWithTimezone,
 	}
 
-	logger.SetupLogging(logConfig)
+	if err := logger.SetupLogging(logConfig); err != nil {
+		return err
+	}
 
-	log.Printf("I! Starting Telegraf %s", version)
+	log.Printf("I! Starting Telegraf %s%s brought to you by InfluxData the makers of InfluxDB", internal.Version, internal.Customized)
+	log.Printf("I! Available plugins: %d inputs, %d aggregators, %d processors, %d parsers, %d outputs, %d secret-stores",
+		len(inputs.Inputs),
+		len(aggregators.Aggregators),
+		len(processors.Processors),
+		len(parsers.Parsers),
+		len(outputs.Outputs),
+		len(secretstores.SecretStores),
+	)
 	log.Printf("I! Loaded inputs: %s", strings.Join(c.InputNames(), " "))
 	log.Printf("I! Loaded aggregators: %s", strings.Join(c.AggregatorNames(), " "))
 	log.Printf("I! Loaded processors: %s", strings.Join(c.ProcessorNames(), " "))
-	if !*fRunOnce && (*fTest || *fTestWait != 0) {
+	log.Printf("I! Loaded secretstores: %s", strings.Join(c.SecretstoreNames(), " "))
+	if !t.once && (t.test || t.testWait != 0) {
 		log.Print("W! " + color.RedString("Outputs are not used in testing mode!"))
 	} else {
 		log.Printf("I! Loaded outputs: %s", strings.Join(c.OutputNames(), " "))
@@ -285,11 +327,24 @@ func runAgent(ctx context.Context,
 	if count, found := c.Deprecations["outputs"]; found && (count[0] > 0 || count[1] > 0) {
 		log.Printf("W! Deprecated outputs: %d and %d options", count[0], count[1])
 	}
-
-	ag, err := agent.NewAgent(c)
-	if err != nil {
-		return err
+	if count, found := c.Deprecations["secretstores"]; found && (count[0] > 0 || count[1] > 0) {
+		log.Printf("W! Deprecated secretstores: %d and %d options", count[0], count[1])
 	}
+
+	// Compute the amount of locked memory needed for the secrets
+	if !t.GlobalFlags.unprotected {
+		required := 3 * c.NumberSecrets * uint64(os.Getpagesize())
+		available := getLockedMemoryLimit()
+		if required > available {
+			required /= 1024
+			available /= 1024
+			log.Printf("I! Found %d secrets...", c.NumberSecrets)
+			msg := fmt.Sprintf("Insufficient lockable memory %dkb when %dkb is required.", available, required)
+			msg += " Please increase the limit for Telegraf in your Operating System!"
+			log.Printf("W! " + color.RedString(msg))
+		}
+	}
+	ag := agent.NewAgent(c)
 
 	// Notify systemd that telegraf is ready
 	// SdNotify() only tries to notify if the NOTIFY_SOCKET environment is set, so it's safe to call when systemd isn't present.
@@ -297,27 +352,30 @@ func runAgent(ctx context.Context,
 	// For platforms that use systemd, telegraf doesn't log if the notification failed.
 	_, _ = daemon.SdNotify(false, daemon.SdNotifyReady)
 
-	if *fRunOnce {
-		wait := time.Duration(*fTestWait) * time.Second
+	if t.once {
+		wait := time.Duration(t.testWait) * time.Second
 		return ag.Once(ctx, wait)
 	}
 
-	if *fTest || *fTestWait != 0 {
-		wait := time.Duration(*fTestWait) * time.Second
+	if t.test || t.testWait != 0 {
+		wait := time.Duration(t.testWait) * time.Second
 		return ag.Test(ctx, wait)
 	}
 
-	if *fPidfile != "" {
-		f, err := os.OpenFile(*fPidfile, os.O_CREATE|os.O_WRONLY, 0644)
+	if t.pidFile != "" {
+		f, err := os.OpenFile(t.pidFile, os.O_CREATE|os.O_WRONLY, 0640)
 		if err != nil {
 			log.Printf("E! Unable to create pidfile: %s", err)
 		} else {
 			fmt.Fprintf(f, "%d\n", os.Getpid())
 
-			f.Close()
+			err = f.Close()
+			if err != nil {
+				return err
+			}
 
 			defer func() {
-				err := os.Remove(*fPidfile)
+				err := os.Remove(t.pidFile)
 				if err != nil {
 					log.Printf("E! Unable to remove pidfile: %s", err)
 				}
@@ -326,180 +384,4 @@ func runAgent(ctx context.Context,
 	}
 
 	return ag.Run(ctx)
-}
-
-func usageExit(rc int) {
-	fmt.Println(internal.Usage)
-	os.Exit(rc)
-}
-
-func formatFullVersion() string {
-	var parts = []string{"Telegraf"}
-
-	if version != "" {
-		parts = append(parts, version)
-	} else {
-		parts = append(parts, "unknown")
-	}
-
-	if branch != "" || commit != "" {
-		if branch == "" {
-			branch = "unknown"
-		}
-		if commit == "" {
-			commit = "unknown"
-		}
-		git := fmt.Sprintf("(git: %s %s)", branch, commit)
-		parts = append(parts, git)
-	}
-
-	return strings.Join(parts, " ")
-}
-
-func main() {
-	flag.Var(&fConfigs, "config", "configuration file to load")
-	flag.Var(&fConfigDirs, "config-directory", "directory containing additional *.conf files")
-
-	flag.Usage = func() { usageExit(0) }
-	flag.Parse()
-	args := flag.Args()
-
-	sectionFilters, inputFilters, outputFilters := []string{}, []string{}, []string{}
-	if *fSectionFilters != "" {
-		sectionFilters = strings.Split(":"+strings.TrimSpace(*fSectionFilters)+":", ":")
-	}
-	if *fInputFilters != "" {
-		inputFilters = strings.Split(":"+strings.TrimSpace(*fInputFilters)+":", ":")
-	}
-	if *fOutputFilters != "" {
-		outputFilters = strings.Split(":"+strings.TrimSpace(*fOutputFilters)+":", ":")
-	}
-
-	aggregatorFilters, processorFilters := []string{}, []string{}
-	if *fAggregatorFilters != "" {
-		aggregatorFilters = strings.Split(":"+strings.TrimSpace(*fAggregatorFilters)+":", ":")
-	}
-	if *fProcessorFilters != "" {
-		processorFilters = strings.Split(":"+strings.TrimSpace(*fProcessorFilters)+":", ":")
-	}
-
-	logger.SetupLogging(logger.LogConfig{})
-
-	// Configure version
-	if err := internal.SetVersion(version); err != nil {
-		log.Println("Telegraf version already configured to: " + internal.Version())
-	}
-
-	// Load external plugins, if requested.
-	if *fPlugins != "" {
-		log.Printf("I! Loading external plugins from: %s", *fPlugins)
-		if err := goplugin.LoadExternalPlugins(*fPlugins); err != nil {
-			log.Fatal("E! " + err.Error())
-		}
-	}
-
-	if *pprofAddr != "" {
-		go func() {
-			pprofHostPort := *pprofAddr
-			parts := strings.Split(pprofHostPort, ":")
-			if len(parts) == 2 && parts[0] == "" {
-				pprofHostPort = fmt.Sprintf("localhost:%s", parts[1])
-			}
-			pprofHostPort = "http://" + pprofHostPort + "/debug/pprof"
-
-			log.Printf("I! Starting pprof HTTP server at: %s", pprofHostPort)
-
-			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
-				log.Fatal("E! " + err.Error())
-			}
-		}()
-	}
-
-	if len(args) > 0 {
-		switch args[0] {
-		case "version":
-			fmt.Println(formatFullVersion())
-			return
-		case "config":
-			config.PrintSampleConfig(
-				sectionFilters,
-				inputFilters,
-				outputFilters,
-				aggregatorFilters,
-				processorFilters,
-			)
-			return
-		}
-	}
-
-	// switch for flags which just do something and exit immediately
-	switch {
-	case *fDeprecationList:
-		c := config.NewConfig()
-		infos := c.CollectDeprecationInfos(
-			inputFilters,
-			outputFilters,
-			aggregatorFilters,
-			processorFilters,
-		)
-		//nolint:revive // We will notice if Println fails
-		fmt.Println("Deprecated Input Plugins: ")
-		c.PrintDeprecationList(infos["inputs"])
-		//nolint:revive // We will notice if Println fails
-		fmt.Println("Deprecated Output Plugins: ")
-		c.PrintDeprecationList(infos["outputs"])
-		//nolint:revive // We will notice if Println fails
-		fmt.Println("Deprecated Processor Plugins: ")
-		c.PrintDeprecationList(infos["processors"])
-		//nolint:revive // We will notice if Println fails
-		fmt.Println("Deprecated Aggregator Plugins: ")
-		c.PrintDeprecationList(infos["aggregators"])
-		return
-	case *fOutputList:
-		fmt.Println("Available Output Plugins: ")
-		names := make([]string, 0, len(outputs.Outputs))
-		for k := range outputs.Outputs {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		for _, k := range names {
-			fmt.Printf("  %s\n", k)
-		}
-		return
-	case *fInputList:
-		fmt.Println("Available Input Plugins:")
-		names := make([]string, 0, len(inputs.Inputs))
-		for k := range inputs.Inputs {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		for _, k := range names {
-			fmt.Printf("  %s\n", k)
-		}
-		return
-	case *fVersion:
-		fmt.Println(formatFullVersion())
-		return
-	case *fSampleConfig:
-		config.PrintSampleConfig(
-			sectionFilters,
-			inputFilters,
-			outputFilters,
-			aggregatorFilters,
-			processorFilters,
-		)
-		return
-	case *fUsage != "":
-		err := config.PrintInputConfig(*fUsage)
-		err2 := config.PrintOutputConfig(*fUsage)
-		if err != nil && err2 != nil {
-			log.Fatalf("E! %s and %s", err, err2)
-		}
-		return
-	}
-
-	run(
-		inputFilters,
-		outputFilters,
-	)
 }

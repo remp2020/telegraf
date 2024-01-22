@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -157,7 +156,7 @@ func importMetric(stat []byte, acc telegraf.Accumulator) error {
 	decoder := xml.NewDecoder(bytes.NewReader(stat))
 	decoder.CharsetReader = charset.NewReaderLabel
 	if err := decoder.Decode(&p); err != nil {
-		return fmt.Errorf("cannot parse input with error: %v", err)
+		return fmt.Errorf("cannot parse input with error: %w", err)
 	}
 
 	tags := map[string]string{
@@ -199,7 +198,7 @@ func importMetric(stat []byte, acc telegraf.Accumulator) error {
 					"group_name":       group.Name,
 					"app_root":         group.AppRoot,
 					"supergroup_name":  sg.Name,
-					"pid":              fmt.Sprintf("%d", process.Pid),
+					"pid":              strconv.Itoa(process.Pid),
 					"code_revision":    process.CodeRevision,
 					"life_status":      process.LifeStatus,
 					"process_group_id": process.ProcessGroupID,

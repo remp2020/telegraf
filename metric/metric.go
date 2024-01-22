@@ -175,6 +175,11 @@ func (m *metric) GetTag(key string) (string, bool) {
 	return "", false
 }
 
+func (m *metric) Tag(key string) string {
+	v, _ := m.GetTag(key)
+	return v
+}
+
 func (m *metric) RemoveTag(key string) {
 	for i, tag := range m.tags {
 		if tag.Key == key {
@@ -212,6 +217,13 @@ func (m *metric) GetField(key string) (interface{}, bool) {
 		}
 	}
 	return nil, false
+}
+
+func (m *metric) Field(key string) interface{} {
+	if v, found := m.GetField(key); found {
+		return v
+	}
+	return nil
 }
 
 func (m *metric) RemoveField(key string) {
@@ -270,7 +282,7 @@ func (m *metric) Reject() {
 func (m *metric) Drop() {
 }
 
-// Convert field to a supported type or nil if unconvertible
+// Convert field to a supported type or nil if inconvertible
 func convertField(v interface{}) interface{} {
 	switch v := v.(type) {
 	case float64:

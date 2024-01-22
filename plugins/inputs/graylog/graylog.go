@@ -21,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -121,12 +120,14 @@ func (h *GrayLog) Gather(acc telegraf.Accumulator) error {
 
 // Gathers data from a particular server
 // Parameters:
-//     acc      : The telegraf Accumulator to use
-//     serverURL: endpoint to send request to
-//     service  : the service being queried
+//
+//	acc      : The telegraf Accumulator to use
+//	serverURL: endpoint to send request to
+//	service  : the service being queried
 //
 // Returns:
-//     error: Any error that may have occurred
+//
+//	error: Any error that may have occurred
 func (h *GrayLog) gatherServer(
 	acc telegraf.Accumulator,
 	serverURL string,
@@ -137,7 +138,7 @@ func (h *GrayLog) gatherServer(
 	}
 	requestURL, err := url.Parse(serverURL)
 	if err != nil {
-		return fmt.Errorf("unable to parse address '%s': %s", serverURL, err)
+		return fmt.Errorf("unable to parse address %q: %w", serverURL, err)
 	}
 
 	host, port, _ := net.SplitHostPort(requestURL.Host)
@@ -161,11 +162,14 @@ func (h *GrayLog) gatherServer(
 
 // Flatten JSON hierarchy to produce field name and field value
 // Parameters:
-//    item: Item map to flatten
-//    fields: Map to store generated fields.
-//    id: Prefix for top level metric (empty string "")
+//
+//	item: Item map to flatten
+//	fields: Map to store generated fields.
+//	id: Prefix for top level metric (empty string "")
+//
 // Returns:
-//    void
+//
+//	void
 func (h *GrayLog) flatten(item map[string]interface{}, fields map[string]interface{}, id string) {
 	if id != "" {
 		id = id + "_"
@@ -185,11 +189,13 @@ func (h *GrayLog) flatten(item map[string]interface{}, fields map[string]interfa
 
 // Sends an HTTP request to the server using the GrayLog object's HTTPClient.
 // Parameters:
-//     serverURL: endpoint to send request to
+//
+//	serverURL: endpoint to send request to
 //
 // Returns:
-//     string: body of the response
-//     error : Any error that may have occurred
+//
+//	string: body of the response
+//	error : Any error that may have occurred
 func (h *GrayLog) sendRequest(serverURL string) (string, float64, error) {
 	headers := map[string]string{
 		"Content-Type": "application/json",
@@ -201,7 +207,7 @@ func (h *GrayLog) sendRequest(serverURL string) (string, float64, error) {
 	// Prepare URL
 	requestURL, err := url.Parse(serverURL)
 	if err != nil {
-		return "", -1, fmt.Errorf("invalid server URL \"%s\"", serverURL)
+		return "", -1, fmt.Errorf("invalid server URL %q", serverURL)
 	}
 	// Add X-Requested-By header
 	headers["X-Requested-By"] = "Telegraf"
@@ -239,7 +245,7 @@ func (h *GrayLog) sendRequest(serverURL string) (string, float64, error) {
 
 	// Process response
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("response from url \"%s\" has status code %d (%s), expected %d (%s)",
+		err = fmt.Errorf("response from url %q has status code %d (%s), expected %d (%s)",
 			requestURL.String(),
 			resp.StatusCode,
 			http.StatusText(resp.StatusCode),

@@ -18,7 +18,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -51,7 +50,7 @@ func opensmtpdRunner(cmdName string, timeout config.Duration, useSudo bool) (*by
 	cmd.Stdout = &out
 	err := internal.RunTimeout(cmd, time.Duration(timeout))
 	if err != nil {
-		return &out, fmt.Errorf("error running smtpctl: %s", err)
+		return &out, fmt.Errorf("error running smtpctl: %w", err)
 	}
 
 	return &out, nil
@@ -59,7 +58,6 @@ func opensmtpdRunner(cmdName string, timeout config.Duration, useSudo bool) (*by
 
 // Gather collects the configured stats from smtpctl and adds them to the
 // Accumulator
-//
 func (*Opensmtpd) SampleConfig() string {
 	return sampleConfig
 }
@@ -75,7 +73,7 @@ func (s *Opensmtpd) Gather(acc telegraf.Accumulator) error {
 
 	out, err := s.run(s.Binary, s.Timeout, s.UseSudo)
 	if err != nil {
-		return fmt.Errorf("error gathering metrics: %s", err)
+		return fmt.Errorf("error gathering metrics: %w", err)
 	}
 
 	// Process values

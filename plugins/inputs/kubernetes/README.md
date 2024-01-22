@@ -34,18 +34,31 @@ avoid cardinality issues:
 - Monitor your databases [series cardinality][].
 - Consult the [InfluxDB documentation][influx-docs] for the most up-to-date techniques.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
 # Read metrics from the kubernetes kubelet api
 [[inputs.kubernetes]]
-  ## URL for the kubelet
+  ## URL for the kubelet, if empty read metrics from all nodes in the cluster
   url = "http://127.0.0.1:10255"
 
   ## Use bearer token for authorization. ('bearer_token' takes priority)
   ## If both of these are empty, we'll use the default serviceaccount:
-  ## at: /run/secrets/kubernetes.io/serviceaccount/token
-  # bearer_token = "/path/to/bearer/token"
+  ## at: /var/run/secrets/kubernetes.io/serviceaccount/token
+  ##
+  ## To re-read the token at each interval, please use a file with the
+  ## bearer_token option. If given a string, Telegraf will always use that
+  ## token.
+  # bearer_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
   ## OR
   # bearer_token_string = "abc_123"
 
@@ -145,7 +158,7 @@ Kubernetes Architecture][k8s-telegraf] or view the Helm charts:
 
 ## Example Output
 
-```shell
+```text
 kubernetes_node
 kubernetes_pod_container,container_name=deis-controller,namespace=deis,node_name=ip-10-0-0-0.ec2.internal,pod_name=deis-controller-3058870187-xazsr cpu_usage_core_nanoseconds=2432835i,cpu_usage_nanocores=0i,logsfs_available_bytes=121128271872i,logsfs_capacity_bytes=153567944704i,logsfs_used_bytes=20787200i,memory_major_page_faults=0i,memory_page_faults=175i,memory_rss_bytes=0i,memory_usage_bytes=0i,memory_working_set_bytes=0i,rootfs_available_bytes=121128271872i,rootfs_capacity_bytes=153567944704i,rootfs_used_bytes=1110016i 1476477530000000000
 kubernetes_pod_network,namespace=deis,node_name=ip-10-0-0-0.ec2.internal,pod_name=deis-controller-3058870187-xazsr rx_bytes=120671099i,rx_errors=0i,tx_bytes=102451983i,tx_errors=0i 1476477530000000000

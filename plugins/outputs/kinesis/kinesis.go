@@ -9,15 +9,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis/types"
-	"github.com/gofrs/uuid"
+	"github.com/gofrs/uuid/v5"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/config/aws"
+	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -134,7 +133,7 @@ func (k *KinesisOutput) getPartitionKey(metric telegraf.Metric) string {
 			// Default partition name if default is not set
 			return "telegraf"
 		default:
-			k.Log.Errorf("You have configured a Partition method of '%s' which is not supported", k.Partition.Method)
+			k.Log.Errorf("You have configured a Partition method of %q which is not supported", k.Partition.Method)
 		}
 	}
 	if k.RandomPartitionKey {

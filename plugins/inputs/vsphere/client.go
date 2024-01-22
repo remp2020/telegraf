@@ -72,30 +72,53 @@ func (cf *ClientFactory) GetClient(ctx context.Context) (*Client, error) {
 			}
 		}
 
-		// Execute a dummy call against the server to make sure the client is
-		// still functional. If not, try to log back in. If that doesn't work,
-		// we give up.
-		ctx1, cancel1 := context.WithTimeout(ctx, time.Duration(cf.parent.Timeout))
-		defer cancel1()
-		if _, err := methods.GetCurrentTime(ctx1, cf.client.Client); err != nil {
-			cf.parent.Log.Info("Client session seems to have time out. Reauthenticating!")
-			ctx2, cancel2 := context.WithTimeout(ctx, time.Duration(cf.parent.Timeout))
-			defer cancel2()
-			if err := cf.client.Client.SessionManager.Login(ctx2, url.UserPassword(cf.parent.Username, cf.parent.Password)); err != nil {
-				if !retrying {
-					// The client went stale. Probably because someone rebooted vCenter. Clear it to
-					// force us to create a fresh one. We only get one chance at this. If we fail a second time
-					// we will simply skip this collection round and hope things have stabilized for the next one.
-					retrying = true
-					cf.client = nil
-					continue
-				}
-				return nil, fmt.Errorf("renewing authentication failed: %s", err.Error())
+		err := cf.testClient(ctx)
+		if err != nil {
+			if !retrying {
+				// The client went stale. Probably because someone rebooted vCenter. Clear it to
+				// force us to create a fresh one. We only get one chance at this. If we fail a second time
+				// we will simply skip this collection round and hope things have stabilized for the next one.
+				retrying = true
+				cf.client = nil
+				continue
 			}
+			return nil, err
 		}
 
 		return cf.client, nil
 	}
+}
+
+func (cf *ClientFactory) testClient(ctx context.Context) error {
+	// Execute a dummy call against the server to make sure the client is
+	// still functional. If not, try to log back in. If that doesn't work,
+	// we give up.
+	ctx1, cancel1 := context.WithTimeout(ctx, time.Duration(cf.parent.Timeout))
+	defer cancel1()
+	if _, err := methods.GetCurrentTime(ctx1, cf.client.Client); err != nil {
+		cf.parent.Log.Info("Client session seems to have time out. Reauthenticating!")
+		ctx2, cancel2 := context.WithTimeout(ctx, time.Duration(cf.parent.Timeout))
+		defer cancel2()
+
+		// Resolving the secrets and construct the authentication info
+		username, err := cf.parent.Username.Get()
+		if err != nil {
+			return fmt.Errorf("getting username failed: %w", err)
+		}
+		defer username.Destroy()
+		password, err := cf.parent.Password.Get()
+		if err != nil {
+			return fmt.Errorf("getting password failed: %w", err)
+		}
+		defer password.Destroy()
+		auth := url.UserPassword(username.String(), password.String())
+
+		if err := cf.client.Client.SessionManager.Login(ctx2, auth); err != nil {
+			return fmt.Errorf("renewing authentication failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // NewClient creates a new vSphere client based on the url and setting passed as parameters.
@@ -111,8 +134,20 @@ func NewClient(ctx context.Context, vSphereURL *url.URL, vs *VSphere) (*Client, 
 	if tlsCfg == nil {
 		tlsCfg = &tls.Config{}
 	}
-	if vs.Username != "" {
-		vSphereURL.User = url.UserPassword(vs.Username, vs.Password)
+	if !vs.Username.Empty() {
+		// Resolving the secrets and construct the authentication info
+		username, err := vs.Username.Get()
+		if err != nil {
+			return nil, fmt.Errorf("getting username failed: %w", err)
+		}
+		password, err := vs.Password.Get()
+		if err != nil {
+			username.Destroy()
+			return nil, fmt.Errorf("getting password failed: %w", err)
+		}
+		vSphereURL.User = url.UserPassword(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 	}
 
 	vs.Log.Debugf("Creating client: %s", vSphereURL.Host)
@@ -130,6 +165,15 @@ func NewClient(ctx context.Context, vSphereURL *url.URL, vs *VSphere) (*Client, 
 			return nil, err
 		}
 	}
+
+	// Set the proxy dependent on the settings
+	proxy, err := vs.HTTPProxy.Proxy()
+	if err != nil {
+		return nil, fmt.Errorf("creating proxy failed: %w", err)
+	}
+	transport := soapClient.DefaultTransport()
+	transport.Proxy = proxy
+	soapClient.Client.Transport = transport
 
 	ctx1, cancel1 := context.WithTimeout(ctx, time.Duration(vs.Timeout))
 	defer cancel1()

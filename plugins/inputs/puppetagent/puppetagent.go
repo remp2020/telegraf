@@ -14,7 +14,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -94,19 +93,19 @@ func (pa *PuppetAgent) Gather(acc telegraf.Accumulator) error {
 	}
 
 	if _, err := os.Stat(pa.Location); err != nil {
-		return fmt.Errorf("%s", err)
+		return err
 	}
 
 	fh, err := os.ReadFile(pa.Location)
 	if err != nil {
-		return fmt.Errorf("%s", err)
+		return err
 	}
 
 	var puppetState State
 
 	err = yaml.Unmarshal(fh, &puppetState)
 	if err != nil {
-		return fmt.Errorf("%s", err)
+		return err
 	}
 
 	tags := map[string]string{"location": pa.Location}

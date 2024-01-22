@@ -2,6 +2,7 @@ package influx
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,24 +12,11 @@ import (
 	"strings"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/serializers"
 )
-
-const MaxInt64 = int64(^uint64(0) >> 1)
-
-type FieldSortOrder int
 
 const (
-	NoSortFields FieldSortOrder = iota
-	SortFields
-)
-
-type FieldTypeSupport int
-
-const (
-	UintSupport FieldTypeSupport = 1 << iota
-)
-
-var (
+	MaxInt64      = int64(^uint64(0) >> 1)
 	NeedMoreSpace = "need more space"
 	InvalidName   = "invalid name"
 	NoFields      = "no serializable fields"
@@ -58,10 +46,11 @@ func (e FieldError) Error() string {
 
 // Serializer is a serializer for line protocol.
 type Serializer struct {
-	maxLineBytes     int
-	bytesWritten     int
-	fieldSortOrder   FieldSortOrder
-	fieldTypeSupport FieldTypeSupport
+	MaxLineBytes int  `toml:"influx_max_line_bytes"`
+	SortFields   bool `toml:"influx_sort_fields"`
+	UintSupport  bool `toml:"influx_uint_support"`
+
+	bytesWritten int
 
 	buf    bytes.Buffer
 	header []byte
@@ -69,27 +58,12 @@ type Serializer struct {
 	pair   []byte
 }
 
-func NewSerializer() *Serializer {
-	serializer := &Serializer{
-		fieldSortOrder: NoSortFields,
+func (s *Serializer) Init() error {
+	s.header = make([]byte, 0, 50)
+	s.footer = make([]byte, 0, 21)
+	s.pair = make([]byte, 0, 50)
 
-		header: make([]byte, 0, 50),
-		footer: make([]byte, 0, 21),
-		pair:   make([]byte, 0, 50),
-	}
-	return serializer
-}
-
-func (s *Serializer) SetMaxLineBytes(maxLineBytes int) {
-	s.maxLineBytes = maxLineBytes
-}
-
-func (s *Serializer) SetFieldSortOrder(order FieldSortOrder) {
-	s.fieldSortOrder = order
-}
-
-func (s *Serializer) SetFieldTypeSupport(typeSupport FieldTypeSupport) {
-	s.fieldTypeSupport = typeSupport
+	return nil
 }
 
 // Serialize writes the telegraf.Metric to a byte slice.  May produce multiple
@@ -102,9 +76,8 @@ func (s *Serializer) Serialize(m telegraf.Metric) ([]byte, error) {
 		return nil, err
 	}
 
-	out := make([]byte, s.buf.Len())
-	copy(out, s.buf.Bytes())
-	return out, nil
+	out := make([]byte, 0, s.buf.Len())
+	return append(out, s.buf.Bytes()...), nil
 }
 
 // SerializeBatch writes the slice of metrics and returns a byte slice of the
@@ -112,21 +85,20 @@ func (s *Serializer) Serialize(m telegraf.Metric) ([]byte, error) {
 func (s *Serializer) SerializeBatch(metrics []telegraf.Metric) ([]byte, error) {
 	s.buf.Reset()
 	for _, m := range metrics {
-		_, err := s.Write(&s.buf, m)
+		err := s.Write(&s.buf, m)
 		if err != nil {
-			if _, ok := err.(*MetricError); ok {
+			var mErr *MetricError
+			if errors.As(err, &mErr) {
 				continue
 			}
 			return nil, err
 		}
 	}
-	out := make([]byte, s.buf.Len())
-	copy(out, s.buf.Bytes())
-	return out, nil
+	out := make([]byte, 0, s.buf.Len())
+	return append(out, s.buf.Bytes()...), nil
 }
-func (s *Serializer) Write(w io.Writer, m telegraf.Metric) (int, error) {
-	err := s.writeMetric(w, m)
-	return s.bytesWritten, err
+func (s *Serializer) Write(w io.Writer, m telegraf.Metric) error {
+	return s.writeMetric(w, m)
 }
 
 func (s *Serializer) writeString(w io.Writer, str string) error {
@@ -216,7 +188,7 @@ func (s *Serializer) writeMetric(w io.Writer, m telegraf.Metric) error {
 
 	s.buildFooter(m)
 
-	if s.fieldSortOrder == SortFields {
+	if s.SortFields {
 		sort.Slice(m.FieldList(), func(i, j int) bool {
 			return m.FieldList()[i].Key < m.FieldList()[j].Key
 		})
@@ -240,7 +212,7 @@ func (s *Serializer) writeMetric(w io.Writer, m telegraf.Metric) error {
 			bytesNeeded++
 		}
 
-		if s.maxLineBytes > 0 && bytesNeeded > s.maxLineBytes {
+		if s.MaxLineBytes > 0 && bytesNeeded > s.MaxLineBytes {
 			// Need at least one field per line, this metric cannot be fit
 			// into the max line bytes.
 			if firstField {
@@ -256,7 +228,7 @@ func (s *Serializer) writeMetric(w io.Writer, m telegraf.Metric) error {
 			firstField = true
 			bytesNeeded = len(s.header) + len(s.pair) + len(s.footer)
 
-			if bytesNeeded > s.maxLineBytes {
+			if bytesNeeded > s.MaxLineBytes {
 				return s.newMetricError(NeedMoreSpace)
 			}
 		}
@@ -300,7 +272,7 @@ func (s *Serializer) newMetricError(reason string) *MetricError {
 func (s *Serializer) appendFieldValue(buf []byte, value interface{}) ([]byte, error) {
 	switch v := value.(type) {
 	case uint64:
-		if s.fieldTypeSupport&UintSupport != 0 {
+		if s.UintSupport {
 			return appendUintField(buf, v), nil
 		}
 		if v <= uint64(MaxInt64) {
@@ -349,4 +321,21 @@ func appendStringField(buf []byte, value string) []byte {
 	buf = append(buf, stringFieldEscape(value)...)
 	buf = append(buf, '"')
 	return buf
+}
+
+func init() {
+	serializers.Add("influx",
+		func() serializers.Serializer {
+			return &Serializer{}
+		},
+	)
+}
+
+// InitFromConfig is a compatibility function to construct the parser the old way
+func (s *Serializer) InitFromConfig(cfg *serializers.Config) error {
+	s.MaxLineBytes = cfg.InfluxMaxLineBytes
+	s.SortFields = cfg.InfluxSortFields
+	s.UintSupport = cfg.InfluxUintSupport
+
+	return nil
 }

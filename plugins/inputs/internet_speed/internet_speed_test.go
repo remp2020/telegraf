@@ -12,12 +12,12 @@ func TestGathering(t *testing.T) {
 		t.Skip("Skipping network-dependent test in short mode.")
 	}
 	internetSpeed := &InternetSpeed{
-		EnableFileDownload: true,
-		Log:                testutil.Logger{},
+		MemorySavingMode: true,
+		Log:              testutil.Logger{},
 	}
+	require.NoError(t, internetSpeed.Init())
 
 	acc := &testutil.Accumulator{}
-
 	require.NoError(t, internetSpeed.Gather(acc))
 }
 
@@ -26,19 +26,15 @@ func TestDataGen(t *testing.T) {
 		t.Skip("Skipping network-dependent test in short mode.")
 	}
 	internetSpeed := &InternetSpeed{
-		EnableFileDownload: true,
-		Log:                testutil.Logger{},
+		MemorySavingMode: true,
+		Log:              testutil.Logger{},
 	}
+	require.NoError(t, internetSpeed.Init())
 
 	acc := &testutil.Accumulator{}
 	require.NoError(t, internetSpeed.Gather(acc))
 
 	metric, ok := acc.Get("internet_speed")
 	require.True(t, ok)
-
-	tags := metric.Tags
-
-	fields := metric.Fields
-
-	acc.AssertContainsTaggedFields(t, "internet_speed", fields, tags)
+	acc.AssertContainsTaggedFields(t, "internet_speed", metric.Fields, metric.Tags)
 }

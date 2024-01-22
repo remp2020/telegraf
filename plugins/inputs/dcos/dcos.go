@@ -4,6 +4,7 @@ package dcos
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"net/url"
 	"os"
 	"sort"
@@ -11,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
@@ -20,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -147,7 +147,8 @@ func (d *DCOS) GatherContainers(ctx context.Context, acc telegraf.Accumulator, c
 				defer wg.Done()
 				m, err := d.client.GetContainerMetrics(ctx, node, container)
 				if err != nil {
-					if err, ok := err.(APIError); ok && err.StatusCode == 404 {
+					var apiErr APIError
+					if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
 						return
 					}
 					acc.AddError(err)
@@ -163,7 +164,8 @@ func (d *DCOS) GatherContainers(ctx context.Context, acc telegraf.Accumulator, c
 				defer wg.Done()
 				m, err := d.client.GetAppMetrics(ctx, node, container)
 				if err != nil {
-					if err, ok := err.(APIError); ok && err.StatusCode == 404 {
+					var apiErr APIError
+					if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
 						return
 					}
 					acc.AddError(err)
@@ -347,10 +349,9 @@ func (d *DCOS) createCredentials() (Credentials, error) {
 			Path: d.TokenFile,
 		}
 		return creds, nil
-	} else {
-		creds := &NullCreds{}
-		return creds, nil
 	}
+
+	return &NullCreds{}, nil
 }
 
 func (d *DCOS) createFilters() error {

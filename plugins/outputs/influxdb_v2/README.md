@@ -2,6 +2,23 @@
 
 The InfluxDB output plugin writes metrics to the [InfluxDB v2.x] HTTP service.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `token` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -49,6 +66,18 @@ The InfluxDB output plugin writes metrics to the [InfluxDB v2.x] HTTP service.
 
   ## Enable or disable uint support for writing uints influxdb 2.0.
   # influx_uint_support = false
+
+  ## HTTP/2 Timeouts
+  ## The following values control the HTTP/2 client's timeouts. These settings
+  ## are generally not required unless a user is seeing issues with client
+  ## disconnects. If a user does see issues, then it is suggested to set these
+  ## values to "15s" for ping timeout and "30s" for read idle timeout and
+  ## retry.
+  ##
+  ## Note that the timer for read_idle_timeout begins at the end of the last
+  ## successful write and not at the beginning of the next write.
+  # ping_timeout = "0s"
+  # read_idle_timeout = "0s"
 
   ## Optional TLS Config for use on HTTP connections.
   # tls_ca = "/etc/telegraf/ca.pem"

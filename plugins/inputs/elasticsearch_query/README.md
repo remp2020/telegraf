@@ -1,7 +1,7 @@
 # Elasticsearch Query Input Plugin
 
-This [elasticsearch](https://www.elastic.co/) query plugin queries endpoints to
-obtain metrics from data stored in an Elasticsearch cluster.
+This [elasticsearch](https://www.elastic.co/) query plugin queries endpoints
+to obtain metrics from data stored in an Elasticsearch cluster.
 
 The following is supported:
 
@@ -12,8 +12,17 @@ The following is supported:
 
 ## Elasticsearch Support
 
-This plugins is tested against Elasticsearch 5.x and 6.x releases.  Currently it
-is known to break on 7.x or greater versions.
+This plugins is tested against Elasticsearch 5.x and 6.x releases.
+Currently it is known to break on 7.x or greater versions.
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
 ## Configuration
 
@@ -46,6 +55,13 @@ is known to break on 7.x or greater versions.
   # tls_key = "/etc/telegraf/key.pem"
   ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
+ 
+  ## If 'use_system_proxy' is set to true, Telegraf will check env vars such as
+  ## HTTP_PROXY, HTTPS_PROXY, and NO_PROXY (or their lowercase counterparts).
+  ## If 'use_system_proxy' is set to false (default) and 'http_proxy_url' is
+  ## provided, Telegraf will use the specified URL as HTTP proxy.
+  # use_system_proxy = false
+  # http_proxy_url = "http://localhost:8888"
 
   [[inputs.elasticsearch_query.aggregation]]
     ## measurement name for the results of the aggregation query
@@ -80,7 +96,8 @@ is known to break on 7.x or greater versions.
     # metric_function = "avg"
 
     ## Fields to be used as tags
-    ## Must be text, non-analyzed fields. Metric aggregations are performed per tag
+    ## Must be text, non-analyzed fields. Metric aggregations are performed
+    ## per tag
     # tags = ["field.keyword", "field2.keyword"]
 
     ## Set to true to not ignore documents when the tag(s) above are missing
@@ -183,3 +200,7 @@ of the examples below.
 
 [joda]: https://www.elastic.co/guide/en/elasticsearch/reference/6.8/search-aggregations-bucket-daterange-aggregation.html#date-format-pattern
 [agg]: https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-metrics.html
+
+## Metrics
+
+## Example Output

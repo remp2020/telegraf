@@ -13,12 +13,14 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/wait"
 	elastic5 "gopkg.in/olivere/elastic.v5"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
+	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 const (
@@ -535,9 +537,12 @@ func setupIntegrationTest(t *testing.T) (*testutil.Container, error) {
 		"http://%s:%s", container.Address, container.Ports[servicePort],
 	)
 	e := &ElasticsearchQuery{
-		URLs:    []string{url},
-		Timeout: config.Duration(time.Second * 30),
-		Log:     testutil.Logger{},
+		URLs: []string{url},
+		HTTPClientConfig: httpconfig.HTTPClientConfig{
+			ResponseHeaderTimeout: config.Duration(30 * time.Second),
+			Timeout:               config.Duration(30 * time.Second),
+		},
+		Log: testutil.Logger{},
 	}
 
 	err = e.connectToES()
@@ -604,17 +609,18 @@ func TestElasticsearchQueryIntegration(t *testing.T) {
 
 	container, err := setupIntegrationTest(t)
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, container.Terminate(), "terminating container failed")
-	}()
+	defer container.Terminate()
 
 	var acc testutil.Accumulator
 	e := &ElasticsearchQuery{
 		URLs: []string{
 			fmt.Sprintf("http://%s:%s", container.Address, container.Ports[servicePort]),
 		},
-		Timeout: config.Duration(time.Second * 30),
-		Log:     testutil.Logger{},
+		HTTPClientConfig: httpconfig.HTTPClientConfig{
+			ResponseHeaderTimeout: config.Duration(30 * time.Second),
+			Timeout:               config.Duration(30 * time.Second),
+		},
+		Log: testutil.Logger{},
 	}
 
 	err = e.connectToES()
@@ -665,9 +671,7 @@ func TestElasticsearchQueryIntegration_getMetricFields(t *testing.T) {
 
 	container, err := setupIntegrationTest(t)
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, container.Terminate(), "terminating container failed")
-	}()
+	defer container.Terminate()
 
 	type args struct {
 		ctx         context.Context
@@ -678,8 +682,11 @@ func TestElasticsearchQueryIntegration_getMetricFields(t *testing.T) {
 		URLs: []string{
 			fmt.Sprintf("http://%s:%s", container.Address, container.Ports[servicePort]),
 		},
-		Timeout: config.Duration(time.Second * 30),
-		Log:     testutil.Logger{},
+		HTTPClientConfig: httpconfig.HTTPClientConfig{
+			ResponseHeaderTimeout: config.Duration(30 * time.Second),
+			Timeout:               config.Duration(30 * time.Second),
+		},
+		Log: testutil.Logger{},
 	}
 
 	err = e.connectToES()
@@ -693,8 +700,7 @@ func TestElasticsearchQueryIntegration_getMetricFields(t *testing.T) {
 		wantErr bool
 	}
 
-	var tests []test
-
+	tests := make([]test, 0, len(testEsAggregationData))
 	for _, d := range testEsAggregationData {
 		tests = append(tests, test{
 			"getMetricFields " + d.queryName,
@@ -727,8 +733,8 @@ func TestElasticsearchQuery_buildAggregationQuery(t *testing.T) {
 		want        []aggregationQueryData
 		wantErr     bool
 	}
-	var tests []test
 
+	tests := make([]test, 0, len(testEsAggregationData))
 	for _, d := range testEsAggregationData {
 		tests = append(tests, test{
 			"build " + d.queryName,

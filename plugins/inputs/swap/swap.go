@@ -10,7 +10,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -25,7 +24,7 @@ func (*SwapStats) SampleConfig() string {
 func (ss *SwapStats) Gather(acc telegraf.Accumulator) error {
 	swap, err := ss.ps.SwapStat()
 	if err != nil {
-		return fmt.Errorf("error getting swap memory info: %s", err)
+		return fmt.Errorf("error getting swap memory info: %w", err)
 	}
 
 	fieldsG := map[string]interface{}{

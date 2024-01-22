@@ -13,6 +13,15 @@ which fulfills the same purpose on windows.
 In addition to services, this plugin can gather other unit types as well,
 see `systemctl list-units --all --type help` for possible options.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -100,8 +109,17 @@ were removed, tables are hex aligned to keep some space for future values
 | 0x000b | final-sigterm         | unit is ~                           |
 | 0x000c | failed                | unit is ~                           |
 | 0x000d | auto-restart          | unit is ~                           |
+| 0x000e | condition             | unit is ~                           |
+| 0x000f | cleaning              | unit is ~                           |
 |        |                       | service_state_table start at 0x0010 |
 | 0x0010 | waiting               | unit is ~                           |
+| 0x0011 | reload-signal         | unit is ~                           |
+| 0x0012 | reload-notify         | unit is ~                           |
+| 0x0013 | final-watchdog        | unit is ~                           |
+| 0x0014 | dead-before-auto-restart    | unit is ~                     |
+| 0x0015 | failed-before-auto-restart  | unit is ~                     |
+| 0x0016 | dead-resources-pinned | unit is ~                           |
+| 0x0017 | auto-restart-queued   | unit is ~                           |
 |        |                       | service_state_table start at 0x0020 |
 | 0x0020 | tentative             | unit is ~                           |
 | 0x0021 | plugged               | unit is ~                           |
@@ -143,9 +161,8 @@ were removed, tables are hex aligned to keep some space for future values
 
 ## Example Output
 
-```shell
+```text
 systemd_units,host=host1.example.com,name=dbus.service,load=loaded,active=active,sub=running load_code=0i,active_code=0i,sub_code=0i 1533730725000000000
 systemd_units,host=host1.example.com,name=networking.service,load=loaded,active=failed,sub=failed load_code=0i,active_code=3i,sub_code=12i 1533730725000000000
 systemd_units,host=host1.example.com,name=ssh.service,load=loaded,active=active,sub=running load_code=0i,active_code=0i,sub_code=0i 1533730725000000000
-...
 ```

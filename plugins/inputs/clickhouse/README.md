@@ -3,44 +3,59 @@
 This plugin gathers the statistic data from
 [ClickHouse](https://github.com/ClickHouse/ClickHouse) server.
 
+User's on Clickhouse Cloud will not see the Zookeeper metrics as they may not
+have permissions to query those tables.
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
 # Read metrics from one or many ClickHouse servers
 [[inputs.clickhouse]]
   ## Username for authorization on ClickHouse server
-  ## example: username = "default"
   username = "default"
 
   ## Password for authorization on ClickHouse server
-  ## example: password = "super_secret"
+  # password = ""
 
   ## HTTP(s) timeout while getting metrics values
-  ## The timeout includes connection time, any redirects, and reading the response body.
-  ##   example: timeout = 1s
+  ## The timeout includes connection time, any redirects, and reading the
+  ## response body.
   # timeout = 5s
 
   ## List of servers for metrics scraping
   ## metrics scrape via HTTP(s) clickhouse interface
   ## https://clickhouse.tech/docs/en/interfaces/http/
-  ##    example: servers = ["http://127.0.0.1:8123","https://custom-server.mdb.yandexcloud.net"]
-  servers         = ["http://127.0.0.1:8123"]
+  servers = ["http://127.0.0.1:8123"]
 
-  ## If "auto_discovery"" is "true" plugin tries to connect to all servers available in the cluster
-  ## with using same "user:password" described in "user" and "password" parameters
-  ## and get this server hostname list from "system.clusters" table
-  ## see
+  ## Server Variant
+  ## When set to "managed", some queries are excluded from being run. This is
+  ## useful for instances hosted in ClickHouse Cloud where certain tables are
+  ## not available.
+  # variant = "self-hosted"
+
+  ## If "auto_discovery"" is "true" plugin tries to connect to all servers
+  ## available in the cluster with using same "user:password" described in
+  ## "user" and "password" parameters and get this server hostname list from
+  ## "system.clusters" table. See
   ## - https://clickhouse.tech/docs/en/operations/system_tables/#system-clusters
   ## - https://clickhouse.tech/docs/en/operations/server_settings/settings/#server_settings_remote_servers
   ## - https://clickhouse.tech/docs/en/operations/table_engines/distributed/
   ## - https://clickhouse.tech/docs/en/operations/table_engines/replication/#creating-replicated-tables
-  ##    example: auto_discovery = false
   # auto_discovery = true
 
   ## Filter cluster names in "system.clusters" when "auto_discovery" is "true"
   ## when this filter present then "WHERE cluster IN (...)" filter will apply
-  ## please use only full cluster names here, regexp and glob filters is not allowed
-  ## for "/etc/clickhouse-server/config.d/remote.xml"
+  ## please use only full cluster names here, regexp and glob filters is not
+  ## allowed for "/etc/clickhouse-server/config.d/remote.xml"
   ## <yandex>
   ##  <remote_servers>
   ##    <my-own-cluster>
@@ -60,8 +75,9 @@ This plugin gathers the statistic data from
   ## example: cluster_include = ["my-own-cluster"]
   # cluster_include = []
 
-  ## Filter cluster names in "system.clusters" when "auto_discovery" is "true"
-  ## when this filter present then "WHERE cluster NOT IN (...)" filter will apply
+  ## Filter cluster names in "system.clusters" when "auto_discovery" is
+  ## "true" when this filter present then "WHERE cluster NOT IN (...)"
+  ## filter will apply
   ##    example: cluster_exclude = ["my-internal-not-discovered-cluster"]
   # cluster_exclude = []
 
@@ -75,7 +91,7 @@ This plugin gathers the statistic data from
 
 ## Metrics
 
-- clickhouse_events
+- clickhouse_events (see [system.events][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
@@ -83,7 +99,7 @@ This plugin gathers the statistic data from
   - fields:
     - all rows from [system.events][]
 
-- clickhouse_metrics
+- clickhouse_metrics (see [system.metrics][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
@@ -91,7 +107,8 @@ This plugin gathers the statistic data from
   - fields:
     - all rows from [system.metrics][]
 
-- clickhouse_asynchronous_metrics
+- clickhouse_asynchronous_metrics (see [system.asynchronous_metrics][]
+  for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
@@ -111,51 +128,56 @@ This plugin gathers the statistic data from
     - parts
     - rows
 
-- clickhouse_zookeeper
+- clickhouse_zookeeper (see [system.zookeeper][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
   - fields:
-    - root_nodes (count of node from [system.zookeeper][] where path=/)
+    - root_nodes (count of node where path=/)
 
-- clickhouse_replication_queue
+- clickhouse_replication_queue (see [system.replication_queue][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
   - fields:
-    - too_many_tries_replicas (count of replicas which have  num_tries > 1 in `system.replication_queue`)
+    - too_many_tries_replicas (count of replicas which have `num_tries > 1`)
 
-- clickhouse_detached_parts
+- clickhouse_detached_parts (see [system.detached_parts][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
   - fields:
-    - detached_parts (total detached parts for all tables and databases from [system.detached_parts][])
+    - detached_parts (total detached parts for all tables and databases
+      from [system.detached_parts][])
 
-- clickhouse_dictionaries
+- clickhouse_dictionaries (see [system.dictionaries][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
-    - dict_origin (xml Filename when dictionary created from *_dictionary.xml, database.table when dictionary created from DDL)
+    - dict_origin (xml Filename when dictionary created from *_dictionary.xml,
+      database.table when dictionary created from DDL)
   - fields:
-    - is_loaded (0 - when dictionary data not successful load, 1 - when dictionary data loading fail, see [system.dictionaries][] for details)
-    - bytes_allocated (how many bytes allocated in RAM after a dictionary loaded)
+    - is_loaded (0 - when dictionary data not successful load, 1 - when
+      dictionary data loading fail
+    - bytes_allocated (bytes allocated in RAM after a dictionary loaded)
 
-- clickhouse_mutations
+- clickhouse_mutations (see [system.mutations][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
   - fields:
-    - running - gauge which show how much mutation doesn't complete now, see [system.mutations][] for details
-    - failed - counter which show total failed mutations from first clickhouse-server run
-    - completed - counter which show total successful finished mutations from first clickhouse-server run
+    - running - gauge which show how much mutation doesn't complete now
+    - failed - counter which show total failed mutations from first
+      clickhouse-server run
+    - completed - counter which show total successful finished mutations
+      from first clickhouse-server run
 
-- clickhouse_disks
+- clickhouse_disks (see [system.disks][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
@@ -163,25 +185,31 @@ This plugin gathers the statistic data from
     - name (disk name in storage configuration)
     - path (path to disk)
   - fields:
-    - free_space_percent - 0-100, gauge which show current percent of free disk space bytes relative to total disk space bytes
-    - keep_free_space_percent - 0-100, gauge which show current percent of required keep free disk bytes relative to total disk space bytes
+    - free_space_percent - 0-100, gauge which show current percent of
+      free disk space bytes relative to total disk space bytes
+    - keep_free_space_percent - 0-100, gauge which show current percent
+      of required keep free disk bytes relative to total disk space bytes
 
-- clickhouse_processes
+- clickhouse_processes (see [system.processes][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
   - fields:
-    - percentile_50 - float gauge which show 50% percentile (quantile 0.5) for `elapsed` field of running processes, see [system.processes][] for details
-    - percentile_90 - float gauge which show 90% percentile (quantile 0.9) for `elapsed` field of running processes, see [system.processes][] for details
-    - longest_running - float gauge which show maximum value for `elapsed` field of running processes, see [system.processes][] for details
+    - percentile_50 - float gauge which show 50% percentile (quantile 0.5) for
+      `elapsed` field of running processes
+    - percentile_90 - float gauge which show 90% percentile (quantile 0.9) for
+      `elapsed` field of running processes
+    - longest_running - float gauge which show maximum value for `elapsed`
+      field of running processes
 
-- clickhouse_text_log
+- clickhouse_text_log (see [system.text_log][] for details)
   - tags:
     - source (ClickHouse server hostname)
     - cluster (Name of the cluster [optional])
     - shard_num (Shard number in the cluster [optional])
-    - level (message level, only message with level less or equal Notice is collects), see details on [system.text_log][]
+    - level (message level, only messages with level less or equal Notice are
+      collected)
   - fields:
     - messages_last_10_min - gauge which show how many messages collected
 
@@ -195,13 +223,14 @@ clickhouse_tables,cluster=test_cluster_two_shards_localhost,database=system,host
 clickhouse_tables,cluster=test_cluster_two_shards_localhost,database=default,host=kshvakov,source=localhost,shard_num=1,table=example bytes=326i,parts=2i,rows=2i 1569421000000000000
 ```
 
-[system.events]: https://clickhouse.tech/docs/en/operations/system-tables/events/
-[system.metrics]: https://clickhouse.tech/docs/en/operations/system-tables/metrics/
 [system.asynchronous_metrics]: https://clickhouse.tech/docs/en/operations/system-tables/asynchronous_metrics/
-[system.zookeeper]: https://clickhouse.tech/docs/en/operations/system-tables/zookeeper/
 [system.detached_parts]: https://clickhouse.tech/docs/en/operations/system-tables/detached_parts/
 [system.dictionaries]: https://clickhouse.tech/docs/en/operations/system-tables/dictionaries/
-[system.mutations]: https://clickhouse.tech/docs/en/operations/system-tables/mutations/
 [system.disks]: https://clickhouse.tech/docs/en/operations/system-tables/disks/
+[system.events]: https://clickhouse.tech/docs/en/operations/system-tables/events/
+[system.metrics]: https://clickhouse.tech/docs/en/operations/system-tables/metrics/
+[system.mutations]: https://clickhouse.tech/docs/en/operations/system-tables/mutations/
 [system.processes]: https://clickhouse.tech/docs/en/operations/system-tables/processes/
+[system.replication_queue]:https://clickhouse.com/docs/en/operations/system-tables/replication_queue/
 [system.text_log]: https://clickhouse.tech/docs/en/operations/system-tables/text_log/
+[system.zookeeper]: https://clickhouse.tech/docs/en/operations/system-tables/zookeeper/

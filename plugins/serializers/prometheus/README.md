@@ -31,11 +31,21 @@ reporting others every bucket/quantile will continue to exist.
   ## discarded.
   prometheus_string_as_label = false
 
+  ## Encode metrics without HELP metadata. This helps reduce the payload
+  ## size.
+  prometheus_compact_encoding = false
+
   ## Data format to output.
   ## Each data format has its own unique set of configuration options, read
   ## more about them here:
   ##   https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_INPUT.md
   data_format = "prometheus"
+
+  ## Specify the metric type explicitly.
+  ## This overrides the metric-type of the Telegraf metric. Globbing is allowed.
+  [outputs.file.prometheus_metric_types]
+    counter = []
+    gauge = []
 ```
 
 ### Metrics

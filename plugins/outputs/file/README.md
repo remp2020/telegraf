@@ -2,6 +2,15 @@
 
 This plugin writes telegraf metrics to files
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -32,4 +41,17 @@ This plugin writes telegraf metrics to files
   ## more about them here:
   ## https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_OUTPUT.md
   data_format = "influx"
+
+  ## Compress output data with the specified algorithm.
+  ## If empty, compression will be disabled and files will be plain text.
+  ## Supported algorithms are "zstd", "gzip" and "zlib".
+  # compression_algorithm = ""
+
+  ## Compression level for the algorithm above.
+  ## Please note that different algorithms support different levels:
+  ##   zstd  -- supports levels 1, 3, 7 and 11.
+  ##   gzip -- supports levels 0, 1 and 9.
+  ##   zlib -- supports levels 0, 1, and 9.
+  ## By default the default compression level for each algorithm is used.
+  # compression_level = -1
 ```

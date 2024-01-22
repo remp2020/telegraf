@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 // TODO: Windows - should be enabled for Windows when super asterisk is fixed on Windows
 // https://github.com/influxdata/telegraf/issues/6248
@@ -7,17 +6,24 @@
 package phpfpm
 
 import (
+	"bytes"
 	"crypto/rand"
+	_ "embed"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/fcgi"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/influxdata/telegraf/plugins/common/shim"
+	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -26,9 +32,7 @@ type statServer struct{}
 // We create a fake server to return test data
 func (s statServer) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Content-Length", fmt.Sprint(len(outputSample)))
-	// Ignore the returned error as the tests will fail anyway
-	//nolint:errcheck,revive
+	w.Header().Set("Content-Length", strconv.Itoa(len(outputSample)))
 	fmt.Fprint(w, outputSample)
 }
 
@@ -36,7 +40,7 @@ func TestPhpFpmGeneratesMetrics_From_Http(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "ok", r.URL.Query().Get("test"))
 		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Content-Length", fmt.Sprint(len(outputSample)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(outputSample)))
 		_, err := fmt.Fprint(w, outputSample)
 		require.NoError(t, err)
 	}))
@@ -75,6 +79,32 @@ func TestPhpFpmGeneratesMetrics_From_Http(t *testing.T) {
 	acc.AssertContainsTaggedFields(t, "phpfpm", fields, tags)
 }
 
+func TestPhpFpmGeneratesJSONMetrics_From_Http(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(outputSampleJSON)))
+		_, err := fmt.Fprint(w, string(outputSampleJSON))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	parser := &influx.Parser{}
+	require.NoError(t, parser.Init())
+	expected, err := testutil.ParseMetricsFromFile("testdata/expected.out", parser)
+	require.NoError(t, err)
+
+	input := &phpfpm{
+		Urls:   []string{server.URL + "?full&json"},
+		Format: "json",
+		Log:    testutil.Logger{},
+	}
+	require.NoError(t, input.Init())
+
+	var acc testutil.Accumulator
+	require.NoError(t, acc.GatherError(input.Gather))
+	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime(), testutil.IgnoreTags("url"))
+}
+
 func TestPhpFpmGeneratesMetrics_From_Fcgi(t *testing.T) {
 	// Let OS find an available port
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
@@ -82,8 +112,7 @@ func TestPhpFpmGeneratesMetrics_From_Fcgi(t *testing.T) {
 	defer tcp.Close()
 
 	s := statServer{}
-	//nolint:errcheck,revive
-	go fcgi.Serve(tcp, s)
+	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
 	//Now we tested again above server
 	r := &phpfpm{
@@ -128,8 +157,7 @@ func TestPhpFpmGeneratesMetrics_From_Socket(t *testing.T) {
 
 	defer tcp.Close()
 	s := statServer{}
-	//nolint:errcheck,revive
-	go fcgi.Serve(tcp, s)
+	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
 	r := &phpfpm{
 		Urls: []string{tcp.Addr().String()},
@@ -181,10 +209,8 @@ func TestPhpFpmGeneratesMetrics_From_Multiple_Sockets_With_Glob(t *testing.T) {
 	defer tcp2.Close()
 
 	s := statServer{}
-	//nolint:errcheck,revive
-	go fcgi.Serve(tcp1, s)
-	//nolint:errcheck,revive
-	go fcgi.Serve(tcp2, s)
+	go fcgi.Serve(tcp1, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
+	go fcgi.Serve(tcp2, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
 	r := &phpfpm{
 		Urls: []string{"/tmp/test-fpm[\\-0-9]*.sock"},
@@ -237,8 +263,7 @@ func TestPhpFpmGeneratesMetrics_From_Socket_Custom_Status_Path(t *testing.T) {
 
 	defer tcp.Close()
 	s := statServer{}
-	//nolint:errcheck,revive
-	go fcgi.Serve(tcp, s)
+	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
 	r := &phpfpm{
 		Urls: []string{tcp.Addr().String() + ":custom-status-path"},
@@ -272,8 +297,8 @@ func TestPhpFpmGeneratesMetrics_From_Socket_Custom_Status_Path(t *testing.T) {
 	acc.AssertContainsTaggedFields(t, "phpfpm", fields, tags)
 }
 
-//When not passing server config, we default to localhost
-//We just want to make sure we did request stat from localhost
+// When not passing server config, we default to localhost
+// We just want to make sure we did request stat from localhost
 func TestPhpFpmDefaultGetFromLocalhost(t *testing.T) {
 	r := &phpfpm{Urls: []string{"http://bad.localhost:62001/status"}}
 
@@ -335,3 +360,32 @@ max active processes: 1
 max children reached: 2
 slow requests:        1
 `
+
+//go:embed testdata/phpfpm.json
+var outputSampleJSON []byte
+
+func TestPhpFpmParseJSON_Log_Error_Without_Panic_When_When_JSON_Is_Invalid(t *testing.T) {
+	p := &phpfpm{}
+	// AddInput sets the Logger
+	if err := shim.New().AddInput(p); err != nil {
+		t.Error(err)
+		return
+	}
+
+	// capture log output
+	var logOutput bytes.Buffer
+	log.SetOutput(&logOutput)
+	defer func() {
+		log.SetOutput(os.Stderr)
+	}()
+
+	// parse valid JSON without panic and without log output
+	validJSON := outputSampleJSON
+	require.NotPanics(t, func() { p.parseJSON(bytes.NewReader(validJSON), &testutil.NopAccumulator{}, "") })
+	require.Equal(t, "", logOutput.String())
+
+	// parse invalid JSON without panic but with log output
+	invalidJSON := []byte("X")
+	require.NotPanics(t, func() { p.parseJSON(bytes.NewReader(invalidJSON), &testutil.NopAccumulator{}, "") })
+	require.Contains(t, logOutput.String(), "E! Unable to decode JSON response: invalid character 'X' looking for beginning of value")
+}

@@ -17,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -70,7 +69,7 @@ func (nr *NewRelic) Connect() error {
 			}
 		})
 	if err != nil {
-		return fmt.Errorf("unable to connect to newrelic %v", err)
+		return fmt.Errorf("unable to connect to newrelic: %w", err)
 	}
 
 	nr.dc = cumulative.NewDeltaCalculator()

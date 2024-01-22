@@ -21,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -59,7 +58,7 @@ func (m *Ipmi) Init() error {
 	if m.Path == "" {
 		path, err := exec.LookPath(cmd)
 		if err != nil {
-			return fmt.Errorf("looking up %q failed: %v", cmd, err)
+			return fmt.Errorf("looking up %q failed: %w", cmd, err)
 		}
 		m.Path = path
 	}
@@ -119,8 +118,7 @@ func (m *Ipmi) parse(acc telegraf.Accumulator, server string) error {
 		if os.IsNotExist(err) {
 			dumpOpts := opts
 			// init cache file
-			dumpOpts = append(dumpOpts, "dump")
-			dumpOpts = append(dumpOpts, cacheFile)
+			dumpOpts = append(dumpOpts, "dump", cacheFile)
 			name := m.Path
 			if m.UseSudo {
 				// -n - avoid prompting the user for input of any kind
@@ -130,11 +128,10 @@ func (m *Ipmi) parse(acc telegraf.Accumulator, server string) error {
 			cmd := execCommand(name, dumpOpts...)
 			out, err := internal.CombinedOutputTimeout(cmd, time.Duration(m.Timeout))
 			if err != nil {
-				return fmt.Errorf("failed to run command %s: %s - %s", strings.Join(sanitizeIPMICmd(cmd.Args), " "), err, string(out))
+				return fmt.Errorf("failed to run command %q: %w - %s", strings.Join(sanitizeIPMICmd(cmd.Args), " "), err, string(out))
 			}
 		}
-		opts = append(opts, "-S")
-		opts = append(opts, cacheFile)
+		opts = append(opts, "-S", cacheFile)
 	}
 	if m.MetricVersion == 2 {
 		opts = append(opts, "elist")
@@ -149,7 +146,7 @@ func (m *Ipmi) parse(acc telegraf.Accumulator, server string) error {
 	out, err := internal.CombinedOutputTimeout(cmd, time.Duration(m.Timeout))
 	timestamp := time.Now()
 	if err != nil {
-		return fmt.Errorf("failed to run command %s: %s - %s", strings.Join(sanitizeIPMICmd(cmd.Args), " "), err, string(out))
+		return fmt.Errorf("failed to run command %q: %w - %s", strings.Join(sanitizeIPMICmd(cmd.Args), " "), err, string(out))
 	}
 	if m.MetricVersion == 2 {
 		return m.parseV2(acc, hostname, out, timestamp)
@@ -274,7 +271,7 @@ func (m *Ipmi) extractFieldsFromRegex(re *regexp.Regexp, input string) map[strin
 	results := make(map[string]string)
 	subexpNames := re.SubexpNames()
 	if len(subexpNames) > len(submatches) {
-		m.Log.Debugf("No matches found in '%s'", input)
+		m.Log.Debugf("No matches found in %q", input)
 		return results
 	}
 	for i, name := range subexpNames {

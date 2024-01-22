@@ -3,13 +3,35 @@
 This plugin writes to a [Kafka
 Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `sasl_username`,
+`sasl_password` and `sasl_access_token` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
 # Configuration for the Kafka server to send metrics to
 [[outputs.kafka]]
   ## URLs of kafka brokers
+  ## The brokers listed here are used to connect to collect metadata about a
+  ## cluster. However, once the initial metadata collect is completed, telegraf
+  ## will communicate solely with the kafka leader and not all defined brokers.
   brokers = ["localhost:9092"]
+
   ## Kafka topic for producer messages
   topic = "telegraf"
 
@@ -29,36 +51,9 @@ Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
   ##   ex: version = "1.1.0"
   # version = ""
 
-  ## Optional topic suffix configuration.
-  ## If the section is omitted, no suffix is used.
-  ## Following topic suffix methods are supported:
-  ##   measurement - suffix equals to separator + measurement's name
-  ##   tags        - suffix equals to separator + specified tags' values
-  ##                 interleaved with separator
-
-  ## Suffix equals to "_" + measurement name
-  # [outputs.kafka.topic_suffix]
-  #   method = "measurement"
-  #   separator = "_"
-
-  ## Suffix equals to "__" + measurement's "foo" tag value.
-  ##   If there's no such a tag, suffix equals to an empty string
-  # [outputs.kafka.topic_suffix]
-  #   method = "tags"
-  #   keys = ["foo"]
-  #   separator = "__"
-
-  ## Suffix equals to "_" + measurement's "foo" and "bar"
-  ##   tag values, separated by "_". If there is no such tags,
-  ##   their values treated as empty strings.
-  # [outputs.kafka.topic_suffix]
-  #   method = "tags"
-  #   keys = ["foo", "bar"]
-  #   separator = "_"
-
   ## The routing tag specifies a tagkey on the metric whose value is used as
   ## the message key.  The message key is used to determine which partition to
-  ## send the message to.  This tag is prefered over the routing_key option.
+  ## send the message to.  This tag is preferred over the routing_key option.
   routing_tag = "host"
 
   ## The routing key is set as the message key and used to determine which
@@ -82,7 +77,7 @@ Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
   ##  2 : Snappy
   ##  3 : LZ4
   ##  4 : ZSTD
-   # compression_codec = 0
+  # compression_codec = 0
 
   ## Idempotent Writes
   ## If enabled, exactly one copy of each message is written.
@@ -113,11 +108,16 @@ Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
   # max_message_bytes = 1000000
 
   ## Optional TLS Config
+  # enable_tls = false
   # tls_ca = "/etc/telegraf/ca.pem"
   # tls_cert = "/etc/telegraf/cert.pem"
   # tls_key = "/etc/telegraf/key.pem"
   ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
+
+  ## Period between keep alive probes.
+  ## Defaults to the OS configuration if not specified or zero.
+  # keep_alive_period = "15s"
 
   ## Optional SOCKS5 proxy to use when connecting to brokers
   # socks5_enabled = true
@@ -134,7 +134,7 @@ Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
   ## (defaults to PLAIN)
   # sasl_mechanism = ""
 
-  ## used if sasl_mechanism is GSSAPI (experimental)
+  ## used if sasl_mechanism is GSSAPI
   # sasl_gssapi_service_name = ""
   # ## One of: KRB5_USER_AUTH and KRB5_KEYTAB_AUTH
   # sasl_gssapi_auth_type = "KRB5_USER_AUTH"
@@ -143,8 +143,12 @@ Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
   # sasl_gssapi_key_tab_path = ""
   # sasl_gssapi_disable_pafxfast = false
 
-  ## used if sasl_mechanism is OAUTHBEARER (experimental)
+  ## Access token used if sasl_mechanism is OAUTHBEARER
   # sasl_access_token = ""
+
+  ## Arbitrary key value string pairs to pass as a TOML table. For example:
+  # {logicalCluster = "cluster-042", poolId = "pool-027"}
+  # sasl_extensions = {}
 
   ## SASL protocol version.  When connecting to Azure EventHub set to 0.
   # sasl_version = 1
@@ -157,6 +161,37 @@ Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
   ## more about them here:
   ## https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_OUTPUT.md
   # data_format = "influx"
+
+  ## NOTE: Due to the way TOML is parsed, tables must be at the END of the
+  ## plugin definition, otherwise additional config options are read as part of
+  ## the table
+
+  ## Optional topic suffix configuration.
+  ## If the section is omitted, no suffix is used.
+  ## Following topic suffix methods are supported:
+  ##   measurement - suffix equals to separator + measurement's name
+  ##   tags        - suffix equals to separator + specified tags' values
+  ##                 interleaved with separator
+
+  ## Suffix equals to "_" + measurement name
+  # [outputs.kafka.topic_suffix]
+  #   method = "measurement"
+  #   separator = "_"
+
+  ## Suffix equals to "__" + measurement's "foo" tag value.
+  ## If there's no such a tag, suffix equals to an empty string
+  # [outputs.kafka.topic_suffix]
+  #   method = "tags"
+  #   keys = ["foo"]
+  #   separator = "__"
+
+  ## Suffix equals to "_" + measurement's "foo" and "bar"
+  ## tag values, separated by "_". If there is no such tags,
+  ## their values treated as empty strings.
+  # [outputs.kafka.topic_suffix]
+  #   method = "tags"
+  #   keys = ["foo", "bar"]
+  #   separator = "_"
 ```
 
 ### `max_retry`

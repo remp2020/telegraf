@@ -3,7 +3,7 @@ package config
 import (
 	"bytes"
 	"crypto/tls"
-	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,46 +21,39 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/influxdata/toml"
+	"github.com/influxdata/toml/ast"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
-	"github.com/influxdata/telegraf/internal/choice"
 	"github.com/influxdata/telegraf/models"
+	"github.com/influxdata/telegraf/persister"
 	"github.com/influxdata/telegraf/plugins/aggregators"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/parsers"
-	"github.com/influxdata/telegraf/plugins/parsers/json_v2"
+	"github.com/influxdata/telegraf/plugins/parsers/csv"
 	"github.com/influxdata/telegraf/plugins/processors"
+	"github.com/influxdata/telegraf/plugins/secretstores"
 	"github.com/influxdata/telegraf/plugins/serializers"
-	"github.com/influxdata/toml"
-	"github.com/influxdata/toml/ast"
 )
 
 var (
-	// Default sections
-	sectionDefaults = []string{"global_tags", "agent", "outputs",
-		"processors", "aggregators", "inputs"}
-
-	// Default input plugins
-	inputDefaults = []string{"cpu", "mem", "swap", "system", "kernel",
-		"processes", "disk", "diskio"}
-
-	// Default output plugins
-	outputDefaults = []string{"influxdb"}
-
-	// envVarRe is a regex to find environment variables in the config file
-	envVarRe = regexp.MustCompile(`\$\{(\w+)\}|\$(\w+)`)
-
-	envVarEscaper = strings.NewReplacer(
-		`"`, `\"`,
-		`\`, `\\`,
-	)
 	httpLoadConfigRetryInterval = 10 * time.Second
 
 	// fetchURLRe is a regex to determine whether the requested file should
 	// be fetched from a remote or read from the filesystem.
 	fetchURLRe = regexp.MustCompile(`^\w+://`)
+
+	// oldVarRe is a regex to reproduce pre v1.27.0 environment variable
+	// replacement behavior
+	oldVarRe = regexp.MustCompile(`\$(?i:(?P<named>[_a-z][_a-z0-9]*)|{(?:(?P<braced>[_a-z][_a-z0-9]*(?::?[-+?](.*))?)}|(?P<invalid>)))`)
+	// OldEnvVarReplacement is a switch to allow going back to pre v1.27.0
+	// environment variable replacement behavior
+	OldEnvVarReplacement = false
+
+	// Password specified via command-line
+	Password Secret
 )
 
 // Config specifies the URL/user/password for the database that telegraf
@@ -72,22 +65,44 @@ type Config struct {
 	UnusedFields      map[string]bool
 	unusedFieldsMutex *sync.Mutex
 
-	Tags          map[string]string
-	InputFilters  []string
-	OutputFilters []string
+	Tags               map[string]string
+	InputFilters       []string
+	OutputFilters      []string
+	SecretStoreFilters []string
+
+	SecretStores map[string]telegraf.SecretStore
 
 	Agent       *AgentConfig
 	Inputs      []*models.RunningInput
 	Outputs     []*models.RunningOutput
 	Aggregators []*models.RunningAggregator
-	Parsers     []*models.RunningParser
 	// Processors have a slice wrapper type because they need to be sorted
-	Processors    models.RunningProcessors
-	AggProcessors models.RunningProcessors
+	Processors        models.RunningProcessors
+	AggProcessors     models.RunningProcessors
+	fileProcessors    OrderedPlugins
+	fileAggProcessors OrderedPlugins
+
+	// Parsers are created by their inputs during gather. Config doesn't keep track of them
+	// like the other plugins because they need to be garbage collected (See issue #11809)
 
 	Deprecations map[string][]int64
 	version      *semver.Version
+
+	Persister *persister.Persister
+
+	NumberSecrets uint64
 }
+
+// Ordered plugins used to keep the order in which they appear in a file
+type OrderedPlugin struct {
+	Line   int
+	plugin any
+}
+type OrderedPlugins []*OrderedPlugin
+
+func (op OrderedPlugins) Len() int           { return len(op) }
+func (op OrderedPlugins) Swap(i, j int)      { op[i], op[j] = op[j], op[i] }
+func (op OrderedPlugins) Less(i, j int) bool { return op[i].Line < op[j].Line }
 
 // NewConfig creates a new struct to hold the Telegraf config.
 // For historical reasons, It holds the actual instances of the running plugins
@@ -106,19 +121,22 @@ func NewConfig() *Config {
 			LogfileRotationMaxArchives: 5,
 		},
 
-		Tags:          make(map[string]string),
-		Inputs:        make([]*models.RunningInput, 0),
-		Outputs:       make([]*models.RunningOutput, 0),
-		Parsers:       make([]*models.RunningParser, 0),
-		Processors:    make([]*models.RunningProcessor, 0),
-		AggProcessors: make([]*models.RunningProcessor, 0),
-		InputFilters:  make([]string, 0),
-		OutputFilters: make([]string, 0),
-		Deprecations:  make(map[string][]int64),
+		Tags:               make(map[string]string),
+		Inputs:             make([]*models.RunningInput, 0),
+		Outputs:            make([]*models.RunningOutput, 0),
+		Processors:         make([]*models.RunningProcessor, 0),
+		AggProcessors:      make([]*models.RunningProcessor, 0),
+		SecretStores:       make(map[string]telegraf.SecretStore),
+		fileProcessors:     make([]*OrderedPlugin, 0),
+		fileAggProcessors:  make([]*OrderedPlugin, 0),
+		InputFilters:       make([]string, 0),
+		OutputFilters:      make([]string, 0),
+		SecretStoreFilters: make([]string, 0),
+		Deprecations:       make(map[string][]int64),
 	}
 
 	// Handle unknown version
-	version := internal.Version()
+	version := internal.Version
 	if version == "" || version == "unknown" {
 		version = "0.0.0-unknown"
 	}
@@ -147,7 +165,7 @@ type AgentConfig struct {
 	// specified as an interval with an integer + unit (e.g. 0s, 10ms, 2us, 4s).
 	// Valid time units are "ns", "us" (or "µs"), "ms", "s".
 	//
-	// By default or when set to "0s", precision will be set to the same
+	// By default, or when set to "0s", precision will be set to the same
 	// timestamp order as the collection interval, with the maximum being 1s:
 	//   ie, when interval = "10s", precision will be "1s"
 	//       when interval = "250ms", precision will be "1ms"
@@ -163,7 +181,7 @@ type AgentConfig struct {
 	CollectionJitter Duration
 
 	// CollectionOffset is used to shift the collection by the given amount.
-	// This can be be used to avoid many plugins querying constraint devices
+	// This can be used to avoid many plugins querying constraint devices
 	// at the same time by manually scheduling them in time.
 	CollectionOffset Duration
 
@@ -176,7 +194,7 @@ type AgentConfig struct {
 	// ie, a jitter of 5s and interval 10s means flushes will happen every 10-15s
 	FlushJitter Duration
 
-	// MetricBatchSize is the maximum number of metrics that is wrote to an
+	// MetricBatchSize is the maximum number of metrics that is written to an
 	// output plugin in one call.
 	MetricBatchSize int
 
@@ -190,7 +208,7 @@ type AgentConfig struct {
 	// FlushBufferWhenFull tells Telegraf to flush the metric buffer whenever
 	// it fills up, regardless of FlushInterval. Setting this option to true
 	// does _not_ deactivate FlushInterval.
-	FlushBufferWhenFull bool `toml:"flush_buffer_when_full" deprecated:"0.13.0;2.0.0;option is ignored"`
+	FlushBufferWhenFull bool `toml:"flush_buffer_when_full" deprecated:"0.13.0;1.30.0;option is ignored"`
 
 	// TODO(cam): Remove UTC and parameter, they are no longer
 	// valid for the agent config. Leaving them here for now for backwards-
@@ -233,11 +251,25 @@ type AgentConfig struct {
 	// Method for translating SNMP objects. 'netsnmp' to call external programs,
 	// 'gosmi' to use the built-in library.
 	SnmpTranslator string `toml:"snmp_translator"`
+
+	// Name of the file to load the state of plugins from and store the state to.
+	// If uncommented and not empty, this file will be used to save the state of
+	// stateful plugins on termination of Telegraf. If the file exists on start,
+	// the state in the file will be restored for the plugins.
+	Statefile string `toml:"statefile"`
+
+	// Flag to always keep tags explicitly defined in the plugin itself and
+	// ensure those tags always pass filtering.
+	AlwaysIncludeLocalTags bool `toml:"always_include_local_tags"`
+
+	// Flag to always keep tags explicitly defined in the global tags section
+	// and ensure those tags always pass filtering.
+	AlwaysIncludeGlobalTags bool `toml:"always_include_global_tags"`
 }
 
 // InputNames returns a list of strings of the configured inputs.
 func (c *Config) InputNames() []string {
-	var name []string
+	name := make([]string, 0, len(c.Inputs))
 	for _, input := range c.Inputs {
 		name = append(name, input.Config.Name)
 	}
@@ -246,25 +278,16 @@ func (c *Config) InputNames() []string {
 
 // AggregatorNames returns a list of strings of the configured aggregators.
 func (c *Config) AggregatorNames() []string {
-	var name []string
+	name := make([]string, 0, len(c.Aggregators))
 	for _, aggregator := range c.Aggregators {
 		name = append(name, aggregator.Config.Name)
 	}
 	return PluginNameCounts(name)
 }
 
-// ParserNames returns a list of strings of the configured parsers.
-func (c *Config) ParserNames() []string {
-	var name []string
-	for _, parser := range c.Parsers {
-		name = append(name, parser.Config.DataFormat)
-	}
-	return PluginNameCounts(name)
-}
-
 // ProcessorNames returns a list of strings of the configured processors.
 func (c *Config) ProcessorNames() []string {
-	var name []string
+	name := make([]string, 0, len(c.Processors))
 	for _, processor := range c.Processors {
 		name = append(name, processor.Config.Name)
 	}
@@ -273,11 +296,20 @@ func (c *Config) ProcessorNames() []string {
 
 // OutputNames returns a list of strings of the configured outputs.
 func (c *Config) OutputNames() []string {
-	var name []string
+	name := make([]string, 0, len(c.Outputs))
 	for _, output := range c.Outputs {
 		name = append(name, output.Config.Name)
 	}
 	return PluginNameCounts(name)
+}
+
+// SecretstoreNames returns a list of strings of the configured secret-stores.
+func (c *Config) SecretstoreNames() []string {
+	names := make([]string, 0, len(c.SecretStores))
+	for name := range c.SecretStores {
+		names = append(names, name)
+	}
+	return PluginNameCounts(names)
 }
 
 // PluginNameCounts returns a list of sorted plugin names and their count
@@ -303,8 +335,7 @@ func PluginNameCounts(plugins []string) []string {
 // ListTags returns a string of tags specified in the config,
 // line-protocol style
 func (c *Config) ListTags() string {
-	var tags []string
-
+	tags := make([]string, 0, len(c.Tags))
 	for k, v := range c.Tags {
 		tags = append(tags, fmt.Sprintf("%s=%s", k, v))
 	}
@@ -312,309 +343,6 @@ func (c *Config) ListTags() string {
 	sort.Strings(tags)
 
 	return strings.Join(tags, " ")
-}
-
-var header = `# Telegraf Configuration
-#
-# Telegraf is entirely plugin driven. All metrics are gathered from the
-# declared inputs, and sent to the declared outputs.
-#
-# Plugins must be declared in here to be active.
-# To deactivate a plugin, comment out the name and any variables.
-#
-# Use 'telegraf -config telegraf.conf -test' to see what metrics a config
-# file would generate.
-#
-# Environment variables can be used anywhere in this config file, simply surround
-# them with ${}. For strings the variable must be within quotes (ie, "${STR_VAR}"),
-# for numbers and booleans they should be plain (ie, ${INT_VAR}, ${BOOL_VAR})
-
-`
-var globalTagsConfig = `
-# Global tags can be specified here in key="value" format.
-[global_tags]
-  # dc = "us-east-1" # will tag all metrics with dc=us-east-1
-  # rack = "1a"
-  ## Environment variables can be used as tags, and throughout the config file
-  # user = "$USER"
-
-`
-
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the agentConfig data.
-//go:embed agent.conf
-var agentConfig string
-
-var outputHeader = `
-###############################################################################
-#                            OUTPUT PLUGINS                                   #
-###############################################################################
-
-`
-
-var processorHeader = `
-###############################################################################
-#                            PROCESSOR PLUGINS                                #
-###############################################################################
-
-`
-
-var aggregatorHeader = `
-###############################################################################
-#                            AGGREGATOR PLUGINS                               #
-###############################################################################
-
-`
-
-var inputHeader = `
-###############################################################################
-#                            INPUT PLUGINS                                    #
-###############################################################################
-
-`
-
-var serviceInputHeader = `
-###############################################################################
-#                            SERVICE INPUT PLUGINS                            #
-###############################################################################
-
-`
-
-// PrintSampleConfig prints the sample config
-func PrintSampleConfig(
-	sectionFilters []string,
-	inputFilters []string,
-	outputFilters []string,
-	aggregatorFilters []string,
-	processorFilters []string,
-) {
-	// print headers
-	fmt.Print(header)
-
-	if len(sectionFilters) == 0 {
-		sectionFilters = sectionDefaults
-	}
-	printFilteredGlobalSections(sectionFilters)
-
-	// print output plugins
-	if sliceContains("outputs", sectionFilters) {
-		if len(outputFilters) != 0 {
-			if len(outputFilters) >= 3 && outputFilters[1] != "none" {
-				fmt.Print(outputHeader)
-			}
-			printFilteredOutputs(outputFilters, false)
-		} else {
-			fmt.Print(outputHeader)
-			printFilteredOutputs(outputDefaults, false)
-			// Print non-default outputs, commented
-			var pnames []string
-			for pname := range outputs.Outputs {
-				if !sliceContains(pname, outputDefaults) {
-					pnames = append(pnames, pname)
-				}
-			}
-			sort.Strings(pnames)
-			printFilteredOutputs(pnames, true)
-		}
-	}
-
-	// print processor plugins
-	if sliceContains("processors", sectionFilters) {
-		if len(processorFilters) != 0 {
-			if len(processorFilters) >= 3 && processorFilters[1] != "none" {
-				fmt.Print(processorHeader)
-			}
-			printFilteredProcessors(processorFilters, false)
-		} else {
-			fmt.Print(processorHeader)
-			pnames := []string{}
-			for pname := range processors.Processors {
-				pnames = append(pnames, pname)
-			}
-			sort.Strings(pnames)
-			printFilteredProcessors(pnames, true)
-		}
-	}
-
-	// print aggregator plugins
-	if sliceContains("aggregators", sectionFilters) {
-		if len(aggregatorFilters) != 0 {
-			if len(aggregatorFilters) >= 3 && aggregatorFilters[1] != "none" {
-				fmt.Print(aggregatorHeader)
-			}
-			printFilteredAggregators(aggregatorFilters, false)
-		} else {
-			fmt.Print(aggregatorHeader)
-			pnames := []string{}
-			for pname := range aggregators.Aggregators {
-				pnames = append(pnames, pname)
-			}
-			sort.Strings(pnames)
-			printFilteredAggregators(pnames, true)
-		}
-	}
-
-	// print input plugins
-	if sliceContains("inputs", sectionFilters) {
-		if len(inputFilters) != 0 {
-			if len(inputFilters) >= 3 && inputFilters[1] != "none" {
-				fmt.Print(inputHeader)
-			}
-			printFilteredInputs(inputFilters, false)
-		} else {
-			fmt.Print(inputHeader)
-			printFilteredInputs(inputDefaults, false)
-			// Print non-default inputs, commented
-			var pnames []string
-			for pname := range inputs.Inputs {
-				if !sliceContains(pname, inputDefaults) {
-					pnames = append(pnames, pname)
-				}
-			}
-			sort.Strings(pnames)
-			printFilteredInputs(pnames, true)
-		}
-	}
-}
-
-func printFilteredProcessors(processorFilters []string, commented bool) {
-	// Filter processors
-	var pnames []string
-	for pname := range processors.Processors {
-		if sliceContains(pname, processorFilters) {
-			pnames = append(pnames, pname)
-		}
-	}
-	sort.Strings(pnames)
-
-	// Print Outputs
-	for _, pname := range pnames {
-		creator := processors.Processors[pname]
-		output := creator()
-		printConfig(pname, output, "processors", commented, processors.Deprecations[pname])
-	}
-}
-
-func printFilteredAggregators(aggregatorFilters []string, commented bool) {
-	// Filter outputs
-	var anames []string
-	for aname := range aggregators.Aggregators {
-		if sliceContains(aname, aggregatorFilters) {
-			anames = append(anames, aname)
-		}
-	}
-	sort.Strings(anames)
-
-	// Print Outputs
-	for _, aname := range anames {
-		creator := aggregators.Aggregators[aname]
-		output := creator()
-		printConfig(aname, output, "aggregators", commented, aggregators.Deprecations[aname])
-	}
-}
-
-func printFilteredInputs(inputFilters []string, commented bool) {
-	// Filter inputs
-	var pnames []string
-	for pname := range inputs.Inputs {
-		if sliceContains(pname, inputFilters) {
-			pnames = append(pnames, pname)
-		}
-	}
-	sort.Strings(pnames)
-
-	// cache service inputs to print them at the end
-	servInputs := make(map[string]telegraf.ServiceInput)
-	// for alphabetical looping:
-	servInputNames := []string{}
-
-	// Print Inputs
-	for _, pname := range pnames {
-		// Skip inputs that are registered twice for backward compatibility
-		switch pname {
-		case "cisco_telemetry_gnmi", "io", "KNXListener":
-			continue
-		}
-		creator := inputs.Inputs[pname]
-		input := creator()
-
-		if p, ok := input.(telegraf.ServiceInput); ok {
-			servInputs[pname] = p
-			servInputNames = append(servInputNames, pname)
-			continue
-		}
-
-		printConfig(pname, input, "inputs", commented, inputs.Deprecations[pname])
-	}
-
-	// Print Service Inputs
-	if len(servInputs) == 0 {
-		return
-	}
-	sort.Strings(servInputNames)
-
-	fmt.Print(serviceInputHeader)
-	for _, name := range servInputNames {
-		printConfig(name, servInputs[name], "inputs", commented, inputs.Deprecations[name])
-	}
-}
-
-func printFilteredOutputs(outputFilters []string, commented bool) {
-	// Filter outputs
-	var onames []string
-	for oname := range outputs.Outputs {
-		if sliceContains(oname, outputFilters) {
-			onames = append(onames, oname)
-		}
-	}
-	sort.Strings(onames)
-
-	// Print Outputs
-	for _, oname := range onames {
-		creator := outputs.Outputs[oname]
-		output := creator()
-		printConfig(oname, output, "outputs", commented, outputs.Deprecations[oname])
-	}
-}
-
-func printFilteredGlobalSections(sectionFilters []string) {
-	if sliceContains("global_tags", sectionFilters) {
-		fmt.Print(globalTagsConfig)
-	}
-
-	if sliceContains("agent", sectionFilters) {
-		fmt.Print(agentConfig)
-	}
-}
-
-func printConfig(name string, p telegraf.PluginDescriber, op string, commented bool, di telegraf.DeprecationInfo) {
-	comment := ""
-	if commented {
-		comment = "# "
-	}
-
-	if di.Since != "" {
-		removalNote := ""
-		if di.RemovalIn != "" {
-			removalNote = " and will be removed in " + di.RemovalIn
-		}
-		fmt.Printf("\n%s ## DEPRECATED: The '%s' plugin is deprecated in version %s%s, %s.", comment, name, di.Since, removalNote, di.Notice)
-	}
-
-	config := p.SampleConfig()
-	if config == "" {
-		fmt.Printf("\n#[[%s.%s]]", op, name)
-		fmt.Printf("\n%s  # no configuration\n\n", comment)
-	} else {
-		lines := strings.Split(config, "\n")
-		fmt.Print("\n")
-		for i, line := range lines {
-			if i == len(lines)-1 {
-				fmt.Print("\n")
-				continue
-			}
-			fmt.Print(strings.TrimRight(comment+line, " ") + "\n")
-		}
-	}
 }
 
 func sliceContains(name string, list []string) bool {
@@ -626,30 +354,9 @@ func sliceContains(name string, list []string) bool {
 	return false
 }
 
-// PrintInputConfig prints the config usage of a single input.
-func PrintInputConfig(name string) error {
-	creator, ok := inputs.Inputs[name]
-	if !ok {
-		return fmt.Errorf("input %s not found", name)
-	}
-
-	printConfig(name, creator(), "inputs", false, inputs.Deprecations[name])
-	return nil
-}
-
-// PrintOutputConfig prints the config usage of a single output.
-func PrintOutputConfig(name string) error {
-	creator, ok := outputs.Outputs[name]
-	if !ok {
-		return fmt.Errorf("output %s not found", name)
-	}
-
-	printConfig(name, creator(), "outputs", false, outputs.Deprecations[name])
-	return nil
-}
-
-// LoadDirectory loads all toml config files found in the specified path, recursively.
-func (c *Config) LoadDirectory(path string) error {
+// WalkDirectory collects all toml files that need to be loaded
+func WalkDirectory(path string) ([]string, error) {
+	var files []string
 	walkfn := func(thispath string, info os.FileInfo, _ error) error {
 		if info == nil {
 			log.Printf("W! Telegraf is not permitted to read %s", thispath)
@@ -658,7 +365,7 @@ func (c *Config) LoadDirectory(path string) error {
 
 		if info.IsDir() {
 			if strings.HasPrefix(info.Name(), "..") {
-				// skip Kubernetes mounts, prevening loading the same config twice
+				// skip Kubernetes mounts, preventing loading the same config twice
 				return filepath.SkipDir
 			}
 
@@ -668,45 +375,60 @@ func (c *Config) LoadDirectory(path string) error {
 		if len(name) < 6 || name[len(name)-5:] != ".conf" {
 			return nil
 		}
-		err := c.LoadConfig(thispath)
-		if err != nil {
-			return err
-		}
+		files = append(files, thispath)
 		return nil
 	}
-	return filepath.Walk(path, walkfn)
+	return files, filepath.Walk(path, walkfn)
 }
 
 // Try to find a default config file at these locations (in order):
-//   1. $TELEGRAF_CONFIG_PATH
-//   2. $HOME/.telegraf/telegraf.conf
-//   3. /etc/telegraf/telegraf.conf
-//
-func getDefaultConfigPath() (string, error) {
+//  1. $TELEGRAF_CONFIG_PATH
+//  2. $HOME/.telegraf/telegraf.conf
+//  3. /etc/telegraf/telegraf.conf and /etc/telegraf/telegraf.d/*.conf
+func GetDefaultConfigPath() ([]string, error) {
 	envfile := os.Getenv("TELEGRAF_CONFIG_PATH")
 	homefile := os.ExpandEnv("${HOME}/.telegraf/telegraf.conf")
 	etcfile := "/etc/telegraf/telegraf.conf"
+	etcfolder := "/etc/telegraf/telegraf.d"
+
 	if runtime.GOOS == "windows" {
 		programFiles := os.Getenv("ProgramFiles")
 		if programFiles == "" { // Should never happen
 			programFiles = `C:\Program Files`
 		}
 		etcfile = programFiles + `\Telegraf\telegraf.conf`
+		etcfolder = programFiles + `\Telegraf\telegraf.d\`
 	}
-	for _, path := range []string{envfile, homefile, etcfile} {
+
+	for _, path := range []string{envfile, homefile} {
 		if isURL(path) {
-			log.Printf("I! Using config url: %s", path)
-			return path, nil
+			return []string{path}, nil
 		}
 		if _, err := os.Stat(path); err == nil {
-			log.Printf("I! Using config file: %s", path)
-			return path, nil
+			return []string{path}, nil
 		}
 	}
 
+	// At this point we need to check if the files under /etc/telegraf are
+	// populated and return them all.
+	confFiles := []string{}
+	if _, err := os.Stat(etcfile); err == nil {
+		confFiles = append(confFiles, etcfile)
+	}
+	if _, err := os.Stat(etcfolder); err == nil {
+		files, err := WalkDirectory(etcfolder)
+		if err != nil {
+			log.Printf("W! unable walk %q: %s", etcfolder, err)
+		}
+		confFiles = append(confFiles, files...)
+	}
+	if len(confFiles) > 0 {
+		return confFiles, nil
+	}
+
 	// if we got here, we didn't find a file in a default location
-	return "", fmt.Errorf("No config file specified, and could not find one"+
-		" in $TELEGRAF_CONFIG_PATH, %s, or %s", homefile, etcfile)
+	return nil, fmt.Errorf("no config file specified, and could not find one"+
+		" in $TELEGRAF_CONFIG_PATH, %s, %s, or %s/*.conf", homefile, etcfile, etcfolder)
 }
 
 // isURL checks if string is valid url
@@ -715,30 +437,53 @@ func isURL(str string) bool {
 	return err == nil && u.Scheme != "" && u.Host != ""
 }
 
-// LoadConfig loads the given config file and applies it to c
+// LoadConfig loads the given config files and applies it to c
 func (c *Config) LoadConfig(path string) error {
-	var err error
-	if path == "" {
-		if path, err = getDefaultConfigPath(); err != nil {
-			return err
-		}
+	if !c.Agent.Quiet {
+		log.Printf("I! Loading config: %s", path)
 	}
-	data, err := loadConfig(path)
+
+	data, _, err := LoadConfigFile(path)
 	if err != nil {
-		return fmt.Errorf("Error loading config file %s: %w", path, err)
+		return fmt.Errorf("error loading config file %s: %w", path, err)
 	}
 
 	if err = c.LoadConfigData(data); err != nil {
-		return fmt.Errorf("Error loading config file %s: %w", path, err)
+		return fmt.Errorf("error loading config file %s: %w", path, err)
 	}
+
 	return nil
+}
+
+func (c *Config) LoadAll(configFiles ...string) error {
+	for _, fConfig := range configFiles {
+		if err := c.LoadConfig(fConfig); err != nil {
+			return err
+		}
+	}
+
+	// Sort the processors according to their `order` setting while
+	// using a stable sort to keep the file loading / file position order.
+	sort.Stable(c.Processors)
+	sort.Stable(c.AggProcessors)
+
+	// Set snmp agent translator default
+	if c.Agent.SnmpTranslator == "" {
+		c.Agent.SnmpTranslator = "netsnmp"
+	}
+
+	// Check if there is enough lockable memory for the secret
+	c.NumberSecrets = uint64(secretCount.Load())
+
+	// Let's link all secrets to their secret-stores
+	return c.LinkSecrets()
 }
 
 // LoadConfigData loads TOML-formatted config data
 func (c *Config) LoadConfigData(data []byte) error {
 	tbl, err := parseConfig(data)
 	if err != nil {
-		return fmt.Errorf("Error parsing data: %s", err)
+		return fmt.Errorf("error parsing data: %w", err)
 	}
 
 	// Parse tags tables first:
@@ -749,7 +494,7 @@ func (c *Config) LoadConfigData(data []byte) error {
 				return fmt.Errorf("invalid configuration, bad table name %q", tableName)
 			}
 			if err = c.toml.UnmarshalTable(subTable, c.Tags); err != nil {
-				return fmt.Errorf("error parsing table name %q: %s", tableName, err)
+				return fmt.Errorf("error parsing table name %q: %w", tableName, err)
 			}
 		}
 	}
@@ -778,14 +523,29 @@ func (c *Config) LoadConfigData(data []byte) error {
 		c.Tags["host"] = c.Agent.Hostname
 	}
 
-	// Set snmp agent translator default
-	if c.Agent.SnmpTranslator == "" {
-		c.Agent.SnmpTranslator = "netsnmp"
+	// Warn when explicitly setting the old snmp translator
+	if c.Agent.SnmpTranslator == "netsnmp" {
+		models.PrintOptionValueDeprecationNotice(telegraf.Warn, "agent", "snmp_translator", "netsnmp", telegraf.DeprecationInfo{
+			Since:     "1.25.0",
+			RemovalIn: "2.0.0",
+			Notice:    "Use 'gosmi' instead",
+		})
+	}
+
+	// Setup the persister if requested
+	if c.Agent.Statefile != "" {
+		c.Persister = &persister.Persister{
+			Filename: c.Agent.Statefile,
+		}
 	}
 
 	if len(c.UnusedFields) > 0 {
 		return fmt.Errorf("line %d: configuration specified the fields %q, but they weren't used", tbl.Line, keys(c.UnusedFields))
 	}
+
+	// Initialize the file-sorting slices
+	c.fileProcessors = make(OrderedPlugins, 0)
+	c.fileAggProcessors = make(OrderedPlugins, 0)
 
 	// Parse all the rest of the plugins:
 	for name, val := range tbl.Fields {
@@ -815,7 +575,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used", name, pluginName, subTable.Line, keys(c.UnusedFields))
+					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
 		case "inputs", "plugins":
@@ -833,11 +594,12 @@ func (c *Config) LoadConfigData(data []byte) error {
 						}
 					}
 				default:
-					return fmt.Errorf("Unsupported config format: %s",
+					return fmt.Errorf("unsupported config format: %s",
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used", name, pluginName, subTable.Line, keys(c.UnusedFields))
+					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
 		case "processors":
@@ -850,11 +612,17 @@ func (c *Config) LoadConfigData(data []byte) error {
 						}
 					}
 				default:
-					return fmt.Errorf("Unsupported config format: %s",
+					return fmt.Errorf("unsupported config format: %s",
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used", name, pluginName, subTable.Line, keys(c.UnusedFields))
+					return fmt.Errorf(
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+						name,
+						pluginName,
+						subTable.Line,
+						keys(c.UnusedFields),
+					)
 				}
 			}
 		case "aggregators":
@@ -863,28 +631,55 @@ func (c *Config) LoadConfigData(data []byte) error {
 				case []*ast.Table:
 					for _, t := range pluginSubTable {
 						if err = c.addAggregator(pluginName, t); err != nil {
-							return fmt.Errorf("Error parsing %s, %s", pluginName, err)
+							return fmt.Errorf("error parsing %s, %w", pluginName, err)
 						}
 					}
 				default:
-					return fmt.Errorf("Unsupported config format: %s",
+					return fmt.Errorf("unsupported config format: %s",
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used", name, pluginName, subTable.Line, keys(c.UnusedFields))
+					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
-		// Assume it's an input input for legacy config file support if no other
+		case "secretstores":
+			for pluginName, pluginVal := range subTable.Fields {
+				switch pluginSubTable := pluginVal.(type) {
+				case []*ast.Table:
+					for _, t := range pluginSubTable {
+						if err = c.addSecretStore(pluginName, t); err != nil {
+							return fmt.Errorf("error parsing %s, %w", pluginName, err)
+						}
+					}
+				default:
+					return fmt.Errorf("unsupported config format: %s", pluginName)
+				}
+				if len(c.UnusedFields) > 0 {
+					msg := "plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used"
+					return fmt.Errorf(msg, name, pluginName, subTable.Line, keys(c.UnusedFields))
+				}
+			}
+
+		// Assume it's an input for legacy config file support if no other
 		// identifiers are present
 		default:
 			if err = c.addInput(name, subTable); err != nil {
-				return fmt.Errorf("Error parsing %s, %s", name, err)
+				return fmt.Errorf("error parsing %s, %w", name, err)
 			}
 		}
 	}
 
-	if len(c.Processors) > 1 {
-		sort.Sort(c.Processors)
+	// Sort the processor according to the order they appeared in this file
+	// In a later stage, we sort them using the `order` option.
+	sort.Sort(c.fileProcessors)
+	for _, op := range c.fileProcessors {
+		c.Processors = append(c.Processors, op.plugin.(*models.RunningProcessor))
+	}
+
+	sort.Sort(c.fileAggProcessors)
+	for _, op := range c.fileAggProcessors {
+		c.AggProcessors = append(c.AggProcessors, op.plugin.(*models.RunningProcessor))
 	}
 
 	return nil
@@ -897,28 +692,37 @@ func trimBOM(f []byte) []byte {
 	return bytes.TrimPrefix(f, []byte("\xef\xbb\xbf"))
 }
 
-// escapeEnv escapes a value for inserting into a TOML string.
-func escapeEnv(value string) string {
-	return envVarEscaper.Replace(value)
-}
-
-func loadConfig(config string) ([]byte, error) {
+// LoadConfigFile loads the content of a configuration file and returns it
+// together with a flag denoting if the file is from a remote location such
+// as a web server.
+func LoadConfigFile(config string) ([]byte, bool, error) {
 	if fetchURLRe.MatchString(config) {
 		u, err := url.Parse(config)
 		if err != nil {
-			return nil, err
+			return nil, true, err
 		}
 
 		switch u.Scheme {
 		case "https", "http":
-			return fetchConfig(u)
+			data, err := fetchConfig(u)
+			return data, true, err
 		default:
-			return nil, fmt.Errorf("scheme %q not supported", u.Scheme)
+			return nil, true, fmt.Errorf("scheme %q not supported", u.Scheme)
 		}
 	}
 
 	// If it isn't a https scheme, try it as a file
-	return os.ReadFile(config)
+	buffer, err := os.ReadFile(config)
+	if err != nil {
+		return nil, false, err
+	}
+
+	mimeType := http.DetectContentType(buffer)
+	if !strings.Contains(mimeType, "text/plain") {
+		return nil, false, fmt.Errorf("provided config is not a TOML file: %s", config)
+	}
+
+	return buffer, false, nil
 }
 
 func fetchConfig(u *url.URL) ([]byte, error) {
@@ -935,21 +739,33 @@ func fetchConfig(u *url.URL) ([]byte, error) {
 
 	retries := 3
 	for i := 0; i <= retries; i++ {
-		resp, err := http.DefaultClient.Do(req)
+		body, err, retry := func() ([]byte, error, bool) {
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return nil, fmt.Errorf("retry %d of %d failed connecting to HTTP config server: %w", i, retries, err), false
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				if i < retries {
+					log.Printf("Error getting HTTP config.  Retry %d of %d in %s.  Status=%d", i, retries, httpLoadConfigRetryInterval, resp.StatusCode)
+					return nil, nil, true
+				}
+				return nil, fmt.Errorf("retry %d of %d failed to retrieve remote config: %s", i, retries, resp.Status), false
+			}
+			body, err := io.ReadAll(resp.Body)
+			return body, err, false
+		}()
+
 		if err != nil {
-			return nil, fmt.Errorf("Retry %d of %d failed connecting to HTTP config server %s", i, retries, err)
+			return nil, err
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			if i < retries {
-				log.Printf("Error getting HTTP config.  Retry %d of %d in %s.  Status=%d", i, retries, httpLoadConfigRetryInterval, resp.StatusCode)
-				time.Sleep(httpLoadConfigRetryInterval)
-				continue
-			}
-			return nil, fmt.Errorf("Retry %d of %d failed to retrieve remote config: %s", i, retries, resp.Status)
+		if retry {
+			time.Sleep(httpLoadConfigRetryInterval)
+			continue
 		}
-		defer resp.Body.Close()
-		return io.ReadAll(resp.Body)
+
+		return body, err
 	}
 
 	return nil, nil
@@ -960,30 +776,16 @@ func fetchConfig(u *url.URL) ([]byte, error) {
 // will find environment variables and replace them.
 func parseConfig(contents []byte) (*ast.Table, error) {
 	contents = trimBOM(contents)
-
-	parameters := envVarRe.FindAllSubmatch(contents, -1)
-	for _, parameter := range parameters {
-		if len(parameter) != 3 {
-			continue
-		}
-
-		var envVar []byte
-		if parameter[1] != nil {
-			envVar = parameter[1]
-		} else if parameter[2] != nil {
-			envVar = parameter[2]
-		} else {
-			continue
-		}
-
-		envVal, ok := os.LookupEnv(strings.TrimPrefix(string(envVar), "$"))
-		if ok {
-			envVal = escapeEnv(envVal)
-			contents = bytes.Replace(contents, parameter[0], []byte(envVal), 1)
-		}
+	var err error
+	contents, err = removeComments(contents)
+	if err != nil {
+		return nil, err
 	}
-
-	return toml.Parse(contents)
+	outputBytes, err := substituteEnvironment(contents, OldEnvVarReplacement)
+	if err != nil {
+		return nil, err
+	}
+	return toml.Parse(outputBytes)
 }
 
 func (c *Config) addAggregator(name string, table *ast.Table) error {
@@ -994,7 +796,7 @@ func (c *Config) addAggregator(name string, table *ast.Table) error {
 			printHistoricPluginDeprecationNotice("aggregators", name, di)
 			return fmt.Errorf("plugin deprecated")
 		}
-		return fmt.Errorf("Undefined but requested aggregator: %s", name)
+		return fmt.Errorf("undefined but requested aggregator: %s", name)
 	}
 	aggregator := creator()
 
@@ -1015,37 +817,161 @@ func (c *Config) addAggregator(name string, table *ast.Table) error {
 	return nil
 }
 
-func (c *Config) probeParser(table *ast.Table) bool {
-	var dataformat string
-	c.getFieldString(table, "data_format", &dataformat)
+func (c *Config) addSecretStore(name string, table *ast.Table) error {
+	if len(c.SecretStoreFilters) > 0 && !sliceContains(name, c.SecretStoreFilters) {
+		return nil
+	}
 
-	_, ok := parsers.Parsers[dataformat]
-	return ok
+	var storeid string
+	c.getFieldString(table, "id", &storeid)
+	if storeid == "" {
+		return fmt.Errorf("%q secret-store without ID", name)
+	}
+	if !secretStorePattern.MatchString(storeid) {
+		return fmt.Errorf("invalid secret-store ID %q, must only contain letters, numbers or underscore", storeid)
+	}
+
+	creator, ok := secretstores.SecretStores[name]
+	if !ok {
+		// Handle removed, deprecated plugins
+		if di, deprecated := secretstores.Deprecations[name]; deprecated {
+			printHistoricPluginDeprecationNotice("secretstores", name, di)
+			return errors.New("plugin deprecated")
+		}
+		return fmt.Errorf("undefined but requested secretstores: %s", name)
+	}
+	store := creator(storeid)
+
+	if err := c.toml.UnmarshalTable(table, store); err != nil {
+		return err
+	}
+
+	if err := c.printUserDeprecation("secretstores", name, store); err != nil {
+		return err
+	}
+
+	logger := models.NewLogger("secretstores", name, "")
+	models.SetLoggerOnPlugin(store, logger)
+
+	if err := store.Init(); err != nil {
+		return fmt.Errorf("error initializing secret-store %q: %w", storeid, err)
+	}
+
+	if _, found := c.SecretStores[storeid]; found {
+		return fmt.Errorf("duplicate ID %q for secretstore %q", storeid, name)
+	}
+	c.SecretStores[storeid] = store
+	return nil
 }
 
-func (c *Config) addParser(parentname string, table *ast.Table) (*models.RunningParser, error) {
+func (c *Config) LinkSecrets() error {
+	for _, s := range unlinkedSecrets {
+		resolvers := make(map[string]telegraf.ResolveFunc)
+		for _, ref := range s.GetUnlinked() {
+			// Split the reference and lookup the resolver
+			storeid, key := splitLink(ref)
+			store, found := c.SecretStores[storeid]
+			if !found {
+				return fmt.Errorf("unknown secret-store for %q", ref)
+			}
+			resolver, err := store.GetResolver(key)
+			if err != nil {
+				return fmt.Errorf("retrieving resolver for %q failed: %w", ref, err)
+			}
+			resolvers[ref] = resolver
+		}
+		// Inject the resolver list into the secret
+		if err := s.Link(resolvers); err != nil {
+			return fmt.Errorf("retrieving resolver failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) probeParser(parentcategory string, parentname string, table *ast.Table) bool {
 	var dataformat string
 	c.getFieldString(table, "data_format", &dataformat)
+	if dataformat == "" {
+		dataformat = setDefaultParser(parentcategory, parentname)
+	}
 
 	creator, ok := parsers.Parsers[dataformat]
 	if !ok {
-		return nil, fmt.Errorf("Undefined but requested parser: %s", dataformat)
+		return false
+	}
+
+	// Try to parse the options to detect if any of them is misspelled
+	// We don't actually use the parser, so no need to check the error.
+	parser := creator("")
+	_ = c.toml.UnmarshalTable(table, parser)
+
+	return true
+}
+
+func (c *Config) addParser(parentcategory, parentname string, table *ast.Table) (*models.RunningParser, error) {
+	var dataformat string
+	c.getFieldString(table, "data_format", &dataformat)
+	if dataformat == "" {
+		dataformat = setDefaultParser(parentcategory, parentname)
+	}
+
+	var influxParserType string
+	c.getFieldString(table, "influx_parser_type", &influxParserType)
+	if dataformat == "influx" && influxParserType == "upstream" {
+		dataformat = "influx_upstream"
+	}
+
+	creator, ok := parsers.Parsers[dataformat]
+	if !ok {
+		return nil, fmt.Errorf("undefined but requested parser: %s", dataformat)
 	}
 	parser := creator(parentname)
 
-	conf, err := c.buildParser(parentname, table)
-	if err != nil {
-		return nil, err
+	// Handle reset-mode of CSV parsers to stay backward compatible (see issue #12022)
+	if dataformat == "csv" && parentcategory == "inputs" {
+		if parentname == "exec" {
+			csvParser := parser.(*csv.Parser)
+			csvParser.ResetMode = "always"
+		}
 	}
 
 	if err := c.toml.UnmarshalTable(table, parser); err != nil {
 		return nil, err
 	}
 
+	conf := &models.ParserConfig{
+		Parent:     parentname,
+		DataFormat: dataformat,
+	}
 	running := models.NewRunningParser(parser, conf)
-	c.Parsers = append(c.Parsers, running)
+	err := running.Init()
+	return running, err
+}
 
-	return running, nil
+func (c *Config) addSerializer(parentname string, table *ast.Table) (*models.RunningSerializer, error) {
+	var dataformat string
+	c.getFieldString(table, "data_format", &dataformat)
+	if dataformat == "" {
+		dataformat = "influx"
+	}
+
+	creator, ok := serializers.Serializers[dataformat]
+	if !ok {
+		return nil, fmt.Errorf("undefined but requested serializer: %s", dataformat)
+	}
+	serializer := creator()
+
+	if err := c.toml.UnmarshalTable(table, serializer); err != nil {
+		return nil, err
+	}
+
+	conf := &models.SerializerConfig{
+		Parent:     parentname,
+		DataFormat: dataformat,
+	}
+	running := models.NewRunningSerializer(serializer, conf)
+	err := running.Init()
+	return running, err
 }
 
 func (c *Config) addProcessor(name string, table *ast.Table) error {
@@ -1056,59 +982,128 @@ func (c *Config) addProcessor(name string, table *ast.Table) error {
 			printHistoricPluginDeprecationNotice("processors", name, di)
 			return fmt.Errorf("plugin deprecated")
 		}
-		return fmt.Errorf("Undefined but requested processor: %s", name)
+		return fmt.Errorf("undefined but requested processor: %s", name)
 	}
 
-	processorConfig, err := c.buildProcessor(name, table)
+	// For processors with parsers we need to compute the set of
+	// options that is not covered by both, the parser and the processor.
+	// We achieve this by keeping a local book of missing entries
+	// that counts the number of misses. In case we have a parser
+	// for the input both need to miss the entry. We count the
+	// missing entries at the end.
+	missCount := make(map[string]int)
+	missCountThreshold := 0
+	c.setLocalMissingTomlFieldTracker(missCount)
+	defer c.resetMissingTomlFieldTracker()
+
+	// Setup the processor running before the aggregators
+	processorBeforeConfig, err := c.buildProcessor("processors", name, table)
 	if err != nil {
 		return err
 	}
-
-	rf, err := c.newRunningProcessor(creator, processorConfig, table)
+	processorBefore, count, err := c.setupProcessor(processorBeforeConfig.Name, creator, table)
 	if err != nil {
 		return err
 	}
-	c.Processors = append(c.Processors, rf)
+	rf := models.NewRunningProcessor(processorBefore, processorBeforeConfig)
+	c.fileProcessors = append(c.fileProcessors, &OrderedPlugin{table.Line, rf})
 
-	// save a copy for the aggregator
-	rf, err = c.newRunningProcessor(creator, processorConfig, table)
+	// Setup another (new) processor instance running after the aggregator
+	processorAfterConfig, err := c.buildProcessor("aggprocessors", name, table)
 	if err != nil {
 		return err
 	}
-	c.AggProcessors = append(c.AggProcessors, rf)
+	processorAfter, _, err := c.setupProcessor(processorAfterConfig.Name, creator, table)
+	if err != nil {
+		return err
+	}
+	rf = models.NewRunningProcessor(processorAfter, processorAfterConfig)
+	c.fileAggProcessors = append(c.fileAggProcessors, &OrderedPlugin{table.Line, rf})
+
+	// Check the number of misses against the threshold. We need to double
+	// the count as the processor setup is executed twice.
+	missCountThreshold = 2 * count
+	for key, count := range missCount {
+		if count <= missCountThreshold {
+			continue
+		}
+		if err := c.missingTomlField(nil, key); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
 
-func (c *Config) newRunningProcessor(
-	creator processors.StreamingCreator,
-	processorConfig *models.ProcessorConfig,
-	table *ast.Table,
-) (*models.RunningProcessor, error) {
-	processor := creator()
+func (c *Config) setupProcessor(name string, creator processors.StreamingCreator, table *ast.Table) (telegraf.StreamingProcessor, int, error) {
+	var optionTestCount int
 
-	if p, ok := processor.(unwrappable); ok {
-		if err := c.toml.UnmarshalTable(table, p.Unwrap()); err != nil {
-			return nil, err
-		}
+	streamingProcessor := creator()
+
+	var processor interface{}
+	if p, ok := streamingProcessor.(processors.HasUnwrap); ok {
+		processor = p.Unwrap()
 	} else {
-		if err := c.toml.UnmarshalTable(table, processor); err != nil {
-			return nil, err
+		processor = streamingProcessor
+	}
+
+	// If the (underlying) processor has a SetParser or SetParserFunc function,
+	// it can accept arbitrary data-formats, so build the requested parser and
+	// set it.
+	if t, ok := processor.(telegraf.ParserPlugin); ok {
+		parser, err := c.addParser("processors", name, table)
+		if err != nil {
+			return nil, 0, fmt.Errorf("adding parser failed: %w", err)
 		}
+		t.SetParser(parser)
+		optionTestCount++
 	}
 
-	if err := c.printUserDeprecation("processors", processorConfig.Name, processor); err != nil {
-		return nil, err
+	if t, ok := processor.(telegraf.ParserFuncPlugin); ok {
+		if !c.probeParser("processors", name, table) {
+			return nil, 0, errors.New("parser not found")
+		}
+		t.SetParserFunc(func() (telegraf.Parser, error) {
+			return c.addParser("processors", name, table)
+		})
+		optionTestCount++
 	}
 
-	rf := models.NewRunningProcessor(processor, processorConfig)
-	return rf, nil
+	// If the (underlying) processor has a SetSerializer function it can accept
+	// arbitrary data-formats, so build the requested serializer and set it.
+	if t, ok := processor.(telegraf.SerializerPlugin); ok {
+		serializer, err := c.addSerializer(name, table)
+		if err != nil {
+			return nil, 0, fmt.Errorf("adding serializer failed: %w", err)
+		}
+		t.SetSerializer(serializer)
+		optionTestCount++
+	}
+
+	if err := c.toml.UnmarshalTable(table, processor); err != nil {
+		return nil, 0, fmt.Errorf("unmarshalling failed: %w", err)
+	}
+
+	err := c.printUserDeprecation("processors", name, processor)
+	return streamingProcessor, optionTestCount, err
 }
 
 func (c *Config) addOutput(name string, table *ast.Table) error {
 	if len(c.OutputFilters) > 0 && !sliceContains(name, c.OutputFilters) {
 		return nil
 	}
+
+	// For inputs with parsers we need to compute the set of
+	// options that is not covered by both, the parser and the input.
+	// We achieve this by keeping a local book of missing entries
+	// that counts the number of misses. In case we have a parser
+	// for the input both need to miss the entry. We count the
+	// missing entries at the end.
+	missThreshold := 0
+	missCount := make(map[string]int)
+	c.setLocalMissingTomlFieldTracker(missCount)
+	defer c.resetMissingTomlFieldTracker()
+
 	creator, ok := outputs.Outputs[name]
 	if !ok {
 		// Handle removed, deprecated plugins
@@ -1122,8 +1117,18 @@ func (c *Config) addOutput(name string, table *ast.Table) error {
 
 	// If the output has a SetSerializer function, then this means it can write
 	// arbitrary types of output, so build the serializer and set it.
-	if t, ok := output.(serializers.SerializerOutput); ok {
-		serializer, err := c.buildSerializer(table)
+	if t, ok := output.(telegraf.SerializerPlugin); ok {
+		missThreshold = 1
+		serializer, err := c.addSerializer(name, table)
+		if err != nil {
+			return err
+		}
+		t.SetSerializer(serializer)
+	} else if t, ok := output.(serializers.SerializerOutput); ok {
+		// Keep the old interface for backward compatibility
+		// DEPRECATED: Please switch your plugin to telegraf.Serializers
+		missThreshold = 1
+		serializer, err := c.addSerializer(name, table)
 		if err != nil {
 			return err
 		}
@@ -1149,8 +1154,19 @@ func (c *Config) addOutput(name string, table *ast.Table) error {
 		}
 	}
 
+	// Check the number of misses against the threshold
+	for key, count := range missCount {
+		if count <= missThreshold {
+			continue
+		}
+		if err := c.missingTomlField(nil, key); err != nil {
+			return err
+		}
+	}
+
 	ro := models.NewRunningOutput(output, outputConfig, c.Agent.MetricBatchSize, c.Agent.MetricBufferLimit)
 	c.Outputs = append(c.Outputs, ro)
+
 	return nil
 }
 
@@ -1165,8 +1181,8 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 	// that counts the number of misses. In case we have a parser
 	// for the input both need to miss the entry. We count the
 	// missing entries at the end.
-	missThreshold := 0
 	missCount := make(map[string]int)
+	missCountThreshold := 0
 	c.setLocalMissingTomlFieldTracker(missCount)
 	defer c.resetMissingTomlFieldTracker()
 
@@ -1178,99 +1194,29 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 			return fmt.Errorf("plugin deprecated")
 		}
 
-		return fmt.Errorf("Undefined but requested input: %s", name)
+		return fmt.Errorf("undefined but requested input: %s", name)
 	}
 	input := creator()
 
 	// If the input has a SetParser or SetParserFunc function, it can accept
 	// arbitrary data-formats, so build the requested parser and set it.
-	if t, ok := input.(telegraf.ParserInput); ok {
-		missThreshold = 1
-		if parser, err := c.addParser(name, table); err == nil {
-			t.SetParser(parser)
-		} else {
-			missThreshold = 0
-			// Fallback to the old way of instantiating the parsers.
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			parser, err := c.buildParserOld(name, config)
-			if err != nil {
-				return err
-			}
-			t.SetParser(parser)
+	if t, ok := input.(telegraf.ParserPlugin); ok {
+		missCountThreshold = 1
+		parser, err := c.addParser("inputs", name, table)
+		if err != nil {
+			return fmt.Errorf("adding parser failed: %w", err)
 		}
+		t.SetParser(parser)
 	}
 
-	// Keep the old interface for backward compatibility
-	if t, ok := input.(parsers.ParserInput); ok {
-		// DEPRECATED: Please switch your plugin to telegraf.ParserInput.
-		missThreshold = 1
-		if parser, err := c.addParser(name, table); err == nil {
-			t.SetParser(parser)
-		} else {
-			missThreshold = 0
-			// Fallback to the old way of instantiating the parsers.
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			parser, err := c.buildParserOld(name, config)
-			if err != nil {
-				return err
-			}
-			t.SetParser(parser)
+	if t, ok := input.(telegraf.ParserFuncPlugin); ok {
+		missCountThreshold = 1
+		if !c.probeParser("inputs", name, table) {
+			return errors.New("parser not found")
 		}
-	}
-
-	if t, ok := input.(telegraf.ParserFuncInput); ok {
-		missThreshold = 1
-		if c.probeParser(table) {
-			t.SetParserFunc(func() (telegraf.Parser, error) {
-				parser, err := c.addParser(name, table)
-				if err != nil {
-					return nil, err
-				}
-				err = parser.Init()
-				return parser, err
-			})
-		} else {
-			missThreshold = 0
-			// Fallback to the old way
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			t.SetParserFunc(func() (telegraf.Parser, error) {
-				return c.buildParserOld(name, config)
-			})
-		}
-	}
-
-	if t, ok := input.(parsers.ParserFuncInput); ok {
-		// DEPRECATED: Please switch your plugin to telegraf.ParserFuncInput.
-		missThreshold = 1
-		if c.probeParser(table) {
-			t.SetParserFunc(func() (parsers.Parser, error) {
-				parser, err := c.addParser(name, table)
-				if err != nil {
-					return nil, err
-				}
-				err = parser.Init()
-				return parser, err
-			})
-		} else {
-			missThreshold = 0
-			// Fallback to the old way
-			config, err := c.getParserConfig(name, table)
-			if err != nil {
-				return err
-			}
-			t.SetParserFunc(func() (parsers.Parser, error) {
-				return c.buildParserOld(name, config)
-			})
-		}
+		t.SetParserFunc(func() (telegraf.Parser, error) {
+			return c.addParser("inputs", name, table)
+		})
 	}
 
 	pluginConfig, err := c.buildInput(name, table)
@@ -1292,19 +1238,19 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 		}
 	}
 
-	rp := models.NewRunningInput(input, pluginConfig)
-	rp.SetDefaultTags(c.Tags)
-	c.Inputs = append(c.Inputs, rp)
-
 	// Check the number of misses against the threshold
 	for key, count := range missCount {
-		if count <= missThreshold {
+		if count <= missCountThreshold {
 			continue
 		}
 		if err := c.missingTomlField(nil, key); err != nil {
 			return err
 		}
 	}
+
+	rp := models.NewRunningInput(input, pluginConfig)
+	rp.SetDefaultTags(c.Tags)
+	c.Inputs = append(c.Inputs, rp)
 
 	return nil
 }
@@ -1343,32 +1289,20 @@ func (c *Config) buildAggregator(name string, tbl *ast.Table) (*models.Aggregato
 	}
 
 	var err error
-	conf.Filter, err = c.buildFilter(tbl)
+	conf.Filter, err = c.buildFilter("aggregators."+name, tbl)
 	if err != nil {
 		return conf, err
 	}
-	return conf, nil
-}
 
-// buildParser parses Parser specific items from the ast.Table,
-// builds the filter and returns a
-// models.ParserConfig to be inserted into models.RunningParser
-func (c *Config) buildParser(name string, tbl *ast.Table) (*models.ParserConfig, error) {
-	var dataformat string
-	c.getFieldString(tbl, "data_format", &dataformat)
-
-	conf := &models.ParserConfig{
-		Parent:     name,
-		DataFormat: dataformat,
-	}
-
-	return conf, nil
+	// Generate an ID for the plugin
+	conf.ID, err = generatePluginID("aggregators."+name, tbl)
+	return conf, err
 }
 
 // buildProcessor parses Processor specific items from the ast.Table,
 // builds the filter and returns a
 // models.ProcessorConfig to be inserted into models.RunningProcessor
-func (c *Config) buildProcessor(name string, tbl *ast.Table) (*models.ProcessorConfig, error) {
+func (c *Config) buildProcessor(category, name string, tbl *ast.Table) (*models.ProcessorConfig, error) {
 	conf := &models.ProcessorConfig{Name: name}
 
 	c.getFieldInt64(tbl, "order", &conf.Order)
@@ -1379,34 +1313,79 @@ func (c *Config) buildProcessor(name string, tbl *ast.Table) (*models.ProcessorC
 	}
 
 	var err error
-	conf.Filter, err = c.buildFilter(tbl)
+	conf.Filter, err = c.buildFilter(category+"."+name, tbl)
 	if err != nil {
 		return conf, err
 	}
-	return conf, nil
+
+	// Generate an ID for the plugin
+	conf.ID, err = generatePluginID(category+"."+name, tbl)
+	return conf, err
 }
 
 // buildFilter builds a Filter
-// (tagpass/tagdrop/namepass/namedrop/fieldpass/fielddrop) to
+// (tags, fields, namepass, namedrop, metricpass) to
 // be inserted into the models.OutputConfig/models.InputConfig
 // to be used for glob filtering on tags and measurements
-func (c *Config) buildFilter(tbl *ast.Table) (models.Filter, error) {
+func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, error) {
 	f := models.Filter{}
 
 	c.getFieldStringSlice(tbl, "namepass", &f.NamePass)
+	c.getFieldString(tbl, "namepass_separator", &f.NamePassSeparators)
 	c.getFieldStringSlice(tbl, "namedrop", &f.NameDrop)
+	c.getFieldString(tbl, "namedrop_separator", &f.NameDropSeparators)
 
-	c.getFieldStringSlice(tbl, "pass", &f.FieldPass)
-	c.getFieldStringSlice(tbl, "fieldpass", &f.FieldPass)
+	var oldPass []string
+	c.getFieldStringSlice(tbl, "pass", &oldPass)
+	if len(oldPass) > 0 {
+		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "pass", telegraf.DeprecationInfo{
+			Since:     "0.10.4",
+			RemovalIn: "2.0.0",
+			Notice:    "use 'fieldinclude' instead",
+		})
+		f.FieldInclude = append(f.FieldInclude, oldPass...)
+	}
+	var oldFieldPass []string
+	c.getFieldStringSlice(tbl, "fieldpass", &oldFieldPass)
+	if len(oldFieldPass) > 0 {
+		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "fieldpass", telegraf.DeprecationInfo{
+			Since:     "1.29.0",
+			RemovalIn: "2.0.0",
+			Notice:    "use 'fieldinclude' instead",
+		})
+		f.FieldInclude = append(f.FieldInclude, oldFieldPass...)
+	}
+	c.getFieldStringSlice(tbl, "fieldinclude", &f.FieldInclude)
 
-	c.getFieldStringSlice(tbl, "drop", &f.FieldDrop)
-	c.getFieldStringSlice(tbl, "fielddrop", &f.FieldDrop)
+	var oldDrop []string
+	c.getFieldStringSlice(tbl, "drop", &oldDrop)
+	if len(oldDrop) > 0 {
+		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "drop", telegraf.DeprecationInfo{
+			Since:     "0.10.4",
+			RemovalIn: "2.0.0",
+			Notice:    "use 'fieldexclude' instead",
+		})
+		f.FieldExclude = append(f.FieldExclude, oldDrop...)
+	}
+	var oldFieldDrop []string
+	c.getFieldStringSlice(tbl, "fielddrop", &oldFieldDrop)
+	if len(oldFieldDrop) > 0 {
+		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "fielddrop", telegraf.DeprecationInfo{
+			Since:     "1.29.0",
+			RemovalIn: "2.0.0",
+			Notice:    "use 'fieldexclude' instead",
+		})
+		f.FieldExclude = append(f.FieldExclude, oldFieldDrop...)
+	}
+	c.getFieldStringSlice(tbl, "fieldexclude", &f.FieldExclude)
 
-	c.getFieldTagFilter(tbl, "tagpass", &f.TagPass)
-	c.getFieldTagFilter(tbl, "tagdrop", &f.TagDrop)
+	c.getFieldTagFilter(tbl, "tagpass", &f.TagPassFilters)
+	c.getFieldTagFilter(tbl, "tagdrop", &f.TagDropFilters)
 
 	c.getFieldStringSlice(tbl, "tagexclude", &f.TagExclude)
 	c.getFieldStringSlice(tbl, "taginclude", &f.TagInclude)
+
+	c.getFieldString(tbl, "metricpass", &f.MetricPass)
 
 	if c.hasErrs() {
 		return f, c.firstErr()
@@ -1423,7 +1402,11 @@ func (c *Config) buildFilter(tbl *ast.Table) (models.Filter, error) {
 // builds the filter and returns a
 // models.InputConfig to be inserted into models.RunningInput
 func (c *Config) buildInput(name string, tbl *ast.Table) (*models.InputConfig, error) {
-	cp := &models.InputConfig{Name: name}
+	cp := &models.InputConfig{
+		Name:                    name,
+		AlwaysIncludeLocalTags:  c.Agent.AlwaysIncludeLocalTags,
+		AlwaysIncludeGlobalTags: c.Agent.AlwaysIncludeGlobalTags,
+	}
 	c.getFieldDuration(tbl, "interval", &cp.Interval)
 	c.getFieldDuration(tbl, "precision", &cp.Precision)
 	c.getFieldDuration(tbl, "collection_jitter", &cp.CollectionJitter)
@@ -1447,271 +1430,22 @@ func (c *Config) buildInput(name string, tbl *ast.Table) (*models.InputConfig, e
 	}
 
 	var err error
-	cp.Filter, err = c.buildFilter(tbl)
+	cp.Filter, err = c.buildFilter("inputs."+name, tbl)
 	if err != nil {
 		return cp, err
 	}
-	return cp, nil
-}
 
-// buildParserOld grabs the necessary entries from the ast.Table for creating
-// a parsers.Parser object, and creates it, which can then be added onto
-// an Input object.
-func (c *Config) buildParserOld(name string, config *parsers.Config) (telegraf.Parser, error) {
-	parser, err := parsers.NewParser(config)
-	if err != nil {
-		return nil, err
-	}
-	logger := models.NewLogger("parsers", config.DataFormat, name)
-	models.SetLoggerOnPlugin(parser, logger)
-	if initializer, ok := parser.(telegraf.Initializer); ok {
-		if err := initializer.Init(); err != nil {
-			return nil, err
-		}
-	}
-
-	return parser, nil
-}
-
-func (c *Config) getParserConfig(name string, tbl *ast.Table) (*parsers.Config, error) {
-	pc := &parsers.Config{
-		JSONStrict: true,
-	}
-
-	c.getFieldString(tbl, "data_format", &pc.DataFormat)
-
-	// Legacy support, exec plugin originally parsed JSON by default.
-	if name == "exec" && pc.DataFormat == "" {
-		pc.DataFormat = "json"
-	} else if pc.DataFormat == "" {
-		pc.DataFormat = "influx"
-	}
-
-	c.getFieldString(tbl, "separator", &pc.Separator)
-
-	c.getFieldStringSlice(tbl, "templates", &pc.Templates)
-	c.getFieldStringSlice(tbl, "tag_keys", &pc.TagKeys)
-	c.getFieldStringSlice(tbl, "json_string_fields", &pc.JSONStringFields)
-	c.getFieldString(tbl, "json_name_key", &pc.JSONNameKey)
-	c.getFieldString(tbl, "json_query", &pc.JSONQuery)
-	c.getFieldString(tbl, "json_time_key", &pc.JSONTimeKey)
-	c.getFieldString(tbl, "json_time_format", &pc.JSONTimeFormat)
-	c.getFieldString(tbl, "json_timezone", &pc.JSONTimezone)
-	c.getFieldBool(tbl, "json_strict", &pc.JSONStrict)
-	c.getFieldString(tbl, "data_type", &pc.DataType)
-	c.getFieldString(tbl, "collectd_auth_file", &pc.CollectdAuthFile)
-	c.getFieldString(tbl, "collectd_security_level", &pc.CollectdSecurityLevel)
-	c.getFieldString(tbl, "collectd_parse_multivalue", &pc.CollectdSplit)
-
-	c.getFieldStringSlice(tbl, "collectd_typesdb", &pc.CollectdTypesDB)
-
-	c.getFieldString(tbl, "dropwizard_metric_registry_path", &pc.DropwizardMetricRegistryPath)
-	c.getFieldString(tbl, "dropwizard_time_path", &pc.DropwizardTimePath)
-	c.getFieldString(tbl, "dropwizard_time_format", &pc.DropwizardTimeFormat)
-	c.getFieldString(tbl, "dropwizard_tags_path", &pc.DropwizardTagsPath)
-	c.getFieldStringMap(tbl, "dropwizard_tag_paths", &pc.DropwizardTagPathsMap)
-
-	//for grok data_format
-	c.getFieldStringSlice(tbl, "grok_named_patterns", &pc.GrokNamedPatterns)
-	c.getFieldStringSlice(tbl, "grok_patterns", &pc.GrokPatterns)
-	c.getFieldString(tbl, "grok_custom_patterns", &pc.GrokCustomPatterns)
-	c.getFieldStringSlice(tbl, "grok_custom_pattern_files", &pc.GrokCustomPatternFiles)
-	c.getFieldString(tbl, "grok_timezone", &pc.GrokTimezone)
-	c.getFieldString(tbl, "grok_unique_timestamp", &pc.GrokUniqueTimestamp)
-
-	c.getFieldStringSlice(tbl, "form_urlencoded_tag_keys", &pc.FormUrlencodedTagKeys)
-
-	c.getFieldString(tbl, "value_field_name", &pc.ValueFieldName)
-
-	// for influx parser
-	c.getFieldString(tbl, "influx_parser_type", &pc.InfluxParserType)
-
-	//for XPath parser family
-	if choice.Contains(pc.DataFormat, []string{"xml", "xpath_json", "xpath_msgpack", "xpath_protobuf"}) {
-		c.getFieldString(tbl, "xpath_protobuf_file", &pc.XPathProtobufFile)
-		c.getFieldString(tbl, "xpath_protobuf_type", &pc.XPathProtobufType)
-		c.getFieldStringSlice(tbl, "xpath_protobuf_import_paths", &pc.XPathProtobufImportPaths)
-		c.getFieldBool(tbl, "xpath_print_document", &pc.XPathPrintDocument)
-
-		// Determine the actual xpath configuration tables
-		node, xpathOK := tbl.Fields["xpath"]
-		if !xpathOK {
-			// Add this for backward compatibility
-			node, xpathOK = tbl.Fields[pc.DataFormat]
-		}
-		if xpathOK {
-			if subtbls, ok := node.([]*ast.Table); ok {
-				pc.XPathConfig = make([]parsers.XPathConfig, len(subtbls))
-				for i, subtbl := range subtbls {
-					subcfg := pc.XPathConfig[i]
-					c.getFieldString(subtbl, "metric_name", &subcfg.MetricQuery)
-					c.getFieldString(subtbl, "metric_selection", &subcfg.Selection)
-					c.getFieldString(subtbl, "timestamp", &subcfg.Timestamp)
-					c.getFieldString(subtbl, "timestamp_format", &subcfg.TimestampFmt)
-					c.getFieldStringMap(subtbl, "tags", &subcfg.Tags)
-					c.getFieldStringMap(subtbl, "fields", &subcfg.Fields)
-					c.getFieldStringMap(subtbl, "fields_int", &subcfg.FieldsInt)
-					c.getFieldString(subtbl, "field_selection", &subcfg.FieldSelection)
-					c.getFieldBool(subtbl, "field_name_expansion", &subcfg.FieldNameExpand)
-					c.getFieldString(subtbl, "field_name", &subcfg.FieldNameQuery)
-					c.getFieldString(subtbl, "field_value", &subcfg.FieldValueQuery)
-					c.getFieldString(subtbl, "tag_selection", &subcfg.TagSelection)
-					c.getFieldBool(subtbl, "tag_name_expansion", &subcfg.TagNameExpand)
-					c.getFieldString(subtbl, "tag_name", &subcfg.TagNameQuery)
-					c.getFieldString(subtbl, "tag_value", &subcfg.TagValueQuery)
-					pc.XPathConfig[i] = subcfg
-				}
-			}
-		}
-	}
-
-	//for JSONPath parser
-	if node, ok := tbl.Fields["json_v2"]; ok {
-		if metricConfigs, ok := node.([]*ast.Table); ok {
-			pc.JSONV2Config = make([]parsers.JSONV2Config, len(metricConfigs))
-			for i, metricConfig := range metricConfigs {
-				mc := pc.JSONV2Config[i]
-				c.getFieldString(metricConfig, "measurement_name", &mc.MeasurementName)
-				if mc.MeasurementName == "" {
-					mc.MeasurementName = name
-				}
-				c.getFieldString(metricConfig, "measurement_name_path", &mc.MeasurementNamePath)
-				c.getFieldString(metricConfig, "timestamp_path", &mc.TimestampPath)
-				c.getFieldString(metricConfig, "timestamp_format", &mc.TimestampFormat)
-				c.getFieldString(metricConfig, "timestamp_timezone", &mc.TimestampTimezone)
-
-				mc.Fields = getFieldSubtable(c, metricConfig)
-				mc.Tags = getTagSubtable(c, metricConfig)
-
-				if objectconfigs, ok := metricConfig.Fields["object"]; ok {
-					if objectconfigs, ok := objectconfigs.([]*ast.Table); ok {
-						for _, objectConfig := range objectconfigs {
-							var o json_v2.JSONObject
-							c.getFieldString(objectConfig, "path", &o.Path)
-							c.getFieldBool(objectConfig, "optional", &o.Optional)
-							c.getFieldString(objectConfig, "timestamp_key", &o.TimestampKey)
-							c.getFieldString(objectConfig, "timestamp_format", &o.TimestampFormat)
-							c.getFieldString(objectConfig, "timestamp_timezone", &o.TimestampTimezone)
-							c.getFieldBool(objectConfig, "disable_prepend_keys", &o.DisablePrependKeys)
-							c.getFieldStringSlice(objectConfig, "included_keys", &o.IncludedKeys)
-							c.getFieldStringSlice(objectConfig, "excluded_keys", &o.ExcludedKeys)
-							c.getFieldStringSlice(objectConfig, "tags", &o.Tags)
-							c.getFieldStringMap(objectConfig, "renames", &o.Renames)
-							c.getFieldStringMap(objectConfig, "fields", &o.Fields)
-
-							o.FieldPaths = getFieldSubtable(c, objectConfig)
-							o.TagPaths = getTagSubtable(c, objectConfig)
-
-							mc.JSONObjects = append(mc.JSONObjects, o)
-						}
-					}
-				}
-
-				pc.JSONV2Config[i] = mc
-			}
-		}
-	}
-
-	pc.MetricName = name
-
-	if c.hasErrs() {
-		return nil, c.firstErr()
-	}
-
-	return pc, nil
-}
-
-func getFieldSubtable(c *Config, metricConfig *ast.Table) []json_v2.DataSet {
-	var fields []json_v2.DataSet
-
-	if fieldConfigs, ok := metricConfig.Fields["field"]; ok {
-		if fieldConfigs, ok := fieldConfigs.([]*ast.Table); ok {
-			for _, fieldconfig := range fieldConfigs {
-				var f json_v2.DataSet
-				c.getFieldString(fieldconfig, "path", &f.Path)
-				c.getFieldString(fieldconfig, "rename", &f.Rename)
-				c.getFieldString(fieldconfig, "type", &f.Type)
-				c.getFieldBool(fieldconfig, "optional", &f.Optional)
-				fields = append(fields, f)
-			}
-		}
-	}
-
-	return fields
-}
-
-func getTagSubtable(c *Config, metricConfig *ast.Table) []json_v2.DataSet {
-	var tags []json_v2.DataSet
-
-	if fieldConfigs, ok := metricConfig.Fields["tag"]; ok {
-		if fieldConfigs, ok := fieldConfigs.([]*ast.Table); ok {
-			for _, fieldconfig := range fieldConfigs {
-				var t json_v2.DataSet
-				c.getFieldString(fieldconfig, "path", &t.Path)
-				c.getFieldString(fieldconfig, "rename", &t.Rename)
-				t.Type = "string"
-				tags = append(tags, t)
-				c.getFieldBool(fieldconfig, "optional", &t.Optional)
-			}
-		}
-	}
-
-	return tags
-}
-
-// buildSerializer grabs the necessary entries from the ast.Table for creating
-// a serializers.Serializer object, and creates it, which can then be added onto
-// an Output object.
-func (c *Config) buildSerializer(tbl *ast.Table) (serializers.Serializer, error) {
-	sc := &serializers.Config{TimestampUnits: 1 * time.Second}
-
-	c.getFieldString(tbl, "data_format", &sc.DataFormat)
-
-	if sc.DataFormat == "" {
-		sc.DataFormat = "influx"
-	}
-
-	c.getFieldString(tbl, "prefix", &sc.Prefix)
-	c.getFieldString(tbl, "template", &sc.Template)
-	c.getFieldStringSlice(tbl, "templates", &sc.Templates)
-	c.getFieldString(tbl, "carbon2_format", &sc.Carbon2Format)
-	c.getFieldString(tbl, "carbon2_sanitize_replace_char", &sc.Carbon2SanitizeReplaceChar)
-	c.getFieldInt(tbl, "influx_max_line_bytes", &sc.InfluxMaxLineBytes)
-
-	c.getFieldBool(tbl, "influx_sort_fields", &sc.InfluxSortFields)
-	c.getFieldBool(tbl, "influx_uint_support", &sc.InfluxUintSupport)
-	c.getFieldBool(tbl, "graphite_tag_support", &sc.GraphiteTagSupport)
-	c.getFieldString(tbl, "graphite_tag_sanitize_mode", &sc.GraphiteTagSanitizeMode)
-
-	c.getFieldString(tbl, "graphite_separator", &sc.GraphiteSeparator)
-
-	c.getFieldDuration(tbl, "json_timestamp_units", &sc.TimestampUnits)
-	c.getFieldString(tbl, "json_timestamp_format", &sc.TimestampFormat)
-
-	c.getFieldBool(tbl, "splunkmetric_hec_routing", &sc.HecRouting)
-	c.getFieldBool(tbl, "splunkmetric_multimetric", &sc.SplunkmetricMultiMetric)
-
-	c.getFieldStringSlice(tbl, "wavefront_source_override", &sc.WavefrontSourceOverride)
-	c.getFieldBool(tbl, "wavefront_use_strict", &sc.WavefrontUseStrict)
-	c.getFieldBool(tbl, "wavefront_disable_prefix_conversion", &sc.WavefrontDisablePrefixConversion)
-
-	c.getFieldBool(tbl, "prometheus_export_timestamp", &sc.PrometheusExportTimestamp)
-	c.getFieldBool(tbl, "prometheus_sort_metrics", &sc.PrometheusSortMetrics)
-	c.getFieldBool(tbl, "prometheus_string_as_label", &sc.PrometheusStringAsLabel)
-
-	if c.hasErrs() {
-		return nil, c.firstErr()
-	}
-
-	return serializers.NewSerializer(sc)
+	// Generate an ID for the plugin
+	cp.ID, err = generatePluginID("inputs."+name, tbl)
+	return cp, err
 }
 
 // buildOutput parses output specific items from the ast.Table,
-// builds the filter and returns an
+// builds the filter and returns a
 // models.OutputConfig to be inserted into models.RunningInput
 // Note: error exists in the return for future calls that might require error
 func (c *Config) buildOutput(name string, tbl *ast.Table) (*models.OutputConfig, error) {
-	filter, err := c.buildFilter(tbl)
+	filter, err := c.buildFilter("outputs."+name, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -1736,30 +1470,33 @@ func (c *Config) buildOutput(name string, tbl *ast.Table) (*models.OutputConfig,
 		return nil, c.firstErr()
 	}
 
-	return oc, nil
+	// Generate an ID for the plugin
+	oc.ID, err = generatePluginID("outputs."+name, tbl)
+	return oc, err
 }
 
 func (c *Config) missingTomlField(_ reflect.Type, key string) error {
 	switch key {
-	case "alias", "carbon2_format", "carbon2_sanitize_replace_char", "collectd_auth_file",
-		"collectd_parse_multivalue", "collectd_security_level", "collectd_typesdb", "collection_jitter",
-		"collection_offset",
-		"data_format", "data_type", "delay", "drop", "drop_original", "dropwizard_metric_registry_path",
-		"dropwizard_tag_paths", "dropwizard_tags_path", "dropwizard_time_format", "dropwizard_time_path",
-		"fielddrop", "fieldpass", "flush_interval", "flush_jitter", "form_urlencoded_tag_keys",
-		"grace", "graphite_separator", "graphite_tag_sanitize_mode", "graphite_tag_support",
-		"grok_custom_pattern_files", "grok_custom_patterns", "grok_named_patterns", "grok_patterns",
-		"grok_timezone", "grok_unique_timestamp", "influx_max_line_bytes", "influx_parser_type", "influx_sort_fields",
-		"influx_uint_support", "interval", "json_name_key", "json_query", "json_strict",
-		"json_string_fields", "json_time_format", "json_time_key", "json_timestamp_format", "json_timestamp_units", "json_timezone", "json_v2",
-		"lvm", "metric_batch_size", "metric_buffer_limit", "name_override", "name_prefix",
-		"name_suffix", "namedrop", "namepass", "order", "pass", "period", "precision",
-		"prefix", "prometheus_export_timestamp", "prometheus_ignore_timestamp", "prometheus_sort_metrics", "prometheus_string_as_label",
-		"separator", "splunkmetric_hec_routing", "splunkmetric_multimetric", "tag_keys",
-		"tagdrop", "tagexclude", "taginclude", "tagpass", "tags", "template", "templates",
-		"value_field_name", "wavefront_source_override", "wavefront_use_strict", "wavefront_disable_prefix_conversion":
+	// General options to ignore
+	case "alias", "always_include_local_tags",
+		"collection_jitter", "collection_offset",
+		"data_format", "delay", "drop", "drop_original",
+		"fielddrop", "fieldexclude", "fieldinclude", "fieldpass", "flush_interval", "flush_jitter",
+		"grace",
+		"interval",
+		"lvm", // What is this used for?
+		"metric_batch_size", "metric_buffer_limit", "metricpass",
+		"name_override", "name_prefix", "name_suffix", "namedrop", "namedrop_separator", "namepass", "namepass_separator",
+		"order",
+		"pass", "period", "precision",
+		"tagdrop", "tagexclude", "taginclude", "tagpass", "tags":
 
-		// ignore fields that are common to all plugins.
+	// Secret-store options to ignore
+	case "id":
+
+	// Parser and serializer options to ignore
+	case "data_type", "influx_parser_type":
+
 	default:
 		c.unusedFieldsMutex.Lock()
 		c.UnusedFields[key] = true
@@ -1769,11 +1506,29 @@ func (c *Config) missingTomlField(_ reflect.Type, key string) error {
 }
 
 func (c *Config) setLocalMissingTomlFieldTracker(counter map[string]int) {
-	f := func(_ reflect.Type, key string) error {
-		if c, ok := counter[key]; ok {
-			counter[key] = c + 1
-		} else {
+	f := func(t reflect.Type, key string) error {
+		// Check if we are in a root element that might share options among
+		// each other. Those root elements are plugins of all types.
+		// All other elements are subtables of their respective plugin and
+		// should just be hit once anyway. Therefore, we mark them with a
+		// high number to handle them correctly later.
+		pt := reflect.PtrTo(t)
+		root := pt.Implements(reflect.TypeOf((*telegraf.Input)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.ServiceInput)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.Output)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.Aggregator)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.Processor)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.StreamingProcessor)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.Parser)(nil)).Elem())
+		root = root || pt.Implements(reflect.TypeOf((*telegraf.Serializer)(nil)).Elem())
+
+		c, ok := counter[key]
+		if !root {
+			counter[key] = 100
+		} else if !ok {
 			counter[key] = 1
+		} else {
+			counter[key] = c + 1
 		}
 		return nil
 	}
@@ -1860,6 +1615,8 @@ func (c *Config) getFieldInt64(tbl *ast.Table, fieldName string, target *int64) 
 					return
 				}
 				*target = i
+			} else {
+				c.addError(tbl, fmt.Errorf("found unexpected format while parsing %q, expecting int", fieldName))
 			}
 		}
 	}
@@ -1896,25 +1653,10 @@ func (c *Config) getFieldTagFilter(tbl *ast.Table, fieldName string, target *[]m
 					tagFilter := models.TagFilter{Name: name}
 					for _, elem := range ary.Value {
 						if str, ok := elem.(*ast.String); ok {
-							tagFilter.Filter = append(tagFilter.Filter, str.Value)
+							tagFilter.Values = append(tagFilter.Values, str.Value)
 						}
 					}
 					*target = append(*target, tagFilter)
-				}
-			}
-		}
-	}
-}
-
-func (c *Config) getFieldStringMap(tbl *ast.Table, fieldName string, target *map[string]string) {
-	*target = map[string]string{}
-	if node, ok := tbl.Fields[fieldName]; ok {
-		if subtbl, ok := node.(*ast.Table); ok {
-			for name, val := range subtbl.Fields {
-				if kv, ok := val.(*ast.KeyValue); ok {
-					if str, ok := kv.Value.(*ast.String); ok {
-						(*target)[name] = str.Value
-					}
 				}
 			}
 		}
@@ -1927,6 +1669,15 @@ func keys(m map[string]bool) []string {
 		result = append(result, k)
 	}
 	return result
+}
+
+func setDefaultParser(category string, name string) string {
+	// Legacy support, exec plugin originally parsed JSON by default.
+	if category == "inputs" && name == "exec" {
+		return "json"
+	}
+
+	return "influx"
 }
 
 func (c *Config) hasErrs() bool {
@@ -1942,11 +1693,4 @@ func (c *Config) firstErr() error {
 
 func (c *Config) addError(tbl *ast.Table, err error) {
 	c.errs = append(c.errs, fmt.Errorf("line %d:%d: %w", tbl.Line, tbl.Position, err))
-}
-
-// unwrappable lets you retrieve the original telegraf.Processor from the
-// StreamingProcessor. This is necessary because the toml Unmarshaller won't
-// look inside composed types.
-type unwrappable interface {
-	Unwrap() telegraf.Processor
 }

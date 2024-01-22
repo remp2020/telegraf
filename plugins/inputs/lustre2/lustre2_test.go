@@ -1,5 +1,4 @@
-//go:build !windows
-// +build !windows
+//go:build linux
 
 package lustre2
 
@@ -7,11 +6,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/influxdata/toml"
+	"github.com/influxdata/toml/ast"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/influxdata/toml"
-	"github.com/influxdata/toml/ast"
 )
 
 // Set config file variables to point to fake directory structure instead of /proc?
@@ -133,28 +132,32 @@ const mdtJobStatsContents = `job_stats:
 `
 
 func TestLustre2GeneratesMetrics(t *testing.T) {
-	tempdir := os.TempDir() + "/telegraf/proc/fs/lustre/"
+	tmpDir, err := os.MkdirTemp("", "telegraf-lustre")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	tempdir := tmpDir + "/telegraf/proc/fs/lustre/"
 	ostName := "OST0001"
 
 	mdtdir := tempdir + "/mdt/"
-	err := os.MkdirAll(mdtdir+"/"+ostName, 0755)
+	err = os.MkdirAll(mdtdir+"/"+ostName, 0750)
 	require.NoError(t, err)
 
 	osddir := tempdir + "/osd-ldiskfs/"
-	err = os.MkdirAll(osddir+"/"+ostName, 0755)
+	err = os.MkdirAll(osddir+"/"+ostName, 0750)
 	require.NoError(t, err)
 
 	obddir := tempdir + "/obdfilter/"
-	err = os.MkdirAll(obddir+"/"+ostName, 0755)
+	err = os.MkdirAll(obddir+"/"+ostName, 0750)
 	require.NoError(t, err)
 
-	err = os.WriteFile(mdtdir+"/"+ostName+"/md_stats", []byte(mdtProcContents), 0644)
+	err = os.WriteFile(mdtdir+"/"+ostName+"/md_stats", []byte(mdtProcContents), 0640)
 	require.NoError(t, err)
 
-	err = os.WriteFile(osddir+"/"+ostName+"/stats", []byte(osdldiskfsProcContents), 0644)
+	err = os.WriteFile(osddir+"/"+ostName+"/stats", []byte(osdldiskfsProcContents), 0640)
 	require.NoError(t, err)
 
-	err = os.WriteFile(obddir+"/"+ostName+"/stats", []byte(obdfilterProcContents), 0644)
+	err = os.WriteFile(obddir+"/"+ostName+"/stats", []byte(obdfilterProcContents), 0640)
 	require.NoError(t, err)
 
 	// Begin by testing standard Lustre stats
@@ -199,27 +202,28 @@ func TestLustre2GeneratesMetrics(t *testing.T) {
 	}
 
 	acc.AssertContainsTaggedFields(t, "lustre2", fields, tags)
-
-	err = os.RemoveAll(os.TempDir() + "/telegraf")
-	require.NoError(t, err)
 }
 
 func TestLustre2GeneratesClientMetrics(t *testing.T) {
-	tempdir := os.TempDir() + "/telegraf/proc/fs/lustre/"
+	tmpDir, err := os.MkdirTemp("", "telegraf-lustre-client")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	tempdir := tmpDir + "/telegraf/proc/fs/lustre/"
 	ostName := "OST0001"
 	clientName := "10.2.4.27@o2ib1"
 	mdtdir := tempdir + "/mdt/"
-	err := os.MkdirAll(mdtdir+"/"+ostName+"/exports/"+clientName, 0755)
+	err = os.MkdirAll(mdtdir+"/"+ostName+"/exports/"+clientName, 0750)
 	require.NoError(t, err)
 
 	obddir := tempdir + "/obdfilter/"
-	err = os.MkdirAll(obddir+"/"+ostName+"/exports/"+clientName, 0755)
+	err = os.MkdirAll(obddir+"/"+ostName+"/exports/"+clientName, 0750)
 	require.NoError(t, err)
 
-	err = os.WriteFile(mdtdir+"/"+ostName+"/exports/"+clientName+"/stats", []byte(mdtProcContents), 0644)
+	err = os.WriteFile(mdtdir+"/"+ostName+"/exports/"+clientName+"/stats", []byte(mdtProcContents), 0640)
 	require.NoError(t, err)
 
-	err = os.WriteFile(obddir+"/"+ostName+"/exports/"+clientName+"/stats", []byte(obdfilterProcContents), 0644)
+	err = os.WriteFile(obddir+"/"+ostName+"/exports/"+clientName+"/stats", []byte(obdfilterProcContents), 0640)
 	require.NoError(t, err)
 
 	// Begin by testing standard Lustre stats
@@ -262,28 +266,29 @@ func TestLustre2GeneratesClientMetrics(t *testing.T) {
 	}
 
 	acc.AssertContainsTaggedFields(t, "lustre2", fields, tags)
-
-	err = os.RemoveAll(os.TempDir() + "/telegraf")
-	require.NoError(t, err)
 }
 
 func TestLustre2GeneratesJobstatsMetrics(t *testing.T) {
-	tempdir := os.TempDir() + "/telegraf/proc/fs/lustre/"
+	tmpDir, err := os.MkdirTemp("", "telegraf-lustre-jobstats")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	tempdir := tmpDir + "/telegraf/proc/fs/lustre/"
 	ostName := "OST0001"
 	jobNames := []string{"cluster-testjob1", "testjob2"}
 
 	mdtdir := tempdir + "/mdt/"
-	err := os.MkdirAll(mdtdir+"/"+ostName, 0755)
+	err = os.MkdirAll(mdtdir+"/"+ostName, 0750)
 	require.NoError(t, err)
 
 	obddir := tempdir + "/obdfilter/"
-	err = os.MkdirAll(obddir+"/"+ostName, 0755)
+	err = os.MkdirAll(obddir+"/"+ostName, 0750)
 	require.NoError(t, err)
 
-	err = os.WriteFile(mdtdir+"/"+ostName+"/job_stats", []byte(mdtJobStatsContents), 0644)
+	err = os.WriteFile(mdtdir+"/"+ostName+"/job_stats", []byte(mdtJobStatsContents), 0640)
 	require.NoError(t, err)
 
-	err = os.WriteFile(obddir+"/"+ostName+"/job_stats", []byte(obdfilterJobStatsContents), 0644)
+	err = os.WriteFile(obddir+"/"+ostName+"/job_stats", []byte(obdfilterJobStatsContents), 0640)
 	require.NoError(t, err)
 
 	// Test Lustre Jobstats
@@ -311,90 +316,84 @@ func TestLustre2GeneratesJobstatsMetrics(t *testing.T) {
 	}
 
 	// make this for two tags
-	var fields []map[string]interface{}
-
-	fields = append(fields, map[string]interface{}{
-		"jobstats_read_calls":      uint64(1),
-		"jobstats_read_min_size":   uint64(4096),
-		"jobstats_read_max_size":   uint64(4096),
-		"jobstats_read_bytes":      uint64(4096),
-		"jobstats_write_calls":     uint64(25),
-		"jobstats_write_min_size":  uint64(1048576),
-		"jobstats_write_max_size":  uint64(16777216),
-		"jobstats_write_bytes":     uint64(26214400),
-		"jobstats_ost_getattr":     uint64(0),
-		"jobstats_ost_setattr":     uint64(0),
-		"jobstats_punch":           uint64(1),
-		"jobstats_ost_sync":        uint64(0),
-		"jobstats_destroy":         uint64(0),
-		"jobstats_create":          uint64(0),
-		"jobstats_ost_statfs":      uint64(0),
-		"jobstats_get_info":        uint64(0),
-		"jobstats_set_info":        uint64(0),
-		"jobstats_quotactl":        uint64(0),
-		"jobstats_open":            uint64(5),
-		"jobstats_close":           uint64(4),
-		"jobstats_mknod":           uint64(6),
-		"jobstats_link":            uint64(8),
-		"jobstats_unlink":          uint64(90),
-		"jobstats_mkdir":           uint64(521),
-		"jobstats_rmdir":           uint64(520),
-		"jobstats_rename":          uint64(9),
-		"jobstats_getattr":         uint64(11),
-		"jobstats_setattr":         uint64(1),
-		"jobstats_getxattr":        uint64(3),
-		"jobstats_setxattr":        uint64(4),
-		"jobstats_statfs":          uint64(1205),
-		"jobstats_sync":            uint64(2),
-		"jobstats_samedir_rename":  uint64(705),
-		"jobstats_crossdir_rename": uint64(200),
-	})
-
-	fields = append(fields, map[string]interface{}{
-		"jobstats_read_calls":      uint64(1),
-		"jobstats_read_min_size":   uint64(1024),
-		"jobstats_read_max_size":   uint64(1024),
-		"jobstats_read_bytes":      uint64(1024),
-		"jobstats_write_calls":     uint64(25),
-		"jobstats_write_min_size":  uint64(2048),
-		"jobstats_write_max_size":  uint64(2048),
-		"jobstats_write_bytes":     uint64(51200),
-		"jobstats_ost_getattr":     uint64(0),
-		"jobstats_ost_setattr":     uint64(0),
-		"jobstats_punch":           uint64(1),
-		"jobstats_ost_sync":        uint64(0),
-		"jobstats_destroy":         uint64(0),
-		"jobstats_create":          uint64(0),
-		"jobstats_ost_statfs":      uint64(0),
-		"jobstats_get_info":        uint64(0),
-		"jobstats_set_info":        uint64(0),
-		"jobstats_quotactl":        uint64(0),
-		"jobstats_open":            uint64(6),
-		"jobstats_close":           uint64(7),
-		"jobstats_mknod":           uint64(8),
-		"jobstats_link":            uint64(9),
-		"jobstats_unlink":          uint64(20),
-		"jobstats_mkdir":           uint64(200),
-		"jobstats_rmdir":           uint64(210),
-		"jobstats_rename":          uint64(8),
-		"jobstats_getattr":         uint64(10),
-		"jobstats_setattr":         uint64(2),
-		"jobstats_getxattr":        uint64(4),
-		"jobstats_setxattr":        uint64(5),
-		"jobstats_statfs":          uint64(1207),
-		"jobstats_sync":            uint64(3),
-		"jobstats_samedir_rename":  uint64(706),
-		"jobstats_crossdir_rename": uint64(201),
-	})
+	fields := []map[string]interface{}{
+		{
+			"jobstats_read_calls":      uint64(1),
+			"jobstats_read_min_size":   uint64(4096),
+			"jobstats_read_max_size":   uint64(4096),
+			"jobstats_read_bytes":      uint64(4096),
+			"jobstats_write_calls":     uint64(25),
+			"jobstats_write_min_size":  uint64(1048576),
+			"jobstats_write_max_size":  uint64(16777216),
+			"jobstats_write_bytes":     uint64(26214400),
+			"jobstats_ost_getattr":     uint64(0),
+			"jobstats_ost_setattr":     uint64(0),
+			"jobstats_punch":           uint64(1),
+			"jobstats_ost_sync":        uint64(0),
+			"jobstats_destroy":         uint64(0),
+			"jobstats_create":          uint64(0),
+			"jobstats_ost_statfs":      uint64(0),
+			"jobstats_get_info":        uint64(0),
+			"jobstats_set_info":        uint64(0),
+			"jobstats_quotactl":        uint64(0),
+			"jobstats_open":            uint64(5),
+			"jobstats_close":           uint64(4),
+			"jobstats_mknod":           uint64(6),
+			"jobstats_link":            uint64(8),
+			"jobstats_unlink":          uint64(90),
+			"jobstats_mkdir":           uint64(521),
+			"jobstats_rmdir":           uint64(520),
+			"jobstats_rename":          uint64(9),
+			"jobstats_getattr":         uint64(11),
+			"jobstats_setattr":         uint64(1),
+			"jobstats_getxattr":        uint64(3),
+			"jobstats_setxattr":        uint64(4),
+			"jobstats_statfs":          uint64(1205),
+			"jobstats_sync":            uint64(2),
+			"jobstats_samedir_rename":  uint64(705),
+			"jobstats_crossdir_rename": uint64(200),
+		},
+		{
+			"jobstats_read_calls":      uint64(1),
+			"jobstats_read_min_size":   uint64(1024),
+			"jobstats_read_max_size":   uint64(1024),
+			"jobstats_read_bytes":      uint64(1024),
+			"jobstats_write_calls":     uint64(25),
+			"jobstats_write_min_size":  uint64(2048),
+			"jobstats_write_max_size":  uint64(2048),
+			"jobstats_write_bytes":     uint64(51200),
+			"jobstats_ost_getattr":     uint64(0),
+			"jobstats_ost_setattr":     uint64(0),
+			"jobstats_punch":           uint64(1),
+			"jobstats_ost_sync":        uint64(0),
+			"jobstats_destroy":         uint64(0),
+			"jobstats_create":          uint64(0),
+			"jobstats_ost_statfs":      uint64(0),
+			"jobstats_get_info":        uint64(0),
+			"jobstats_set_info":        uint64(0),
+			"jobstats_quotactl":        uint64(0),
+			"jobstats_open":            uint64(6),
+			"jobstats_close":           uint64(7),
+			"jobstats_mknod":           uint64(8),
+			"jobstats_link":            uint64(9),
+			"jobstats_unlink":          uint64(20),
+			"jobstats_mkdir":           uint64(200),
+			"jobstats_rmdir":           uint64(210),
+			"jobstats_rename":          uint64(8),
+			"jobstats_getattr":         uint64(10),
+			"jobstats_setattr":         uint64(2),
+			"jobstats_getxattr":        uint64(4),
+			"jobstats_setxattr":        uint64(5),
+			"jobstats_statfs":          uint64(1207),
+			"jobstats_sync":            uint64(3),
+			"jobstats_samedir_rename":  uint64(706),
+			"jobstats_crossdir_rename": uint64(201),
+		},
+	}
 
 	for index := 0; index < len(fields); index++ {
 		acc.AssertContainsTaggedFields(t, "lustre2", fields[index], tags[index])
 	}
-
-	// run this over both tags
-
-	err = os.RemoveAll(os.TempDir() + "/telegraf")
-	require.NoError(t, err)
 }
 
 func TestLustre2CanParseConfiguration(t *testing.T) {

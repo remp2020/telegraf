@@ -1,6 +1,5 @@
 //go:generate ../../../tools/readme_config_includer/generator
 //go:build linux
-// +build linux
 
 package sysstat
 
@@ -8,6 +7,7 @@ import (
 	"bufio"
 	_ "embed"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,7 +23,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -87,7 +86,7 @@ func (s *Sysstat) Init() error {
 	if s.Sadf == "" {
 		sadf, err := exec.LookPath(cmd)
 		if err != nil {
-			return fmt.Errorf("looking up %q failed: %v", cmd, err)
+			return fmt.Errorf("looking up %q failed: %w", cmd, err)
 		}
 		s.Sadf = sadf
 	}
@@ -115,9 +114,10 @@ func (s *Sysstat) Gather(acc telegraf.Accumulator) error {
 
 	tmpfile, err := os.CreateTemp("", "sysstat-*")
 	if err != nil {
-		return fmt.Errorf("failed to create tmp file: %s", err)
+		return fmt.Errorf("failed to create tmp file: %w", err)
 	}
 	defer os.Remove(tmpfile.Name())
+	defer tmpfile.Close()
 
 	ts := time.Now().Add(time.Duration(s.interval) * time.Second)
 	if err := s.collect(tmpfile.Name()); err != nil {
@@ -138,7 +138,9 @@ func (s *Sysstat) Gather(acc telegraf.Accumulator) error {
 
 // collect collects sysstat data with the collector utility sadc.
 // It runs the following command:
-//     Sadc -S <Activity1> -S <Activity2> ... <collectInterval> 2 tmpFile
+//
+//	Sadc -S <Activity1> -S <Activity2> ... <collectInterval> 2 tmpFile
+//
 // The above command collects system metrics during <collectInterval> and
 // saves it in binary form to tmpFile.
 func (s *Sysstat) collect(tempfile string) error {
@@ -159,7 +161,7 @@ func (s *Sysstat) collect(tempfile string) error {
 	cmd := execCommand(s.Sadc, options...)
 	out, err := internal.CombinedOutputTimeout(cmd, time.Second*time.Duration(collectInterval+parseInterval))
 	if err != nil {
-		return fmt.Errorf("failed to run command %s: %s - %s", strings.Join(cmd.Args, " "), err, string(out))
+		return fmt.Errorf("failed to run command %q: %w - %q", strings.Join(cmd.Args, " "), err, string(out))
 	}
 	return nil
 }
@@ -190,7 +192,9 @@ func withCLocale(cmd *exec.Cmd) *exec.Cmd {
 }
 
 // parse runs Sadf on the previously saved tmpFile:
-//    Sadf -p -- -p <option> tmpFile
+//
+//	Sadf -p -- -p <option> tmpFile
+//
 // and parses the output to add it to the telegraf.Accumulator acc.
 func (s *Sysstat) parse(acc telegraf.Accumulator, option string, tmpfile string, ts time.Time) error {
 	cmd := execCommand(s.Sadf, s.sadfOptions(option, tmpfile)...)
@@ -200,7 +204,7 @@ func (s *Sysstat) parse(acc telegraf.Accumulator, option string, tmpfile string,
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("running command '%s' failed: %s", strings.Join(cmd.Args, " "), err)
+		return fmt.Errorf("running command %q failed: %w", strings.Join(cmd.Args, " "), err)
 	}
 
 	r := bufio.NewReader(stdout)
@@ -216,7 +220,7 @@ func (s *Sysstat) parse(acc telegraf.Accumulator, option string, tmpfile string,
 	m := make(map[string]groupData)
 	for {
 		record, err := csvReader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -270,8 +274,7 @@ func (s *Sysstat) parse(acc telegraf.Accumulator, option string, tmpfile string,
 		}
 	}
 	if err := internal.WaitTimeout(cmd, time.Second*5); err != nil {
-		return fmt.Errorf("command %s failed with %s",
-			strings.Join(cmd.Args, " "), err)
+		return fmt.Errorf("command %q failed with: %w", strings.Join(cmd.Args, " "), err)
 	}
 	return nil
 }

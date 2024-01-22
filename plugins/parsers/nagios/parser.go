@@ -13,6 +13,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
 // unknownExitCode is the nagios unknown status code
@@ -26,8 +27,8 @@ func getExitCode(err error) (int, error) {
 		return 0, nil
 	}
 
-	ee, ok := err.(*exec.ExitError)
-	if !ok {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
 		return unknownExitCode, err
 	}
 
@@ -85,29 +86,32 @@ func AddState(runErr error, errMessage []byte, metrics []telegraf.Metric) []tele
 	return append(metrics, m)
 }
 
-type NagiosParser struct {
-	MetricName  string
-	DefaultTags map[string]string
-	Log         telegraf.Logger `toml:"-"`
+type Parser struct {
+	DefaultTags map[string]string `toml:"-"`
+	Log         telegraf.Logger   `toml:"-"`
+
+	metricName string
 }
 
 // Got from Alignak
 // https://github.com/Alignak-monitoring/alignak/blob/develop/alignak/misc/perfdata.py
 var (
 	perfSplitRegExp = regexp.MustCompile(`([^=]+=\S+)`)
-	nagiosRegExp    = regexp.MustCompile(`^([^=]+)=([\d\.\-\+eE]+)([\w\/%]*);?([\d\.\-\+eE:~@]+)?;?([\d\.\-\+eE:~@]+)?;?([\d\.\-\+eE]+)?;?([\d\.\-\+eE]+)?;?\s*`)
+	nagiosRegExp    = regexp.MustCompile(
+		`^([^=]+)=([\d\.\-\+eE]+)([\w\/%]*);?([\d\.\-\+eE:~@]+)?;?([\d\.\-\+eE:~@]+)?;?([\d\.\-\+eE]+)?;?([\d\.\-\+eE]+)?;?\s*`,
+	)
 )
 
-func (p *NagiosParser) ParseLine(line string) (telegraf.Metric, error) {
+func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
 	metrics, err := p.Parse([]byte(line))
 	return metrics[0], err
 }
 
-func (p *NagiosParser) SetDefaultTags(tags map[string]string) {
+func (p *Parser) SetDefaultTags(tags map[string]string) {
 	p.DefaultTags = tags
 }
 
-func (p *NagiosParser) Parse(buf []byte) ([]telegraf.Metric, error) {
+func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 	ts := time.Now().UTC()
 
 	s := bufio.NewScanner(bytes.NewReader(buf))
@@ -131,7 +135,7 @@ func (p *NagiosParser) Parse(buf []byte) ([]telegraf.Metric, error) {
 		metrics = append(metrics, ms...)
 		fallthrough
 	case 1:
-		msg.Write(bytes.TrimSpace(parts[0])) //nolint:revive // from buffer.go: "err is always nil"
+		msg.Write(bytes.TrimSpace(parts[0]))
 	default:
 		return nil, errors.New("illegal output format")
 	}
@@ -141,9 +145,9 @@ func (p *NagiosParser) Parse(buf []byte) ([]telegraf.Metric, error) {
 		if bytes.Contains(s.Bytes(), []byte{'|'}) {
 			parts := bytes.Split(s.Bytes(), []byte{'|'})
 			if longmsg.Len() != 0 {
-				longmsg.WriteByte('\n') //nolint:revive // from buffer.go: "err is always nil"
+				longmsg.WriteByte('\n')
 			}
-			longmsg.Write(bytes.TrimSpace(parts[0])) //nolint:revive // from buffer.go: "err is always nil"
+			longmsg.Write(bytes.TrimSpace(parts[0]))
 
 			ms, err := parsePerfData(string(parts[1]), ts)
 			if err != nil {
@@ -153,9 +157,9 @@ func (p *NagiosParser) Parse(buf []byte) ([]telegraf.Metric, error) {
 			break
 		}
 		if longmsg.Len() != 0 {
-			longmsg.WriteByte('\n') //nolint:revive // from buffer.go: "err is always nil"
+			longmsg.WriteByte('\n')
 		}
-		longmsg.Write(bytes.TrimSpace(s.Bytes())) //nolint:revive // from buffer.go: "err is always nil"
+		longmsg.Write(bytes.TrimSpace(s.Bytes()))
 	}
 
 	// Parse extra performance data.
@@ -307,4 +311,13 @@ func parseThreshold(threshold string) (min float64, max float64, err error) {
 	}
 
 	return min, max, err
+}
+
+func init() {
+	// Register parser
+	parsers.Add("nagios",
+		func(defaultMetricName string) telegraf.Parser {
+			return &Parser{metricName: defaultMetricName}
+		},
+	)
 }

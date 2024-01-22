@@ -5,6 +5,15 @@ meant to be multi platform and uses platform specific collection methods.
 
 Currently supports Linux and Windows.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -30,9 +39,14 @@ following command:
 wmic /namespace:\\root\wmi PATH MSAcpi_ThermalZoneTemperature
 ```
 
+If the result is "Not Supported" you may be running in a virtualized environment
+and not a physical machine. Additionally, if you still get this result your
+motherboard or system may not support querying these values. Finally, you may
+be required to run as admin to get the values.
+
 ## Example Output
 
-```shell
+```text
 temp,sensor=coretemp_physicalid0_crit temp=100 1531298763000000000
 temp,sensor=coretemp_physicalid0_critalarm temp=0 1531298763000000000
 temp,sensor=coretemp_physicalid0_input temp=100 1531298763000000000

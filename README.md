@@ -3,7 +3,7 @@
 
 ![tiger](assets/TelegrafTiger.png "tiger")
 
-[![Contribute](https://img.shields.io/badge/Contribute%20To%20Telegraf-orange.svg?logo=influx&style=for-the-badge)](https://github.com/influxdata/telegraf/blob/master/CONTRIBUTING.md) [![Slack Status](https://img.shields.io/badge/slack-join_chat-white.svg?logo=slack&style=for-the-badge)](https://www.influxdata.com/slack) [![Circle CI](https://circleci.com/gh/influxdata/telegraf.svg?style=svg)](https://circleci.com/gh/influxdata/telegraf) [![GoDoc](https://godoc.org/github.com/influxdata/telegraf?status.svg)](https://godoc.org/github.com/influxdata/telegraf) [![Docker pulls](https://img.shields.io/docker/pulls/library/telegraf.svg)](https://hub.docker.com/_/telegraf/)
+[![Contribute](https://img.shields.io/badge/Contribute%20To%20Telegraf-orange.svg?logo=influx&style=for-the-badge)](https://github.com/influxdata/telegraf/blob/master/CONTRIBUTING.md) [![Slack Status](https://img.shields.io/badge/slack-join_chat-white.svg?logo=slack&style=for-the-badge)](https://www.influxdata.com/slack) [![Circle CI](https://circleci.com/gh/influxdata/telegraf.svg?style=svg)](https://circleci.com/gh/influxdata/telegraf) [![GoDoc](https://godoc.org/github.com/influxdata/telegraf?status.svg)](https://godoc.org/github.com/influxdata/telegraf) [![Docker pulls](https://img.shields.io/docker/pulls/library/telegraf.svg)](https://hub.docker.com/_/telegraf/) [![Go Report Card](https://goreportcard.com/badge/github.com/influxdata/telegraf)](https://goreportcard.com/report/github.com/influxdata/telegraf)
 
 Telegraf is an agent for collecting, processing, aggregating, and writing metrics. Based on a
 plugin system to enable developers in the community to easily add support for additional
@@ -22,12 +22,12 @@ incorporate as many pull requests as possible. Consider looking at the
 
 Telegraf shares the same [minimum requirements][] as Go:
 
-- Linux kernel version 2.6.23 or later
-- Windows 7 or later
-- FreeBSD 11.2 or later
-- MacOS 10.11 El Capitan or later
+- Linux kernel version 2.6.32 or later
+- Windows 10 or later
+- FreeBSD 12 or later
+- macOS 10.15 Catalina or later
 
-[minimum requirements]: https://github.com/golang/go/wiki/MinimumRequirements#minimum-requirements
+[minimum requirements]: https://go.dev/wiki/MinimumRequirements
 
 ## Obtaining Telegraf
 
@@ -52,6 +52,11 @@ echo "deb https://repos.influxdata.com/debian stable main" | sudo tee /etc/apt/s
 wget -q https://repos.influxdata.com/influxdb.key
 echo '23a1c8836f0afc5ed24e0486339d7cc8f6790b83886c4c96995b88a061c5bb5d influxdb.key' | sha256sum -c && cat influxdb.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdb.gpg > /dev/null
 echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
+# influxdata-archive_compat.key GPG fingerprint:
+#     9D53 9D90 D332 8DC7 D6C8 D3B9 D8FF 8E1F 7DF8 B07E
+wget -q https://repos.influxdata.com/influxdata-archive_compat.key
+echo '393e8779c89ac8d958f81f942f9ad7fb82a25e133faddaf92e15b16e6ac9ce4c influxdata-archive_compat.key' | sha256sum -c && cat influxdata-archive_compat.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
 sudo apt-get update && sudo apt-get install telegraf
 ```
 
@@ -60,13 +65,15 @@ file and install telegraf:
 
 ```shell
 # influxdb.key GPG Fingerprint: 05CE15085FC09D18E99EFB22684A14CF2582E0C5
+# influxdata-archive_compat.key GPG fingerprint:
+#     9D53 9D90 D332 8DC7 D6C8 D3B9 D8FF 8E1F 7DF8 B07E
 cat <<EOF | sudo tee /etc/yum.repos.d/influxdata.repo
 [influxdata]
 name = InfluxData Repository - Stable
 baseurl = https://repos.influxdata.com/stable/\$basearch/main
 enabled = 1
 gpgcheck = 1
-gpgkey = https://repos.influxdata.com/influxdb.key
+gpgkey = https://repos.influxdata.com/influxdata-archive_compat.key
 EOF
 sudo yum install telegraf
 ```
@@ -78,19 +85,23 @@ Telegraf requires Go version 1.14 or newer, the Makefile requires GNU make.
 1. [Install Go](https://golang.org/doc/install) >=1.14 (1.15 recommended)
 Telegraf requires Go version 1.17 or newer, the Makefile requires GNU make.
 Telegraf requires Go version 1.18 or newer, the Makefile requires GNU make.
+Telegraf requires Go version 1.21 or newer and the Makefile requires GNU make.
 
-1. [Install Go](https://golang.org/doc/install) >=1.18 (1.18.0 recommended)
+On Windows, the makefile requires the use of a bash terminal to support all makefile targets.
+An easy option to get bash for windows is using the version that comes with [git for windows](https://gitforwindows.org/).
+
+1. [Install Go](https://golang.org/doc/install)
 2. Clone the Telegraf repository:
 
    ```shell
    git clone https://github.com/influxdata/telegraf.git
    ```
 
-3. Run `make` from the source directory
+3. Run `make build` from the source directory
 
    ```shell
    cd telegraf
-   make
+   make build
    ```
 
 ### Nightly Builds
@@ -107,6 +118,7 @@ get in touch with the package author if support is needed:
 - [Chocolatey](https://chocolatey.org/packages/telegraf) by [ripclawffb](https://chocolatey.org/profiles/ripclawffb)
 - [Scoop](https://github.com/ScoopInstaller/Main/blob/master/bucket/telegraf.json)
 - [Snap](https://snapcraft.io/telegraf) by Laurent Sesquès (sajoupa)
+- [Homebrew](https://formulae.brew.sh/formula/telegraf#default)
 
 ## Getting Started
 
@@ -125,7 +137,7 @@ telegraf config > telegraf.conf
 ### Generate config with only cpu input & influxdb output plugins defined
 
 ```shell
-telegraf --section-filter agent:inputs:outputs --input-filter cpu --output-filter influxdb config
+telegraf config --section-filter agent:inputs:outputs --input-filter cpu --output-filter influxdb
 ```
 
 ### Run a single telegraf collection, outputting metrics to stdout

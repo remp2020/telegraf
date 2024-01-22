@@ -26,6 +26,15 @@ Notes:
 * Depending on the amount of metrics on each  bucket, more than `K` series may be returned
 * If a measurement does not have one of the selected fields, it is dropped from the aggregation
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -34,7 +43,6 @@ Notes:
   ## How many seconds between aggregations
   # period = 10
 
-  ## How many top buckets to return
   ## How many top buckets to return per field
   ## Every field specified to aggregate over will return k number of results.
   ## For example, 1 field with k of 10 will return 10 buckets. While 2 fields
@@ -46,7 +54,6 @@ Notes:
   ## empty list is no aggregation over tags is done
   # group_by = ['*']
 
-  ## Over which fields is the aggregation done
   ## The field(s) to aggregate
   ## Each field defined is used to create an independent aggregation. Each
   ## aggregation will return k buckets. If a metric does not have a defined

@@ -16,10 +16,8 @@ import (
 	"github.com/influxdata/telegraf/config"
 	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -42,7 +40,7 @@ type PubSubPush struct {
 	MaxUndeliveredMessages int `toml:"max_undelivered_messages"`
 
 	tlsint.ServerConfig
-	parsers.Parser
+	telegraf.Parser
 
 	server *http.Server
 	acc    telegraf.TrackingAccumulator
@@ -75,7 +73,7 @@ func (p *PubSubPush) Gather(_ telegraf.Accumulator) error {
 	return nil
 }
 
-func (p *PubSubPush) SetParser(parser parsers.Parser) {
+func (p *PubSubPush) SetParser(parser telegraf.Parser) {
 	p.Parser = parser
 }
 
@@ -137,8 +135,7 @@ func (p *PubSubPush) Start(acc telegraf.Accumulator) error {
 // Stop cleans up all resources
 func (p *PubSubPush) Stop() {
 	p.cancel()
-	//nolint:errcheck,revive // we cannot do anything if the shutdown fails
-	p.server.Shutdown(p.ctx)
+	p.server.Shutdown(p.ctx) //nolint:errcheck // we cannot do anything if the shutdown fails
 	p.wg.Wait()
 }
 

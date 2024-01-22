@@ -8,6 +8,15 @@ Google Cloud using either a service account or user credentials.
 Be aware that this plugin accesses APIs that are
 [chargeable](https://cloud.google.com/bigquery/pricing) and might incur costs.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -17,7 +26,7 @@ Be aware that this plugin accesses APIs that are
   credentials_file = "/path/to/service/account/key.json"
 
   ## Google Cloud Platform Project
-  project = "my-gcp-project"
+  # project = ""
 
   ## The namespace for the metric descriptor
   dataset = "telegraf"
@@ -27,9 +36,13 @@ Be aware that this plugin accesses APIs that are
 
   ## Character to replace hyphens on Metric name
   # replace_hyphen_to = "_"
+
+  ## Write all metrics in a single compact table
+  # compact_table = ""
 ```
 
-Requires `project` to specify where BigQuery entries will be persisted.
+Leaving `project` empty indicates the plugin will try to retrieve the project
+from the credentials file.
 
 Requires `dataset` to specify under which BigQuery dataset the corresponding
 metrics tables reside.
@@ -43,6 +56,36 @@ table on BigQuery:
   be set to string.
 * Should contain the metric's fields with the same name and the column type
   should match the field type.
+
+## Compact table
+
+When enabling the compact table, all metrics are inserted to the given table
+with the following schema:
+
+```json
+[
+  {
+    "mode": "REQUIRED",
+    "name": "timestamp",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "REQUIRED",
+    "name": "name",
+    "type": "STRING"
+  },
+  {
+    "mode": "REQUIRED",
+    "name": "tags",
+    "type": "JSON"
+  },
+  {
+    "mode": "REQUIRED",
+    "name": "fields",
+    "type": "JSON"
+  }
+]
+```
 
 ## Restrictions
 

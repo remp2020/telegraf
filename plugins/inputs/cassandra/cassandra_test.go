@@ -114,11 +114,13 @@ func (c jolokiaClientStub) MakeRequest(_ *http.Request) (*http.Response, error) 
 
 // Generates a pointer to an HttpJson object that uses a mock HTTP client.
 // Parameters:
-//     response  : Body of the response that the mock HTTP client should return
-//     statusCode: HTTP status code the mock HTTP client should return
+//
+//	response  : Body of the response that the mock HTTP client should return
+//	statusCode: HTTP status code the mock HTTP client should return
 //
 // Returns:
-//     *HttpJson: Pointer to an HttpJson object that uses the generated mock HTTP client
+//
+//	*HttpJson: Pointer to an HttpJson object that uses the generated mock HTTP client
 func genJolokiaClientStub(response string, statusCode int, servers []string, metrics []string) *Cassandra {
 	return &Cassandra{
 		jClient: jolokiaClientStub{responseBody: response, statusCode: statusCode},
@@ -138,7 +140,7 @@ func TestHttpJsonJavaMultiValue(t *testing.T) {
 	err := acc.GatherError(cassandra.Gather)
 
 	require.NoError(t, err)
-	require.Equal(t, 2, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 2)
 
 	fields := map[string]interface{}{
 		"HeapMemoryUsage_init":      67108864.0,
@@ -167,7 +169,7 @@ func TestHttpJsonJavaMultiType(t *testing.T) {
 	err := acc.GatherError(cassandra.Gather)
 
 	require.NoError(t, err)
-	require.Equal(t, 2, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 2)
 
 	fields := map[string]interface{}{
 		"CollectionCount": 1.0,
@@ -188,7 +190,7 @@ func TestHttp404(t *testing.T) {
 	err := acc.GatherError(jolokia.Gather)
 
 	require.Error(t, err)
-	require.Equal(t, 0, len(acc.Metrics))
+	require.Empty(t, acc.Metrics)
 	require.Contains(t, err.Error(), "has status code 404")
 }
 
@@ -200,7 +202,7 @@ func TestHttpJsonCassandraMultiValue(t *testing.T) {
 	err := acc.GatherError(cassandra.Gather)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 1)
 
 	fields := map[string]interface{}{
 		"ReadLatency_999thPercentile": 20.0,
@@ -232,7 +234,7 @@ func TestHttpJsonCassandraNestedMultiValue(t *testing.T) {
 	err := acc.GatherError(cassandra.Gather)
 
 	require.NoError(t, err)
-	require.Equal(t, 2, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 2)
 
 	fields1 := map[string]interface{}{
 		"ReadLatency_999thPercentile": 1.0,

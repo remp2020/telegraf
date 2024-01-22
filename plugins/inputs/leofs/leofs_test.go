@@ -137,10 +137,11 @@ func testMain(t *testing.T, code string, endpoint string, serverType ServerType)
 	require.NoError(t, exec.Command("go", "build", "-o", executable, src).Run())
 	defer os.Remove("./" + executable)
 
-	envPathOrigin := os.Getenv("PATH")
+	currentWorkingDirectory, err := os.Getwd()
+	require.NoError(t, err)
+
 	// Refer to the fake snmpwalk
-	require.NoError(t, os.Setenv("PATH", "."))
-	defer os.Setenv("PATH", envPathOrigin)
+	t.Setenv("PATH", currentWorkingDirectory)
 
 	l := &LeoFS{
 		Servers: []string{endpoint},
@@ -149,7 +150,7 @@ func testMain(t *testing.T, code string, endpoint string, serverType ServerType)
 	var acc testutil.Accumulator
 	acc.SetDebug(true)
 
-	err := acc.GatherError(l.Gather)
+	err = acc.GatherError(l.Gather)
 	require.NoError(t, err)
 
 	floatMetrics := KeyMapping[serverType]

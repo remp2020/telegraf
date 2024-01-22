@@ -18,7 +18,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -118,7 +117,7 @@ func (s *Salesforce) fetchLimits() (limits, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err = s.login(); err != nil {
+		if err := s.login(); err != nil {
 			return l, err
 		}
 		resp, err = s.queryLimits()

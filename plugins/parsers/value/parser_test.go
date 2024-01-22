@@ -2,197 +2,286 @@ package value
 
 import (
 	"testing"
+	"time"
 
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestParseValidValues(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	metrics, err := parser.Parse([]byte("55"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": int64(55),
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{}, metrics[0].Tags())
+	tests := []struct {
+		name     string
+		dtype    string
+		input    []byte
+		expected interface{}
+	}{
+		{
+			name:     "integer",
+			dtype:    "integer",
+			input:    []byte("55"),
+			expected: int64(55),
+		},
+		{
+			name:     "float",
+			dtype:    "float",
+			input:    []byte("64"),
+			expected: float64(64),
+		},
+		{
+			name:     "string",
+			dtype:    "string",
+			input:    []byte("foobar"),
+			expected: "foobar",
+		},
+		{
+			name:     "boolean",
+			dtype:    "boolean",
+			input:    []byte("true"),
+			expected: true,
+		},
+		{
+			name:     "multiple integers",
+			dtype:    "integer",
+			input:    []byte(`55 45 223 12 999`),
+			expected: int64(999),
+		},
+		{
+			name:     "auto integer",
+			dtype:    "auto_integer",
+			input:    []byte("55"),
+			expected: int64(55),
+		},
+		{
+			name:     "auto integer with string",
+			dtype:    "auto_integer",
+			input:    []byte("foobar"),
+			expected: "foobar",
+		},
+		{
+			name:     "auto integer with float",
+			dtype:    "auto_integer",
+			input:    []byte("55.0"),
+			expected: "55.0",
+		},
+		{
+			name:     "auto float",
+			dtype:    "auto_float",
+			input:    []byte("64.2"),
+			expected: float64(64.2),
+		},
+		{
+			name:     "auto float with string",
+			dtype:    "auto_float",
+			input:    []byte("foobar"),
+			expected: "foobar",
+		},
+		{
+			name:     "auto float with integer",
+			dtype:    "auto_float",
+			input:    []byte("64"),
+			expected: float64(64),
+		},
+	}
 
-	parser = NewValueParser("value_test", "float", "", nil)
-	metrics, err = parser.Parse([]byte("64"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": float64(64),
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{}, metrics[0].Tags())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := metric.New(
+				"value_test",
+				map[string]string{},
+				map[string]interface{}{"value": tt.expected},
+				time.Unix(0, 0),
+			)
 
-	parser = NewValueParser("value_test", "string", "", nil)
-	metrics, err = parser.Parse([]byte("foobar"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": "foobar",
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{}, metrics[0].Tags())
-
-	parser = NewValueParser("value_test", "boolean", "", nil)
-	metrics, err = parser.Parse([]byte("true"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": true,
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{}, metrics[0].Tags())
-}
-
-func TestParseMultipleValues(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	metrics, err := parser.Parse([]byte(`55
-45
-223
-12
-999
-`))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": int64(999),
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{}, metrics[0].Tags())
-}
-
-func TestParseCustomFieldName(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	parser.FieldName = "penguin"
-	metrics, err := parser.Parse([]byte(`55`))
-
-	require.NoError(t, err)
-	require.Equal(t, map[string]interface{}{
-		"penguin": int64(55),
-	}, metrics[0].Fields())
+			plugin := Parser{
+				MetricName: "value_test",
+				DataType:   tt.dtype,
+			}
+			require.NoError(t, plugin.Init())
+			actual, err := plugin.Parse(tt.input)
+			require.NoError(t, err)
+			require.Len(t, actual, 1)
+			testutil.RequireMetricEqual(t, expected, actual[0], testutil.IgnoreTime())
+		})
+	}
 }
 
 func TestParseLineValidValues(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	metric, err := parser.ParseLine("55")
-	require.NoError(t, err)
-	require.Equal(t, "value_test", metric.Name())
-	require.Equal(t, map[string]interface{}{
-		"value": int64(55),
-	}, metric.Fields())
-	require.Equal(t, map[string]string{}, metric.Tags())
+	tests := []struct {
+		name     string
+		dtype    string
+		input    string
+		expected interface{}
+	}{
+		{
+			name:     "integer",
+			dtype:    "integer",
+			input:    "55",
+			expected: int64(55),
+		},
+		{
+			name:     "float",
+			dtype:    "float",
+			input:    "64",
+			expected: float64(64),
+		},
+		{
+			name:     "string",
+			dtype:    "string",
+			input:    "foobar",
+			expected: "foobar",
+		},
+		{
+			name:     "boolean",
+			dtype:    "boolean",
+			input:    "true",
+			expected: true,
+		},
+		{
+			name:     "multiple integers",
+			dtype:    "integer",
+			input:    `55 45 223 12 999`,
+			expected: int64(999),
+		},
+	}
 
-	parser = NewValueParser("value_test", "float", "", nil)
-	metric, err = parser.ParseLine("64")
-	require.NoError(t, err)
-	require.Equal(t, "value_test", metric.Name())
-	require.Equal(t, map[string]interface{}{
-		"value": float64(64),
-	}, metric.Fields())
-	require.Equal(t, map[string]string{}, metric.Tags())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := metric.New(
+				"value_test",
+				map[string]string{},
+				map[string]interface{}{"value": tt.expected},
+				time.Unix(0, 0),
+			)
 
-	parser = NewValueParser("value_test", "string", "", nil)
-	metric, err = parser.ParseLine("foobar")
-	require.NoError(t, err)
-	require.Equal(t, "value_test", metric.Name())
-	require.Equal(t, map[string]interface{}{
-		"value": "foobar",
-	}, metric.Fields())
-	require.Equal(t, map[string]string{}, metric.Tags())
+			plugin := Parser{
+				MetricName: "value_test",
+				DataType:   tt.dtype,
+			}
+			require.NoError(t, plugin.Init())
+			actual, err := plugin.ParseLine(tt.input)
+			require.NoError(t, err)
+			testutil.RequireMetricEqual(t, expected, actual, testutil.IgnoreTime())
+		})
+	}
+}
 
-	parser = NewValueParser("value_test", "boolean", "", nil)
-	metric, err = parser.ParseLine("true")
+func TestParseCustomFieldName(t *testing.T) {
+	parser := Parser{
+		MetricName: "value_test",
+		DataType:   "integer",
+		FieldName:  "penguin",
+	}
+	require.NoError(t, parser.Init())
+
+	metrics, err := parser.Parse([]byte(`55`))
 	require.NoError(t, err)
-	require.Equal(t, "value_test", metric.Name())
-	require.Equal(t, map[string]interface{}{
-		"value": true,
-	}, metric.Fields())
-	require.Equal(t, map[string]string{}, metric.Tags())
+	require.Equal(t, map[string]interface{}{"penguin": int64(55)}, metrics[0].Fields())
 }
 
 func TestParseInvalidValues(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	metrics, err := parser.Parse([]byte("55.0"))
-	require.Error(t, err)
-	require.Len(t, metrics, 0)
+	tests := []struct {
+		name  string
+		dtype string
+		input []byte
+	}{
+		{
+			name:  "integer",
+			dtype: "integer",
+			input: []byte("55.0"),
+		},
+		{
+			name:  "float",
+			dtype: "float",
+			input: []byte("foobar"),
+		},
+		{
+			name:  "boolean",
+			dtype: "boolean",
+			input: []byte("213"),
+		},
+	}
 
-	parser = NewValueParser("value_test", "float", "", nil)
-	metrics, err = parser.Parse([]byte("foobar"))
-	require.Error(t, err)
-	require.Len(t, metrics, 0)
-
-	parser = NewValueParser("value_test", "boolean", "", nil)
-	metrics, err = parser.Parse([]byte("213"))
-	require.Error(t, err)
-	require.Len(t, metrics, 0)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := Parser{
+				MetricName: "value_test",
+				DataType:   tt.dtype,
+			}
+			require.NoError(t, plugin.Init())
+			actual, err := plugin.Parse(tt.input)
+			require.ErrorContains(t, err, "invalid syntax")
+			require.Empty(t, actual)
+		})
+	}
 }
 
 func TestParseLineInvalidValues(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	_, err := parser.ParseLine("55.0")
-	require.Error(t, err)
+	tests := []struct {
+		name  string
+		dtype string
+		input string
+	}{
+		{
+			name:  "integer",
+			dtype: "integer",
+			input: "55.0",
+		},
+		{
+			name:  "float",
+			dtype: "float",
+			input: "foobar",
+		},
+		{
+			name:  "boolean",
+			dtype: "boolean",
+			input: "213",
+		},
+	}
 
-	parser = NewValueParser("value_test", "float", "", nil)
-	_, err = parser.ParseLine("foobar")
-	require.Error(t, err)
-
-	parser = NewValueParser("value_test", "boolean", "", nil)
-	_, err = parser.ParseLine("213")
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := Parser{
+				MetricName: "value_test",
+				DataType:   tt.dtype,
+			}
+			require.NoError(t, plugin.Init())
+			actual, err := plugin.ParseLine(tt.input)
+			require.ErrorContains(t, err, "invalid syntax")
+			require.Empty(t, actual)
+		})
+	}
 }
 
 func TestParseValidValuesDefaultTags(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
-	parser.SetDefaultTags(map[string]string{"test": "tag"})
-	metrics, err := parser.Parse([]byte("55"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": int64(55),
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{"test": "tag"}, metrics[0].Tags())
+	expected := metric.New(
+		"value_test",
+		map[string]string{"test": "tag"},
+		map[string]interface{}{"value": int64(55)},
+		time.Unix(0, 0),
+	)
 
-	parser = NewValueParser("value_test", "float", "", nil)
-	parser.SetDefaultTags(map[string]string{"test": "tag"})
-	metrics, err = parser.Parse([]byte("64"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": float64(64),
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{"test": "tag"}, metrics[0].Tags())
+	plugin := Parser{
+		MetricName: "value_test",
+		DataType:   "integer",
+	}
+	require.NoError(t, plugin.Init())
+	plugin.SetDefaultTags(map[string]string{"test": "tag"})
 
-	parser = NewValueParser("value_test", "string", "", nil)
-	parser.SetDefaultTags(map[string]string{"test": "tag"})
-	metrics, err = parser.Parse([]byte("foobar"))
+	actual, err := plugin.Parse([]byte("55"))
 	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": "foobar",
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{"test": "tag"}, metrics[0].Tags())
+	require.Len(t, actual, 1)
 
-	parser = NewValueParser("value_test", "boolean", "", nil)
-	parser.SetDefaultTags(map[string]string{"test": "tag"})
-	metrics, err = parser.Parse([]byte("true"))
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-	require.Equal(t, "value_test", metrics[0].Name())
-	require.Equal(t, map[string]interface{}{
-		"value": true,
-	}, metrics[0].Fields())
-	require.Equal(t, map[string]string{"test": "tag"}, metrics[0].Tags())
+	testutil.RequireMetricEqual(t, expected, actual[0], testutil.IgnoreTime())
 }
 
 func TestParseValuesWithNullCharacter(t *testing.T) {
-	parser := NewValueParser("value_test", "integer", "", nil)
+	parser := Parser{
+		MetricName: "value_test",
+		DataType:   "integer",
+	}
+	require.NoError(t, parser.Init())
 	metrics, err := parser.Parse([]byte("55\x00"))
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -201,4 +290,43 @@ func TestParseValuesWithNullCharacter(t *testing.T) {
 		"value": int64(55),
 	}, metrics[0].Fields())
 	require.Equal(t, map[string]string{}, metrics[0].Tags())
+}
+
+func TestInvalidDatatype(t *testing.T) {
+	parser := Parser{
+		MetricName: "value_test",
+		DataType:   "foo",
+	}
+	require.ErrorContains(t, parser.Init(), "unknown datatype")
+}
+
+const benchmarkData = `5`
+
+func TestBenchmarkData(t *testing.T) {
+	plugin := &Parser{}
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{},
+			map[string]interface{}{
+				"value": 5,
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	actual, err := plugin.Parse([]byte(benchmarkData))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime(), testutil.SortMetrics())
+}
+
+func BenchmarkParsing(b *testing.B) {
+	plugin := &Parser{}
+	require.NoError(b, plugin.Init())
+
+	for n := 0; n < b.N; n++ {
+		_, _ = plugin.Parse([]byte(benchmarkData))
+	}
 }

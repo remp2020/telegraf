@@ -4,6 +4,7 @@ package syslog
 import (
 	"crypto/tls"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -20,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -105,7 +105,7 @@ func (s *Syslog) Close() error {
 func (s *Syslog) Write(metrics []telegraf.Metric) (err error) {
 	if s.Conn == nil {
 		// previous write failed with permanent error and socket was closed.
-		if err = s.Connect(); err != nil {
+		if err := s.Connect(); err != nil {
 			return err
 		}
 	}
@@ -121,10 +121,11 @@ func (s *Syslog) Write(metrics []telegraf.Metric) (err error) {
 			continue
 		}
 		if _, err = s.Conn.Write(msgBytesWithFraming); err != nil {
-			if netErr, ok := err.(net.Error); !ok || !netErr.Temporary() {
-				s.Close() //nolint:revive // There is another error which will be returned here
+			var netErr net.Error
+			if errors.As(err, &netErr) {
+				s.Close()
 				s.Conn = nil
-				return fmt.Errorf("closing connection: %v", netErr)
+				return fmt.Errorf("closing connection: %w", netErr)
 			}
 			return err
 		}

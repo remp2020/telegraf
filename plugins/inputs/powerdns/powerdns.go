@@ -4,6 +4,7 @@ package powerdns
 import (
 	"bufio"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -74,7 +74,7 @@ func (p *Powerdns) gatherServer(address string, acc telegraf.Accumulator) error 
 	for {
 		n, err := rw.Read(tmp)
 		if err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				return err
 			}
 

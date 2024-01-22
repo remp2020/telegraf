@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package diskio
 
@@ -38,7 +37,6 @@ func setupNullDisk(t *testing.T, s *DiskIO, devName string) func() {
 
 	cleanFunc := func() {
 		ic.udevDataPath = origUdevPath
-		//nolint:errcheck,revive // we cannot do anything if file cannot be removed
 		os.Remove(td.Name())
 	}
 

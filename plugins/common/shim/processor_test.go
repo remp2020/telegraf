@@ -12,8 +12,8 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/plugins/parsers"
-	"github.com/influxdata/telegraf/plugins/serializers"
+	"github.com/influxdata/telegraf/plugins/parsers/influx"
+	influxSerializer "github.com/influxdata/telegraf/plugins/serializers/influx"
 )
 
 func TestProcessorShim(t *testing.T) {
@@ -22,9 +22,9 @@ func TestProcessorShim(t *testing.T) {
 
 func TestProcessorShimWithLargerThanDefaultScannerBufferSize(t *testing.T) {
 	letters := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-	b := make([]rune, bufio.MaxScanTokenSize*2)
-	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+	b := make([]rune, 0, bufio.MaxScanTokenSize*2)
+	for i := 0; i < bufio.MaxScanTokenSize*2; i++ {
+		b = append(b, letters[rand.Intn(len(letters))])
 	}
 
 	testSendAndReceive(t, "f1", string(b))
@@ -52,8 +52,11 @@ func testSendAndReceive(t *testing.T, fieldKey string, fieldValue string) {
 		wg.Done()
 	}()
 
-	serializer, _ := serializers.NewInfluxSerializer()
-	parser, _ := parsers.NewInfluxParser()
+	serializer := &influxSerializer.Serializer{}
+	require.NoError(t, serializer.Init())
+
+	parser := influx.Parser{}
+	require.NoError(t, parser.Init())
 
 	m := metric.New("thing",
 		map[string]string{

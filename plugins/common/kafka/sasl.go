@@ -2,15 +2,18 @@ package kafka
 
 import (
 	"errors"
+	"fmt"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
+	"github.com/influxdata/telegraf/config"
 )
 
 type SASLAuth struct {
-	SASLUsername  string `toml:"sasl_username"`
-	SASLPassword  string `toml:"sasl_password"`
-	SASLMechanism string `toml:"sasl_mechanism"`
-	SASLVersion   *int   `toml:"sasl_version"`
+	SASLUsername   config.Secret     `toml:"sasl_username"`
+	SASLPassword   config.Secret     `toml:"sasl_password"`
+	SASLExtentions map[string]string `toml:"sasl_extensions"`
+	SASLMechanism  string            `toml:"sasl_mechanism"`
+	SASLVersion    *int              `toml:"sasl_version"`
 
 	// GSSAPI config
 	SASLGSSAPIServiceName        string `toml:"sasl_gssapi_service_name"`
@@ -20,37 +23,47 @@ type SASLAuth struct {
 	SASLGSSAPIKeyTabPath         string `toml:"sasl_gssapi_key_tab_path"`
 	SASLGSSAPIRealm              string `toml:"sasl_gssapi_realm"`
 
-	// OAUTHBEARER config. experimental. undoubtedly this is not good enough.
-	SASLAccessToken string `toml:"sasl_access_token"`
+	// OAUTHBEARER config
+	SASLAccessToken config.Secret `toml:"sasl_access_token"`
 }
 
 // SetSASLConfig configures SASL for kafka (sarama)
-func (k *SASLAuth) SetSASLConfig(config *sarama.Config) error {
-	config.Net.SASL.User = k.SASLUsername
-	config.Net.SASL.Password = k.SASLPassword
+func (k *SASLAuth) SetSASLConfig(cfg *sarama.Config) error {
+	username, err := k.SASLUsername.Get()
+	if err != nil {
+		return fmt.Errorf("getting username failed: %w", err)
+	}
+	cfg.Net.SASL.User = username.String()
+	defer username.Destroy()
+	password, err := k.SASLPassword.Get()
+	if err != nil {
+		return fmt.Errorf("getting password failed: %w", err)
+	}
+	cfg.Net.SASL.Password = password.String()
+	defer password.Destroy()
 
 	if k.SASLMechanism != "" {
-		config.Net.SASL.Mechanism = sarama.SASLMechanism(k.SASLMechanism)
-		switch config.Net.SASL.Mechanism {
+		cfg.Net.SASL.Mechanism = sarama.SASLMechanism(k.SASLMechanism)
+		switch cfg.Net.SASL.Mechanism {
 		case sarama.SASLTypeSCRAMSHA256:
-			config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+			cfg.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
 				return &XDGSCRAMClient{HashGeneratorFcn: SHA256}
 			}
 		case sarama.SASLTypeSCRAMSHA512:
-			config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+			cfg.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
 				return &XDGSCRAMClient{HashGeneratorFcn: SHA512}
 			}
 		case sarama.SASLTypeOAuth:
-			config.Net.SASL.TokenProvider = k // use self as token provider.
+			cfg.Net.SASL.TokenProvider = k // use self as token provider.
 		case sarama.SASLTypeGSSAPI:
-			config.Net.SASL.GSSAPI.ServiceName = k.SASLGSSAPIServiceName
-			config.Net.SASL.GSSAPI.AuthType = gssapiAuthType(k.SASLGSSAPIAuthType)
-			config.Net.SASL.GSSAPI.Username = k.SASLUsername
-			config.Net.SASL.GSSAPI.Password = k.SASLPassword
-			config.Net.SASL.GSSAPI.DisablePAFXFAST = k.SASLGSSAPIDisablePAFXFAST
-			config.Net.SASL.GSSAPI.KerberosConfigPath = k.SASLGSSAPIKerberosConfigPath
-			config.Net.SASL.GSSAPI.KeyTabPath = k.SASLGSSAPIKeyTabPath
-			config.Net.SASL.GSSAPI.Realm = k.SASLGSSAPIRealm
+			cfg.Net.SASL.GSSAPI.ServiceName = k.SASLGSSAPIServiceName
+			cfg.Net.SASL.GSSAPI.AuthType = gssapiAuthType(k.SASLGSSAPIAuthType)
+			cfg.Net.SASL.GSSAPI.Username = username.String()
+			cfg.Net.SASL.GSSAPI.Password = password.String()
+			cfg.Net.SASL.GSSAPI.DisablePAFXFAST = k.SASLGSSAPIDisablePAFXFAST
+			cfg.Net.SASL.GSSAPI.KerberosConfigPath = k.SASLGSSAPIKerberosConfigPath
+			cfg.Net.SASL.GSSAPI.KeyTabPath = k.SASLGSSAPIKeyTabPath
+			cfg.Net.SASL.GSSAPI.Realm = k.SASLGSSAPIRealm
 
 		case sarama.SASLTypePlaintext:
 			// nothing.
@@ -58,23 +71,28 @@ func (k *SASLAuth) SetSASLConfig(config *sarama.Config) error {
 		}
 	}
 
-	if k.SASLUsername != "" || k.SASLMechanism != "" {
-		config.Net.SASL.Enable = true
+	if !k.SASLUsername.Empty() || k.SASLMechanism != "" {
+		cfg.Net.SASL.Enable = true
 
-		version, err := SASLVersion(config.Version, k.SASLVersion)
+		version, err := SASLVersion(cfg.Version, k.SASLVersion)
 		if err != nil {
 			return err
 		}
-		config.Net.SASL.Version = version
+		cfg.Net.SASL.Version = version
 	}
 	return nil
 }
 
 // Token does nothing smart, it just grabs a hard-coded token from config.
 func (k *SASLAuth) Token() (*sarama.AccessToken, error) {
+	token, err := k.SASLAccessToken.Get()
+	if err != nil {
+		return nil, fmt.Errorf("getting token failed: %w", err)
+	}
+	defer token.Destroy()
 	return &sarama.AccessToken{
-		Token:      k.SASLAccessToken,
-		Extensions: map[string]string{},
+		Token:      token.String(),
+		Extensions: k.SASLExtentions,
 	}, nil
 }
 

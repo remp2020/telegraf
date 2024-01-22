@@ -11,13 +11,10 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type Mock struct {
-	counter int64
-
 	MetricName string            `toml:"metric_name"`
 	Tags       map[string]string `toml:"tags"`
 
@@ -26,6 +23,9 @@ type Mock struct {
 	Step     []*step     `toml:"step"`
 	Stock    []*stock    `toml:"stock"`
 	SineWave []*sineWave `toml:"sine_wave"`
+
+	counter int64
+	rand    *rand.Rand
 }
 
 type constant struct {
@@ -49,8 +49,11 @@ type step struct {
 	latest float64
 
 	Name  string  `toml:"name"`
-	Start float64 `toml:"min"`
-	Step  float64 `toml:"max"`
+	Start float64 `toml:"start"`
+	Step  float64 `toml:"step"`
+
+	Min float64 `toml:"min" deprecated:"1.28.2;use 'start' instead"`
+	Max float64 `toml:"max" deprecated:"1.28.2;use 'step' instead"`
 }
 
 type stock struct {
@@ -66,7 +69,18 @@ func (*Mock) SampleConfig() string {
 }
 
 func (m *Mock) Init() error {
-	rand.Seed(time.Now().UnixNano())
+	m.rand = rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // G404: not security critical
+
+	// backward compatibility
+	for _, step := range m.Step {
+		if step.Min != 0 && step.Start == 0 {
+			step.Start = step.Min
+		}
+		if step.Max != 0 && step.Step == 0 {
+			step.Step = step.Max
+		}
+	}
+
 	return nil
 }
 
@@ -93,17 +107,17 @@ func (m *Mock) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-// Generate random value between min and max, inclusivly
+// Generate random value between min and max, inclusively
 func (m *Mock) generateRandomFloat64(fields map[string]interface{}) {
 	for _, random := range m.Random {
-		fields[random.Name] = random.Min + rand.Float64()*(random.Max-random.Min)
+		fields[random.Name] = random.Min + m.rand.Float64()*(random.Max-random.Min)
 	}
 }
 
 // Create sine waves
 func (m *Mock) generateSineWave(fields map[string]interface{}) {
 	for _, field := range m.SineWave {
-		fields[field.Name] = math.Sin((float64(m.counter) * field.Period * math.Pi)) * field.Amplitude
+		fields[field.Name] = math.Sin(float64(m.counter)*field.Period*math.Pi) * field.Amplitude
 	}
 }
 
@@ -126,7 +140,7 @@ func (m *Mock) generateStockPrice(fields map[string]interface{}) {
 		if stock.latest == 0.0 {
 			stock.latest = stock.Price
 		} else {
-			noise := 2 * (rand.Float64() - 0.5)
+			noise := 2 * (m.rand.Float64() - 0.5)
 			stock.latest = stock.latest + (stock.latest * stock.Volatility * noise)
 
 			// avoid going below zero

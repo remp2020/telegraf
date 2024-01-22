@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/influxdata/telegraf"
-
-	monpb "google.golang.org/genproto/googleapis/monitoring/v3"
+	monpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	tspb "google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/influxdata/telegraf"
 )
 
 type counterCache struct {
@@ -62,7 +62,6 @@ func (cc *counterCache) GetStartTime(key string, value *monpb.TypedValue, endTim
 		// ...but...
 		// start times cannot be over 25 hours old; reset after 1 day to be safe
 		age := endTime.GetSeconds() - lastObserved.StartTime.GetSeconds()
-		cc.log.Debugf("age: %d", age)
 		if age > 86400 {
 			lastObserved.Reset(endTime)
 		}
@@ -87,10 +86,14 @@ func NewCounterCacheEntry(value *monpb.TypedValue, ts *tspb.Timestamp) *counterC
 
 func GetCounterCacheKey(m telegraf.Metric, f *telegraf.Field) string {
 	// normalize tag list to form a predictable key
-	var tags []string
+	tags := make([]string, 0, len(m.TagList()))
 	for _, t := range m.TagList() {
 		tags = append(tags, strings.Join([]string{t.Key, t.Value}, "="))
 	}
 	sort.Strings(tags)
-	return path.Join(m.Name(), strings.Join(tags, "/"), f.Key)
+	key := ""
+	if f != nil {
+		key = f.Key
+	}
+	return path.Join(m.Name(), strings.Join(tags, "/"), key)
 }

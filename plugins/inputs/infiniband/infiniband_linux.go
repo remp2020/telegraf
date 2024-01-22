@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package infiniband
 
@@ -29,7 +28,7 @@ func (i *Infiniband) Gather(acc telegraf.Accumulator) error {
 
 			stats, err := rdmamap.GetRdmaSysfsStats(dev, portInt)
 			if err != nil {
-				return err
+				continue
 			}
 
 			addStats(dev, port, stats, acc)

@@ -41,10 +41,9 @@ func TestAlignedTicker(t *testing.T) {
 
 	clk.Add(10 * time.Second)
 	for !clk.Now().After(until) {
-		select {
-		case tm := <-ticker.Elapsed():
-			actual = append(actual, tm.UTC())
-		}
+		tm := <-ticker.Elapsed()
+		actual = append(actual, tm.UTC())
+
 		clk.Add(10 * time.Second)
 	}
 
@@ -75,8 +74,8 @@ func TestAlignedTickerJitter(t *testing.T) {
 		case tm := <-ticker.Elapsed():
 			dur := tm.Sub(last)
 			// 10s interval + 5s jitter + up to 1s late firing.
-			require.True(t, dur <= 16*time.Second, "expected elapsed time to be less than 16 seconds, but was %s", dur)
-			require.True(t, dur >= 5*time.Second, "expected elapsed time to be more than 5 seconds, but was %s", dur)
+			require.LessOrEqual(t, dur, 16*time.Second, "expected elapsed time to be less than 16 seconds, but was %s", dur)
+			require.GreaterOrEqual(t, dur, 5*time.Second, "expected elapsed time to be more than 5 seconds, but was %s", dur)
 			last = last.Add(interval)
 		default:
 		}
@@ -253,7 +252,7 @@ func TestAlignedTickerDistribution(t *testing.T) {
 	defer ticker.Stop()
 	dist := simulatedDist(ticker, clk)
 	printDist(dist)
-	require.True(t, 350 < dist.Count)
+	require.Less(t, 350, dist.Count)
 	require.True(t, 9 < dist.Mean() && dist.Mean() < 11)
 }
 
@@ -279,7 +278,7 @@ func TestAlignedTickerDistributionWithOffset(t *testing.T) {
 	defer ticker.Stop()
 	dist := simulatedDist(ticker, clk)
 	printDist(dist)
-	require.True(t, 350 < dist.Count)
+	require.Less(t, 350, dist.Count)
 	require.True(t, 9 < dist.Mean() && dist.Mean() < 11)
 }
 
@@ -305,7 +304,7 @@ func TestUnalignedTickerDistribution(t *testing.T) {
 	defer ticker.Stop()
 	dist := simulatedDist(ticker, clk)
 	printDist(dist)
-	require.True(t, 350 < dist.Count)
+	require.Less(t, 350, dist.Count)
 	require.True(t, 9 < dist.Mean() && dist.Mean() < 11)
 }
 
@@ -329,7 +328,7 @@ func TestUnalignedTickerDistributionWithOffset(t *testing.T) {
 	defer ticker.Stop()
 	dist := simulatedDist(ticker, clk)
 	printDist(dist)
-	require.True(t, 350 < dist.Count)
+	require.Less(t, 350, dist.Count)
 	require.True(t, 9 < dist.Mean() && dist.Mean() < 11)
 }
 
@@ -353,7 +352,7 @@ func TestRollingTickerDistribution(t *testing.T) {
 	defer ticker.Stop()
 	dist := simulatedDist(ticker, clk)
 	printDist(dist)
-	require.True(t, 275 < dist.Count)
+	require.Less(t, 275, dist.Count)
 	require.True(t, 12 < dist.Mean() && 13 > dist.Mean())
 }
 

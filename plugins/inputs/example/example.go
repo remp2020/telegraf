@@ -2,9 +2,11 @@
 package example
 
 import (
+	"crypto/rand"
 	_ "embed"
 	"fmt"
-	"math/rand"
+	"math"
+	"math/big"
 	"time"
 
 	"github.com/influxdata/telegraf"
@@ -12,7 +14,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -29,6 +30,10 @@ type Example struct {
 
 	// Example of passing a duration option allowing the format of e.g. "100ms", "5m" or "1h"
 	Timeout config.Duration `toml:"timeout"`
+
+	// Example of passing a password/token/username or other sensitive data with the secret-store
+	UserName config.Secret `toml:"username"`
+	Password config.Secret `toml:"password"`
 
 	// Telegraf logging facility
 	// The exact name is important to allow automatic initialization by telegraf.
@@ -50,14 +55,27 @@ func (m *Example) Init() error {
 	}
 
 	// Set your defaults.
-	// Please note: In golang all fields are initialzed to their nil value, so you should not
+	// Please note: In golang all fields are initialized to their nil value, so you should not
 	// set these fields if the nil value is what you want (e.g. for booleans).
 	if m.NumberFields < 1 {
 		m.Log.Debugf("Setting number of fields to default from invalid value %d", m.NumberFields)
 		m.NumberFields = 2
 	}
 
-	// Initialze your internal states
+	// Check using the secret-store
+	if m.UserName.Empty() {
+		// For example, use a default value
+		m.Log.Debug("using default username")
+	}
+
+	// Retrieve credentials using the secret-store
+	password, err := m.Password.Get()
+	if err != nil {
+		return fmt.Errorf("getting password failed: %w", err)
+	}
+	defer password.Destroy()
+
+	// Initialize your internal states
 	m.count = 1
 
 	return nil
@@ -65,14 +83,14 @@ func (m *Example) Init() error {
 
 // Gather defines what data the plugin will gather.
 func (m *Example) Gather(acc telegraf.Accumulator) error {
-	// Imagine some completely arbitrary error occuring here
+	// Imagine some completely arbitrary error occurring here
 	if m.NumberFields > 10 {
 		return fmt.Errorf("too many fields")
 	}
 
-	// For illustration we gather three metrics in one go
+	// For illustration, we gather three metrics in one go
 	for run := 0; run < 3; run++ {
-		// Imagine an error occurs here but you want to keep the other
+		// Imagine an error occurs here, but you want to keep the other
 		// metrics, then you cannot simply return, as this would drop
 		// all later metrics. Simply accumulate errors in this case
 		// and ignore the metric.
@@ -85,11 +103,16 @@ func (m *Example) Gather(acc telegraf.Accumulator) error {
 		fields := map[string]interface{}{"count": m.count}
 		for i := int64(1); i < m.NumberFields; i++ {
 			name := fmt.Sprintf("field%d", i)
-			value := 0.0
+			var err error
+			value := big.NewInt(0)
 			if m.EnableRandomVariable {
-				value = rand.Float64()
+				value, err = rand.Int(rand.Reader, big.NewInt(math.MaxUint32))
+				if err != nil {
+					acc.AddError(err)
+					continue
+				}
 			}
-			fields[name] = value
+			fields[name] = float64(value.Int64())
 		}
 
 		// Construct the tags

@@ -11,6 +11,15 @@ _per-server_.  Thus, if you mount these two shares: `nfs01:/vol/foo/bar` and
 /proc/self/mountstats.  This is a limitation of the metrics exposed by the
 kernel, not the telegraf plugin.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -19,7 +28,7 @@ kernel, not the telegraf plugin.
   ## Read more low-level metrics (optional, defaults to false)
   # fullstat = false
 
-  ## List of mounts to explictly include or exclude (optional)
+  ## List of mounts to explicitly include or exclude (optional)
   ## The pattern (Go regexp) is matched against the mount point (not the
   ## device being mounted).  If include_mounts is set, all mounts are ignored
   ## unless present in the list. If a mount is listed in both include_mounts
@@ -28,7 +37,7 @@ kernel, not the telegraf plugin.
   # exclude_mounts = []
 
   ## List of operations to include or exclude from collecting.  This applies
-  ## only when fullstat=true.  Symantics are similar to {include,exclude}_mounts:
+  ## only when fullstat=true.  Semantics are similar to {include,exclude}_mounts:
   ## the default is to collect everything; when include_operations is set, only
   ## those OPs are collected; when exclude_operations is set, all are collected
   ## except those listed.  If include and exclude are set, the OP is excluded.
@@ -36,7 +45,7 @@ kernel, not the telegraf plugin.
   ## NFSv3 and NFSv4 have different lists.  While it is not possible to
   ## have different include/exclude lists for NFSv3/4, unused elements
   ## in the list should be okay.  It is possible to have different lists
-  ## for different mountpoints:  use mulitple [[input.nfsclient]] stanzas,
+  ## for different mountpoints:  use multiple [[input.nfsclient]] stanzas,
   ## with their own lists.  See "include_mounts" above, and be careful of
   ## duplicate metrics.
   # include_operations = []
@@ -55,6 +64,16 @@ _N.B._ the `include_mounts` and `exclude_mounts` arguments are both applied to
 the local mount location (e.g. /mnt/NFS), not the server export
 (e.g. nfsserver:/vol/NFS).  Go regexp patterns can be used in either.
 
+## Location of mountstats
+
+If you have mounted the /proc file system in a container, to tell this plugin
+where to find the new location, set the `MOUNT_PROC` environment variable. For
+example, in a Docker compose file, if /proc is mounted to /host/proc, then use:
+
+```yaml
+MOUNT_PROC: /host/proc/self/mountstats
+```
+
 ### References
 
 1. [nfsiostat](http://git.linux-nfs.org/?p=steved/nfs-utils.git;a=summary)
@@ -70,9 +89,9 @@ the local mount location (e.g. /mnt/NFS), not the server export
   - bytes (integer, bytes) - The total number of bytes exchanged doing this operation. This is bytes sent _and_ received, including overhead _and_ payload.  (bytes = OP_bytes_sent + OP_bytes_recv.  See nfs_ops below)
   - ops (integer, count) - The number of operations of this type executed.
   - retrans (integer, count) - The number of times an operation had to be retried (retrans = OP_trans - OP_ops.  See nfs_ops below)
-  - exe (integer, miliseconds) - The number of miliseconds it took to process the operations.
-  - rtt (integer, miliseconds) - The total round-trip time for all operations.
-  - rtt_per_op (float, miliseconds) - The average round-trip time per operation.
+  - exe (integer, milliseconds) - The number of milliseconds it took to process the operations.
+  - rtt (integer, milliseconds) - The total round-trip time for all operations.
+  - rtt_per_op (float, milliseconds) - The average round-trip time per operation.
 
 In addition enabling `fullstat` will make many more metrics available.
 
@@ -135,7 +154,7 @@ as it changes occasionally.
     - sillyrenames (int, count): Number of times an in-use file was removed (thus creating a temporary ".nfsXXXXXX" file)
     - shortreads (int, count): Number of times the NFS server returned less data than requested.
     - shortwrites (int, count): Number of times NFS server reports it wrote less data than requested.
-    - delay (int, count): Occurances of EJUKEBOX ("Jukebox Delay", probably unused)
+    - delay (int, count): Occurrences of EJUKEBOX ("Jukebox Delay", probably unused)
     - pnfsreads (int, count): Count of NFS v4.1+ pNFS reads.
     - pnfswrites (int, count): Count of NFS v4.1+ pNFS writes.
 
@@ -173,7 +192,7 @@ as it changes occasionally.
 
 For basic metrics showing server-wise read and write data.
 
-```shell
+```text
 nfsstat,mountpoint=/NFS,operation=READ,serverexport=1.2.3.4:/storage/NFS ops=600i,retrans=1i,bytes=1207i,rtt=606i,exe=607i 1612651512000000000
 nfsstat,mountpoint=/NFS,operation=WRITE,serverexport=1.2.3.4:/storage/NFS bytes=1407i,rtt=706i,exe=707i,ops=700i,retrans=1i 1612651512000000000
 
@@ -185,7 +204,7 @@ Additionally, per-OP metrics are collected, with examples for READ, LOOKUP, and
 NULL shown.  Please refer to `/proc/self/mountstats` for a list of supported NFS
 operations, as it changes as it changes periodically.
 
-```shell
+```text
 nfs_bytes,mountpoint=/home,serverexport=nfs01:/vol/home directreadbytes=0i,directwritebytes=0i,normalreadbytes=42648757667i,normalwritebytes=0i,readpages=10404603i,serverreadbytes=42617098139i,serverwritebytes=0i,writepages=0i 1608787697000000000
 nfs_events,mountpoint=/home,serverexport=nfs01:/vol/home attrinvalidates=116i,congestionwait=0i,datainvalidates=65i,delay=0i,dentryrevalidates=5911243i,extendwrite=0i,inoderevalidates=200378i,pnfsreads=0i,pnfswrites=0i,setattrtrunc=0i,shortreads=0i,shortwrites=0i,sillyrenames=0i,vfsaccess=7203852i,vfsflush=117405i,vfsfsync=0i,vfsgetdents=3368i,vfslock=0i,vfslookup=740i,vfsopen=157281i,vfsreadpage=16i,vfsreadpages=86874i,vfsrelease=155526i,vfssetattr=0i,vfsupdatepage=0i,vfswritepage=0i,vfswritepages=215514i 1608787697000000000
 nfs_xprt_tcp,mountpoint=/home,serverexport=nfs01:/vol/home backlogutil=0i,badxids=0i,bind_count=1i,connect_count=1i,connect_time=0i,idle_time=0i,inflightsends=15659826i,rpcreceives=2173896i,rpcsends=2173896i 1608787697000000000

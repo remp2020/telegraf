@@ -3,11 +3,13 @@ package modbus
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/x448/float16"
 )
 
 type convert16 func([]byte) uint16
 
-func endianessConverter16(byteOrder string) (convert16, error) {
+func endiannessConverter16(byteOrder string) (convert16, error) {
 	switch byteOrder {
 	case "ABCD", "CDAB": // Big endian (Motorola)
 		return binary.BigEndian.Uint16, nil
@@ -19,7 +21,7 @@ func endianessConverter16(byteOrder string) (convert16, error) {
 
 // I16 - no scale
 func determineConverterI16(outType, byteOrder string) (fieldConverterFunc, error) {
-	tohost, err := endianessConverter16(byteOrder)
+	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +49,7 @@ func determineConverterI16(outType, byteOrder string) (fieldConverterFunc, error
 
 // U16 - no scale
 func determineConverterU16(outType, byteOrder string) (fieldConverterFunc, error) {
-	tohost, err := endianessConverter16(byteOrder)
+	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +75,32 @@ func determineConverterU16(outType, byteOrder string) (fieldConverterFunc, error
 	return nil, fmt.Errorf("invalid output data-type: %s", outType)
 }
 
+// F16 - no scale
+func determineConverterF16(outType, byteOrder string) (fieldConverterFunc, error) {
+	tohost, err := endiannessConverter16(byteOrder)
+	if err != nil {
+		return nil, err
+	}
+
+	switch outType {
+	case "native":
+		return func(b []byte) interface{} {
+			raw := tohost(b)
+			return float16.Frombits(raw).Float32()
+		}, nil
+	case "FLOAT64":
+		return func(b []byte) interface{} {
+			raw := tohost(b)
+			in := float16.Frombits(raw).Float32()
+			return float64(in)
+		}, nil
+	}
+	return nil, fmt.Errorf("invalid output data-type: %s", outType)
+}
+
 // I16 - scale
 func determineConverterI16Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
-	tohost, err := endianessConverter16(byteOrder)
+	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +132,7 @@ func determineConverterI16Scale(outType, byteOrder string, scale float64) (field
 
 // U16 - scale
 func determineConverterU16Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
-	tohost, err := endianessConverter16(byteOrder)
+	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +157,30 @@ func determineConverterU16Scale(outType, byteOrder string, scale float64) (field
 		return func(b []byte) interface{} {
 			in := tohost(b)
 			return float64(in) * scale
+		}, nil
+	}
+	return nil, fmt.Errorf("invalid output data-type: %s", outType)
+}
+
+// F16 - scale
+func determineConverterF16Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+	tohost, err := endiannessConverter16(byteOrder)
+	if err != nil {
+		return nil, err
+	}
+
+	switch outType {
+	case "native":
+		return func(b []byte) interface{} {
+			raw := tohost(b)
+			in := float16.Frombits(raw)
+			return in.Float32() * float32(scale)
+		}, nil
+	case "FLOAT64":
+		return func(b []byte) interface{} {
+			raw := tohost(b)
+			in := float16.Frombits(raw)
+			return float64(in.Float32()) * scale
 		}, nil
 	}
 	return nil, fmt.Errorf("invalid output data-type: %s", outType)

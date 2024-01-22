@@ -1,17 +1,15 @@
 //go:build !windows
-// +build !windows
 
 package ping
 
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/go-ping/ping"
+	ping "github.com/prometheus-community/pro-bing"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -83,8 +81,8 @@ func TestProcessPingOutput(t *testing.T) {
 	stats, err := processPingOutput(bsdPingOutput)
 	require.NoError(t, err)
 	require.Equal(t, 55, stats.ttl, "ttl value is 55")
-	require.Equal(t, 5, stats.trans, "5 packets were transmitted")
-	require.Equal(t, 5, stats.recv, "5 packets were received")
+	require.Equal(t, 5, stats.packetsTransmitted, "5 packets were transmitted")
+	require.Equal(t, 5, stats.packetsReceived, "5 packets were received")
 	require.InDelta(t, 15.087, stats.min, 0.001)
 	require.InDelta(t, 20.224, stats.avg, 0.001)
 	require.InDelta(t, 27.263, stats.max, 0.001)
@@ -93,8 +91,8 @@ func TestProcessPingOutput(t *testing.T) {
 	stats, err = processPingOutput(freebsdPing6Output)
 	require.NoError(t, err)
 	require.Equal(t, 117, stats.ttl, "ttl value is 117")
-	require.Equal(t, 5, stats.trans, "5 packets were transmitted")
-	require.Equal(t, 5, stats.recv, "5 packets were received")
+	require.Equal(t, 5, stats.packetsTransmitted, "5 packets were transmitted")
+	require.Equal(t, 5, stats.packetsReceived, "5 packets were received")
 	require.InDelta(t, 35.727, stats.min, 0.001)
 	require.InDelta(t, 53.211, stats.avg, 0.001)
 	require.InDelta(t, 93.870, stats.max, 0.001)
@@ -103,8 +101,8 @@ func TestProcessPingOutput(t *testing.T) {
 	stats, err = processPingOutput(linuxPingOutput)
 	require.NoError(t, err)
 	require.Equal(t, 63, stats.ttl, "ttl value is 63")
-	require.Equal(t, 5, stats.trans, "5 packets were transmitted")
-	require.Equal(t, 5, stats.recv, "5 packets were received")
+	require.Equal(t, 5, stats.packetsTransmitted, "5 packets were transmitted")
+	require.Equal(t, 5, stats.packetsReceived, "5 packets were received")
 	require.InDelta(t, 35.225, stats.min, 0.001)
 	require.InDelta(t, 43.628, stats.avg, 0.001)
 	require.InDelta(t, 51.806, stats.max, 0.001)
@@ -113,8 +111,8 @@ func TestProcessPingOutput(t *testing.T) {
 	stats, err = processPingOutput(busyBoxPingOutput)
 	require.NoError(t, err)
 	require.Equal(t, 56, stats.ttl, "ttl value is 56")
-	require.Equal(t, 4, stats.trans, "4 packets were transmitted")
-	require.Equal(t, 4, stats.recv, "4 packets were received")
+	require.Equal(t, 4, stats.packetsTransmitted, "4 packets were transmitted")
+	require.Equal(t, 4, stats.packetsReceived, "4 packets were received")
 	require.InDelta(t, 15.810, stats.min, 0.001)
 	require.InDelta(t, 17.611, stats.avg, 0.001)
 	require.InDelta(t, 22.559, stats.max, 0.001)
@@ -140,8 +138,8 @@ func TestProcessPingOutputWithVaryingTTL(t *testing.T) {
 	stats, err := processPingOutput(linuxPingOutputWithVaryingTTL)
 	require.NoError(t, err)
 	require.Equal(t, 63, stats.ttl, "ttl value is 63")
-	require.Equal(t, 5, stats.trans, "5 packets were transmitted")
-	require.Equal(t, 5, stats.recv, "5 packets were transmitted")
+	require.Equal(t, 5, stats.packetsTransmitted, "5 packets were transmitted")
+	require.Equal(t, 5, stats.packetsReceived, "5 packets were transmitted")
 	require.InDelta(t, 35.225, stats.min, 0.001)
 	require.InDelta(t, 43.628, stats.avg, 0.001)
 	require.InDelta(t, 51.806, stats.max, 0.001)
@@ -178,8 +176,7 @@ func TestArgs(t *testing.T) {
 		expected := systemCases[i].output
 		sort.Strings(actual)
 		sort.Strings(expected)
-		require.True(t, reflect.DeepEqual(expected, actual),
-			"Expected: %s Actual: %s", expected, actual)
+		require.Equal(t, expected, actual)
 	}
 }
 
@@ -207,8 +204,7 @@ func TestArgs6(t *testing.T) {
 		expected := systemCases[i].output
 		sort.Strings(actual)
 		sort.Strings(expected)
-		require.True(t, reflect.DeepEqual(expected, actual),
-			"Expected: %s Actual: %s", expected, actual)
+		require.Equal(t, expected, actual)
 	}
 }
 
@@ -226,7 +222,7 @@ func TestArguments(t *testing.T) {
 
 	for _, system := range []string{"darwin", "linux", "anything else"} {
 		actual := p.args("www.google.com", system)
-		require.True(t, reflect.DeepEqual(actual, expected), "Expected: %s Actual: %s", expected, actual)
+		require.Equal(t, expected, actual)
 	}
 }
 
@@ -363,7 +359,7 @@ func TestFatalPingGather(t *testing.T) {
 
 	err := acc.GatherError(p.Gather)
 	require.Error(t, err)
-	require.EqualValues(t, err.Error(), "host www.amazon.com: ping: -i interval too short: Operation not permitted, so very bad")
+	require.EqualValues(t, "host \"www.amazon.com\": so very bad - ping: -i interval too short: Operation not permitted", err.Error())
 	require.False(t, acc.HasMeasurement("packets_transmitted"),
 		"Fatal ping should not have packet measurements")
 	require.False(t, acc.HasMeasurement("packets_received"),
@@ -385,8 +381,8 @@ func TestErrorWithHostNamePingGather(t *testing.T) {
 		out   string
 		error error
 	}{
-		{"", errors.New("host www.amazon.com: so very bad")},
-		{"so bad", errors.New("host www.amazon.com: so bad, so very bad")},
+		{"", errors.New("host \"www.amazon.com\": so very bad")},
+		{"so bad", errors.New("host \"www.amazon.com\": so very bad")},
 	}
 
 	for _, param := range params {
@@ -398,8 +394,8 @@ func TestErrorWithHostNamePingGather(t *testing.T) {
 			},
 		}
 		require.Error(t, acc.GatherError(p.Gather))
-		require.True(t, len(acc.Errors) > 0)
-		require.Contains(t, acc.Errors, param.error)
+		require.Len(t, acc.Errors, 1)
+		require.Contains(t, acc.Errors[0].Error(), param.error.Error())
 	}
 }
 
@@ -409,13 +405,13 @@ func TestPingBinary(t *testing.T) {
 		Urls:   []string{"www.google.com"},
 		Binary: "ping6",
 		pingHost: func(binary string, timeout float64, args ...string) (string, error) {
-			require.True(t, binary == "ping6")
+			require.Equal(t, "ping6", binary)
 			return "", nil
 		},
 	}
 	err := acc.GatherError(p.Gather)
 	require.Error(t, err)
-	require.EqualValues(t, err.Error(), "fatal error processing ping output: www.google.com")
+	require.EqualValues(t, "\"www.google.com\": fatal error processing ping output", err.Error())
 }
 
 // Test that Gather function works using native ping

@@ -20,7 +20,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -124,7 +123,7 @@ func (b *burrow) Gather(acc telegraf.Accumulator) error {
 	for _, addr := range b.Servers {
 		u, err := url.Parse(addr)
 		if err != nil {
-			acc.AddError(fmt.Errorf("unable to parse address '%s': %s", addr, err))
+			acc.AddError(fmt.Errorf("unable to parse address %q: %w", addr, err))
 			continue
 		}
 		if u.Path == "" {

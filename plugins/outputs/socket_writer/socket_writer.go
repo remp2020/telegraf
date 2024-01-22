@@ -4,8 +4,11 @@ package socket_writer
 import (
 	"crypto/tls"
 	_ "embed"
+	"errors"
 	"fmt"
+	"math"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,9 +18,9 @@ import (
 	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers"
+	"github.com/mdlayher/vsock"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -55,13 +58,38 @@ func (sw *SocketWriter) Connect() error {
 	}
 
 	var c net.Conn
-	if tlsCfg == nil {
-		c, err = net.Dial(spl[0], spl[1])
+
+	if spl[0] == "vsock" {
+		addrTuple := strings.SplitN(spl[1], ":", 2)
+
+		// Check address string for containing two
+		if len(addrTuple) < 2 {
+			return fmt.Errorf("CID and/or port number missing")
+		}
+
+		// Parse CID and port number from address string both being 32-bit
+		// source: https://man7.org/linux/man-pages/man7/vsock.7.html
+		cid, _ := strconv.ParseUint(addrTuple[0], 10, 32)
+		if (cid >= uint64(math.Pow(2, 32))-1) && (cid <= 0) {
+			return fmt.Errorf("CID %d is out of range", cid)
+		}
+		port, _ := strconv.ParseUint(addrTuple[1], 10, 32)
+		if (port >= uint64(math.Pow(2, 32))-1) && (port <= 0) {
+			return fmt.Errorf("Port number %d is out of range", port)
+		}
+		c, err = vsock.Dial(uint32(cid), uint32(port), nil)
+		if err != nil {
+			return err
+		}
 	} else {
-		c, err = tls.Dial(spl[0], spl[1], tlsCfg)
-	}
-	if err != nil {
-		return err
+		if tlsCfg == nil {
+			c, err = net.Dial(spl[0], spl[1])
+		} else {
+			c, err = tls.Dial(spl[0], spl[1], tlsCfg)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := sw.setKeepAlive(c); err != nil {
@@ -120,11 +148,12 @@ func (sw *SocketWriter) Write(metrics []telegraf.Metric) error {
 
 		if _, err := sw.Conn.Write(bs); err != nil {
 			//TODO log & keep going with remaining strings
-			if err, ok := err.(net.Error); !ok || !err.Temporary() {
+			var netErr net.Error
+			if errors.As(err, &netErr) {
 				// permanent error. close the connection
-				sw.Close() //nolint:revive // There is another error which will be returned here
+				sw.Close()
 				sw.Conn = nil
-				return fmt.Errorf("closing connection: %v", err)
+				return fmt.Errorf("closing connection: %w", netErr)
 			}
 			return err
 		}
@@ -143,13 +172,8 @@ func (sw *SocketWriter) Close() error {
 	return err
 }
 
-func newSocketWriter() *SocketWriter {
-	s, _ := serializers.NewInfluxSerializer()
-	return &SocketWriter{
-		Serializer: s,
-	}
-}
-
 func init() {
-	outputs.Add("socket_writer", func() telegraf.Output { return newSocketWriter() })
+	outputs.Add("socket_writer", func() telegraf.Output {
+		return &SocketWriter{}
+	})
 }

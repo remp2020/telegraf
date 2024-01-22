@@ -1,18 +1,19 @@
 package system
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/internal"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal"
 )
 
 type PS interface {
@@ -24,6 +25,7 @@ type PS interface {
 	VMStat() (*mem.VirtualMemoryStat, error)
 	SwapStat() (*mem.SwapMemoryStat, error)
 	NetConnections() ([]net.ConnectionStat, error)
+	NetConntrack(perCPU bool) ([]net.ConntrackStat, error)
 	Temperature() ([]host.TemperatureStat, error)
 }
 
@@ -170,7 +172,7 @@ partitionRange:
 			continue
 		}
 
-		du.Path = filepath.Join("/", strings.TrimPrefix(p.Mountpoint, hostMountPrefix))
+		du.Path = filepath.Join(string(os.PathSeparator), strings.TrimPrefix(p.Mountpoint, hostMountPrefix))
 		du.Fstype = p.Fstype
 		usage = append(usage, du)
 		partitions = append(partitions, &p)
@@ -191,9 +193,13 @@ func (s *SystemPS) NetConnections() ([]net.ConnectionStat, error) {
 	return net.Connections("all")
 }
 
+func (s *SystemPS) NetConntrack(perCPU bool) ([]net.ConntrackStat, error) {
+	return net.ConntrackStats(perCPU)
+}
+
 func (s *SystemPS) DiskIO(names []string) (map[string]disk.IOCountersStat, error) {
 	m, err := disk.IOCounters(names...)
-	if err == internal.ErrorNotImplemented {
+	if errors.Is(err, internal.ErrNotImplemented) {
 		return nil, nil
 	}
 
@@ -211,8 +217,8 @@ func (s *SystemPS) SwapStat() (*mem.SwapMemoryStat, error) {
 func (s *SystemPS) Temperature() ([]host.TemperatureStat, error) {
 	temp, err := host.SensorsTemperatures()
 	if err != nil {
-		_, ok := err.(*host.Warnings)
-		if !ok {
+		var hostWarnings *host.Warnings
+		if !errors.As(err, &hostWarnings) {
 			return temp, err
 		}
 	}

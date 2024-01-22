@@ -10,6 +10,15 @@ The docker plugin uses the [Official Docker Client][1] to gather stats from the
 
 [2]: https://docs.docker.com/engine/api/v1.24/
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -43,6 +52,11 @@ The docker plugin uses the [Official Docker Client][1] to gather stats from the
   ## example: container_state_exclude = ["created", "restarting", "running", "removing", "paused", "exited", "dead"]
   # container_state_include = []
   # container_state_exclude = []
+
+  ## Objects to include for disk usage query
+  ## Allowed values are "container", "image", "volume" 
+  ## When empty disk usage is excluded
+  storage_objects = []
 
   ## Timeout for docker list, info, and stats commands
   timeout = "5s"
@@ -116,9 +130,12 @@ sudo usermod -aG docker telegraf
 If telegraf is run within a container, the unix socket will need to be exposed
 within the telegraf container. This can be done in the docker CLI by add the
 option `-v /var/run/docker.sock:/var/run/docker.sock` or adding the following
-lines to the telegraf container definition in a docker compose file:
+lines to the telegraf container definition in a docker compose file.
+Additionally docker `telegraf` user must be assigned to `docker` group id
+from host:
 
 ```yaml
+user: telegraf:<host_docker_gid>
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
 ```
@@ -370,9 +387,26 @@ status if configured.
     - tasks_desired
     - tasks_running
 
+- docker_disk_usage
+  - tags:
+    - engine_host
+    - server_version
+    - container_name
+    - container_image
+    - container_version
+    - image_id
+    - image_name
+    - image_version
+    - volume_name
+  - fields:
+    - size_rw
+    - size_root_fs
+    - size
+    - shared_size
+
 ## Example Output
 
-```shell
+```text
 docker,engine_host=debian-stretch-docker,server_version=17.09.0-ce n_containers=6i,n_containers_paused=0i,n_containers_running=1i,n_containers_stopped=5i,n_cpus=2i,n_goroutines=41i,n_images=2i,n_listener_events=0i,n_used_file_descriptors=27i 1524002041000000000
 docker,engine_host=debian-stretch-docker,server_version=17.09.0-ce,unit=bytes memory_total=2101661696i 1524002041000000000
 docker_container_mem,container_image=telegraf,container_name=zen_ritchie,container_status=running,container_version=unknown,engine_host=debian-stretch-docker,server_version=17.09.0-ce active_anon=8327168i,active_file=2314240i,cache=27402240i,container_id="adc4ba9593871bf2ab95f3ffde70d1b638b897bb225d21c2c9c84226a10a8cf4",hierarchical_memory_limit=9223372036854771712i,inactive_anon=0i,inactive_file=25088000i,limit=2101661696i,mapped_file=20582400i,max_usage=36646912i,pgfault=4193i,pgmajfault=214i,pgpgin=9243i,pgpgout=520i,rss=8327168i,rss_huge=0i,total_active_anon=8327168i,total_active_file=2314240i,total_cache=27402240i,total_inactive_anon=0i,total_inactive_file=25088000i,total_mapped_file=20582400i,total_pgfault=4193i,total_pgmajfault=214i,total_pgpgin=9243i,total_pgpgout=520i,total_rss=8327168i,total_rss_huge=0i,total_unevictable=0i,total_writeback=0i,unevictable=0i,usage=36528128i,usage_percent=0.4342225020025297,writeback=0i 1524002042000000000
@@ -383,4 +417,8 @@ docker_container_net,container_image=telegraf,container_name=zen_ritchie,contain
 docker_container_blkio,container_image=telegraf,container_name=zen_ritchie,container_status=running,container_version=unknown,device=254:0,engine_host=debian-stretch-docker,server_version=17.09.0-ce container_id="adc4ba9593871bf2ab95f3ffde70d1b638b897bb225d21c2c9c84226a10a8cf4",io_service_bytes_recursive_async=27398144i,io_service_bytes_recursive_read=27398144i,io_service_bytes_recursive_sync=0i,io_service_bytes_recursive_total=27398144i,io_service_bytes_recursive_write=0i,io_serviced_recursive_async=529i,io_serviced_recursive_read=529i,io_serviced_recursive_sync=0i,io_serviced_recursive_total=529i,io_serviced_recursive_write=0i 1524002042000000000
 docker_container_health,container_image=telegraf,container_name=zen_ritchie,container_status=running,container_version=unknown,engine_host=debian-stretch-docker,server_version=17.09.0-ce failing_streak=0i,health_status="healthy" 1524007529000000000
 docker_swarm,service_id=xaup2o9krw36j2dy1mjx1arjw,service_mode=replicated,service_name=test tasks_desired=3,tasks_running=3 1508968160000000000
+docker_disk_usage,engine_host=docker-desktop,server_version=24.0.5 layers_size=17654519107i 1695742041000000000
+docker_disk_usage,container_image=influxdb,container_name=frosty_wright,container_version=1.8,engine_host=docker-desktop,server_version=24.0.5 size_root_fs=286593526i,size_rw=538i 1695742041000000000
+docker_disk_usage,engine_host=docker-desktop,image_id=7f4a1cc74046,image_name=telegraf,image_version=latest,server_version=24.0.5 shared_size=0i,size=425484494i 1695742041000000000
+docker_disk_usage,engine_host=docker-desktop,server_version=24.0.5,volume_name=docker_influxdb-data size=91989940i 1695742041000000000
 ```

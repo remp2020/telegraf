@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,10 +15,8 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -65,7 +64,7 @@ type EventHub struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	parser parsers.Parser
+	parser telegraf.Parser
 	in     chan []telegraf.Metric
 }
 
@@ -74,7 +73,7 @@ func (*EventHub) SampleConfig() string {
 }
 
 // SetParser sets the parser
-func (e *EventHub) SetParser(parser parsers.Parser) {
+func (e *EventHub) SetParser(parser telegraf.Parser) {
 	e.parser = parser
 }
 
@@ -147,7 +146,7 @@ func (e *EventHub) Start(acc telegraf.Accumulator) error {
 	for _, partitionID := range partitions {
 		_, err := e.hub.Receive(ctx, partitionID, e.onMessage, receiveOpts...)
 		if err != nil {
-			return fmt.Errorf("creating receiver for partition %q: %v", partitionID, err)
+			return fmt.Errorf("creating receiver for partition %q: %w", partitionID, err)
 		}
 	}
 
@@ -297,7 +296,7 @@ func (e *EventHub) createMetrics(event *eventhubClient.Event) ([]telegraf.Metric
 		}
 
 		if event.SystemProperties.PartitionID != nil && e.PartitionIDTag != "" {
-			metrics[i].AddTag(e.PartitionIDTag, fmt.Sprintf("%d", *event.SystemProperties.PartitionID))
+			metrics[i].AddTag(e.PartitionIDTag, strconv.Itoa(int(*event.SystemProperties.PartitionID)))
 		}
 		if event.SystemProperties.PartitionKey != nil && e.PartitionKeyTag != "" {
 			metrics[i].AddTag(e.PartitionKeyTag, *event.SystemProperties.PartitionKey)

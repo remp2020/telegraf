@@ -19,12 +19,23 @@ import (
 
 var defaultTimeout = config.Duration(time.Second * 5)
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type translator interface {
 	lookup(oid string) (snmp.MibEntry, error)
+}
+
+type wrapLog struct {
+	telegraf.Logger
+}
+
+func (l wrapLog) Printf(format string, args ...interface{}) {
+	l.Debugf(format, args...)
+}
+
+func (l wrapLog) Print(args ...interface{}) {
+	l.Debug(args...)
 }
 
 type SnmpTrap struct {
@@ -36,14 +47,14 @@ type SnmpTrap struct {
 
 	// Settings for version 3
 	// Values: "noAuthNoPriv", "authNoPriv", "authPriv"
-	SecLevel string `toml:"sec_level"`
-	SecName  string `toml:"sec_name"`
+	SecLevel string        `toml:"sec_level"`
+	SecName  config.Secret `toml:"sec_name"`
 	// Values: "MD5", "SHA", "". Default: ""
-	AuthProtocol string `toml:"auth_protocol"`
-	AuthPassword string `toml:"auth_password"`
+	AuthProtocol string        `toml:"auth_protocol"`
+	AuthPassword config.Secret `toml:"auth_password"`
 	// Values: "DES", "AES", "". Default: ""
-	PrivProtocol string `toml:"priv_protocol"`
-	PrivPassword string `toml:"priv_password"`
+	PrivProtocol string        `toml:"priv_protocol"`
+	PrivPassword config.Secret `toml:"priv_password"`
 
 	acc      telegraf.Accumulator
 	listener *gosnmp.TrapListener
@@ -54,7 +65,7 @@ type SnmpTrap struct {
 
 	Log telegraf.Logger `toml:"-"`
 
-	translator translator //nolint:revive
+	transl translator
 }
 
 func (*SnmpTrap) SampleConfig() string {
@@ -85,12 +96,12 @@ func (s *SnmpTrap) Init() error {
 	var err error
 	switch s.Translator {
 	case "gosmi":
-		s.translator, err = newGosmiTranslator(s.Path, s.Log)
+		s.transl, err = newGosmiTranslator(s.Path, s.Log)
 		if err != nil {
 			return err
 		}
 	case "netsnmp":
-		s.translator = newNetsnmpTranslator(s.Timeout)
+		s.transl = newNetsnmpTranslator(s.Timeout)
 	default:
 		return fmt.Errorf("invalid translator value")
 	}
@@ -105,7 +116,12 @@ func (s *SnmpTrap) Start(acc telegraf.Accumulator) error {
 	s.acc = acc
 	s.listener = gosnmp.NewTrapListener()
 	s.listener.OnNewTrap = makeTrapHandler(s)
-	s.listener.Params = gosnmp.Default
+
+	// gosnmp.Default is a pointer, using this more than once
+	// has side effects
+	defaults := *gosnmp.Default
+	s.listener.Params = &defaults
+	s.listener.Params.Logger = gosnmp.NewLogger(wrapLog{s.Log})
 
 	switch s.Version {
 	case "3":
@@ -129,7 +145,7 @@ func (s *SnmpTrap) Start(acc telegraf.Accumulator) error {
 		case "authpriv":
 			s.listener.Params.MsgFlags = gosnmp.AuthPriv
 		default:
-			return fmt.Errorf("unknown security level '%s'", s.SecLevel)
+			return fmt.Errorf("unknown security level %q", s.SecLevel)
 		}
 
 		var authenticationProtocol gosnmp.SnmpV3AuthProtocol
@@ -149,7 +165,7 @@ func (s *SnmpTrap) Start(acc telegraf.Accumulator) error {
 		case "":
 			authenticationProtocol = gosnmp.NoAuth
 		default:
-			return fmt.Errorf("unknown authentication protocol '%s'", s.AuthProtocol)
+			return fmt.Errorf("unknown authentication protocol %q", s.AuthProtocol)
 		}
 
 		var privacyProtocol gosnmp.SnmpV3PrivProtocol
@@ -169,14 +185,35 @@ func (s *SnmpTrap) Start(acc telegraf.Accumulator) error {
 		case "":
 			privacyProtocol = gosnmp.NoPriv
 		default:
-			return fmt.Errorf("unknown privacy protocol '%s'", s.PrivProtocol)
+			return fmt.Errorf("unknown privacy protocol %q", s.PrivProtocol)
 		}
 
+		secnameSecret, err := s.SecName.Get()
+		if err != nil {
+			return fmt.Errorf("getting secname failed: %w", err)
+		}
+		secname := secnameSecret.String()
+		secnameSecret.Destroy()
+
+		privPasswdSecret, err := s.PrivPassword.Get()
+		if err != nil {
+			return fmt.Errorf("getting secname failed: %w", err)
+		}
+		privPasswd := privPasswdSecret.String()
+		privPasswdSecret.Destroy()
+
+		authPasswdSecret, err := s.AuthPassword.Get()
+		if err != nil {
+			return fmt.Errorf("getting secname failed: %w", err)
+		}
+		authPasswd := authPasswdSecret.String()
+		authPasswdSecret.Destroy()
+
 		s.listener.Params.SecurityParameters = &gosnmp.UsmSecurityParameters{
-			UserName:                 s.SecName,
+			UserName:                 secname,
 			PrivacyProtocol:          privacyProtocol,
-			PrivacyPassphrase:        s.PrivPassword,
-			AuthenticationPassphrase: s.AuthPassword,
+			PrivacyPassphrase:        privPasswd,
+			AuthenticationPassphrase: authPasswd,
 			AuthenticationProtocol:   authenticationProtocol,
 		}
 	}
@@ -197,7 +234,7 @@ func (s *SnmpTrap) Start(acc telegraf.Accumulator) error {
 	// gosnmp.TrapListener currently supports udp only.  For forward
 	// compatibility, require udp in the service address
 	if protocol != "udp" {
-		return fmt.Errorf("unknown protocol '%s' in '%s'", protocol, s.ServiceAddress)
+		return fmt.Errorf("unknown protocol %q in %q", protocol, s.ServiceAddress)
 	}
 
 	// If (*TrapListener).Listen immediately returns an error we need
@@ -254,7 +291,7 @@ func makeTrapHandler(s *SnmpTrap) gosnmp.TrapHandlerFunc {
 			}
 
 			if trapOid != "" {
-				e, err := s.translator.lookup(trapOid)
+				e, err := s.transl.lookup(trapOid)
 				if err != nil {
 					s.Log.Errorf("Error resolving V1 OID, oid=%s, source=%s: %v", trapOid, tags["source"], err)
 					return
@@ -292,7 +329,7 @@ func makeTrapHandler(s *SnmpTrap) gosnmp.TrapHandlerFunc {
 
 				var e snmp.MibEntry
 				var err error
-				e, err = s.translator.lookup(val)
+				e, err = s.transl.lookup(val)
 				if nil != err {
 					s.Log.Errorf("Error resolving value OID, oid=%s, source=%s: %v", val, tags["source"], err)
 					return
@@ -310,7 +347,7 @@ func makeTrapHandler(s *SnmpTrap) gosnmp.TrapHandlerFunc {
 				value = v.Value
 			}
 
-			e, err := s.translator.lookup(v.Name)
+			e, err := s.transl.lookup(v.Name)
 			if nil != err {
 				s.Log.Errorf("Error resolving OID oid=%s, source=%s: %v", v.Name, tags["source"], err)
 				return

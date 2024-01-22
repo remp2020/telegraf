@@ -15,6 +15,15 @@ XML format in BIND 9.10+.
 JSON statistics schema version 1 (BIND 9.10+) is supported. As of writing, some
 distros still do not enable support for JSON statistics in their BIND packages.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -30,14 +39,15 @@ distros still do not enable support for JSON statistics in their BIND packages.
   # timeout = "4s"
 ```
 
-- **urls** []string: List of BIND statistics channel URLs to collect from. Do not include a
-  trailing slash in the URL. Default is "http://localhost:8053/xml/v3".
+- **urls** []string: List of BIND statistics channel URLs to collect from.
+  Do not include a trailing slash in the URL.
+  Default is `http://localhost:8053/xml/v3`.
 - **gather_memory_contexts** bool: Report per-context memory statistics.
 - **gather_views** bool: Report per-view query statistics.
-- **timeout** Timeout for http requests made by bind nameserver (example: "4s").
+- **timeout** Timeout for http requests made by bind (example: "4s").
 
-The following table summarizes the URL formats which should be used, depending
-on your BIND version and configured statistics channel.
+The following table summarizes the URL formats which should be used,
+depending on your BIND version and configured statistics channel.
 
 | BIND Version | Statistics Format | Example URL                   |
 | ------------ | ----------------- | ----------------------------- |
@@ -48,8 +58,8 @@ on your BIND version and configured statistics channel.
 
 ### Configuration of BIND Daemon
 
-Add the following to your named.conf if running Telegraf on the same host as the
-BIND daemon:
+Add the following to your named.conf if running Telegraf on the same host
+as the BIND daemon:
 
 ```json
 statistics-channels {
@@ -57,10 +67,11 @@ statistics-channels {
 };
 ```
 
-Alternatively, specify a wildcard address (e.g., 0.0.0.0) or specific IP address
-of an interface to configure the BIND daemon to listen on that address. Note
-that you should secure the statistics channel with an ACL if it is publicly
-reachable. Consult the BIND Administrator Reference Manual for more information.
+Alternatively, specify a wildcard address (e.g., 0.0.0.0) or specific
+IP address of an interface to configure the BIND daemon to listen on that
+address. Note that you should secure the statistics channel with an ACL if
+it is publicly reachable. Consult the BIND Administrator Reference Manual
+for more information.
 
 ## Metrics
 
@@ -124,7 +135,7 @@ time                non_negative_derivative_A non_negative_derivative_PTR
 
 Here is example output of this plugin:
 
-```shell
+```text
 bind_memory,host=LAP,port=8053,source=localhost,url=localhost:8053 block_size=12058624i,context_size=4575056i,in_use=4113717i,lost=0i,total_use=16663252i 1554276619000000000
 bind_counter,host=LAP,port=8053,source=localhost,type=opcode,url=localhost:8053 IQUERY=0i,NOTIFY=0i,QUERY=9i,STATUS=0i,UPDATE=0i 1554276619000000000
 bind_counter,host=LAP,port=8053,source=localhost,type=rcode,url=localhost:8053 17=0i,18=0i,19=0i,20=0i,21=0i,22=0i,BADCOOKIE=0i,BADVERS=0i,FORMERR=0i,NOERROR=7i,NOTAUTH=0i,NOTIMP=0i,NOTZONE=0i,NXDOMAIN=0i,NXRRSET=0i,REFUSED=0i,RESERVED11=0i,RESERVED12=0i,RESERVED13=0i,RESERVED14=0i,RESERVED15=0i,SERVFAIL=2i,YXDOMAIN=0i,YXRRSET=0i 1554276619000000000

@@ -70,7 +70,7 @@ In case you still want to continue with the PR, feel free to reopen it.
 
 ## Linting
 
-Each pull request will have the appriopriate linters checking the files for any common mistakes. The github action Super Linter is used: [super-pinter](https://github.com/github/super-linter). If it is failing you can click on the action and read the logs to figure out the issue. You can also run the github action locally by following these instructions: [run-linter-locally.md](https://github.com/github/super-linter/blob/main/docs/run-linter-locally.md). You can find more information on each of the linters in the super linter readme.
+Each pull request will have the appropriate linters checking the files for any common mistakes. The github action Super Linter is used: [super-pinter](https://github.com/github/super-linter). If it is failing you can click on the action and read the logs to figure out the issue. You can also run the github action locally by following these instructions: [run-linter-locally.md](https://github.com/github/super-linter/blob/main/docs/run-linter-locally.md). You can find more information on each of the linters in the super linter readme.
 
 ## Testing
 
@@ -156,6 +156,17 @@ monotonically increasing without reset and reset on each interval.  No attempt
 should be made to switch between these two styles but if given the option it
 is preferred to use the non-reseting variant.  This style is more resilient in
 the face of downtime and does not contain a fixed time element.
+
+### Source tag
+
+When metrics are gathered from another host, the metric schema should have a tag
+named "source" that contains the other host's name. See [this feature
+request](https://github.com/influxdata/telegraf/issues/4413) for details.
+
+The metric schema doesn't need to have a tag for the host running
+telegraf. Telegraf agent code can add a tag named "host" and by default
+containing the hostname reported by the kernel. This can be configured through
+the "hostname" and "omit_hostname" agent settings.
 
 ## Go Best Practices
 

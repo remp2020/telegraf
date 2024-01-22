@@ -2,6 +2,26 @@
 
 The StatsD input plugin gathers metrics from a Statsd server.
 
+## Service Input <!-- @/docs/includes/service_input.md -->
+
+This plugin is a service input. Normal plugins gather metrics determined by the
+interval setting. Service plugins start a service to listens and waits for
+metrics or events to occur. Service plugins have two key differences from
+normal plugins:
+
+1. The global or plugin specific `interval` setting may not apply
+2. The CLI options of `--test`, `--test-wait`, and `--once` may not produce
+   output for this plugin
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -36,6 +56,11 @@ The StatsD input plugin gathers metrics from a Statsd server.
   ## Reset timings & histograms every interval (default=true)
   delete_timings = true
 
+  ## Enable aggregation temporality adds temporality=delta or temporality=commulative tag, and
+  ## start_time field, which adds the start time of the metric accumulation.
+  ## You should use this when using OpenTelemetry output.
+  # enable_aggregation_temporality = false
+
   ## Percentiles to calculate for timing & histogram stats.
   percentiles = [50.0, 90.0, 99.0, 99.9, 99.95, 100.0]
 
@@ -66,6 +91,9 @@ The StatsD input plugin gathers metrics from a Statsd server.
   ## the statsd server will start dropping packets
   allowed_pending_messages = 10000
 
+  ## Number of worker threads used to parse the incoming messages.
+  # number_workers_threads = 5
+
   ## Number of timing/histogram values to track per-measurement in the
   ## calculation of percentiles. Raising this limit increases the accuracy
   ## of percentiles but also increases the memory usage and cpu time.
@@ -82,9 +110,13 @@ The StatsD input plugin gathers metrics from a Statsd server.
   ## By default, telegraf will pass names directly as they are received.
   ## However, upstream statsd now does sanitization of names which can be
   ## enabled by using the "upstream" method option. This option will a) replace
-  ## white space with '_', replace '/' with '-', and remove charachters not
+  ## white space with '_', replace '/' with '-', and remove characters not
   ## matching 'a-zA-Z_\-0-9\.;='.
   #sanitize_name_method = ""
+
+  ## Replace dots (.) with underscore (_) and dashes (-) with
+  ## double underscore (__) in metric names.
+  # convert_names = false
 ```
 
 ## Description
@@ -183,6 +215,8 @@ metric type:
         for that stat during that interval.
     - `statsd_<name>_mean`: The mean is the average of all values statsd saw
         for that stat during that interval.
+    - `statsd_<name>_median`: The median is the middle of all values statsd saw
+        for that stat during that interval.
     - `statsd_<name>_stddev`: The stddev is the sample standard deviation
         of all values statsd saw for that stat during that interval.
     - `statsd_<name>_sum`: The sum is the sample sum of all values statsd saw
@@ -265,3 +299,5 @@ mem.cached.localhost:256|g
 
 Consult the [Template Patterns](/docs/TEMPLATE_PATTERN.md) documentation for
 additional details.
+
+## Example Output

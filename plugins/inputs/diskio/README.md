@@ -2,6 +2,15 @@
 
 The diskio input plugin gathers metrics about disk traffic and timing.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -10,7 +19,9 @@ The diskio input plugin gathers metrics about disk traffic and timing.
   ## By default, telegraf will gather stats for all devices including
   ## disk partitions.
   ## Setting devices will restrict the stats to the specified devices.
-  # devices = ["sda", "sdb", "vd*"]
+  ## NOTE: Globbing expressions (e.g. asterix) are not supported for
+  ##       disk synonyms like '/dev/disk/by-id'.
+  # devices = ["sda", "sdb", "vd*", "/dev/disk/by-id/nvme-eui.00123deadc0de123"]
   ## Uncomment the following line if you need disk serial numbers.
   # skip_serial_number = false
   #
@@ -135,7 +146,7 @@ SELECT non_negative_derivative(last("weighted_io_time"),1ms) from "diskio" WHERE
 
 ## Example Output
 
-```shell
+```text
 diskio,name=sda1 merged_reads=0i,reads=2353i,writes=10i,write_bytes=2117632i,write_time=49i,io_time=1271i,weighted_io_time=1350i,read_bytes=31350272i,read_time=1303i,iops_in_progress=0i,merged_writes=0i 1578326400000000000
 diskio,name=centos/var_log reads=1063077i,writes=591025i,read_bytes=139325491712i,write_bytes=144233131520i,read_time=650221i,write_time=24368817i,io_time=852490i,weighted_io_time=25037394i,iops_in_progress=1i,merged_reads=0i,merged_writes=0i 1578326400000000000
 diskio,name=sda write_time=49i,io_time=1317i,weighted_io_time=1404i,reads=2495i,read_time=1357i,write_bytes=2117632i,iops_in_progress=0i,merged_reads=0i,merged_writes=0i,writes=10i,read_bytes=38956544i 1578326400000000000

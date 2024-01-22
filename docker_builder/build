@@ -6,6 +6,8 @@ set -e
 cp -a /gopath/src/. /go/src
 cp -a /src/build/. /go/src/github.com/influxdata/telegraf 1>&2
 
+git config --global --add safe.directory '*'
+
 make deps 1>&2
 make docker-telegraf 1>&2
 

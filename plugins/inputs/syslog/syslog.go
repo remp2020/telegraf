@@ -28,7 +28,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -94,12 +93,10 @@ func (s *Syslog) Start(acc telegraf.Accumulator) error {
 	case "udp", "udp4", "udp6", "ip", "ip4", "ip6", "unixgram":
 		s.isStream = false
 	default:
-		return fmt.Errorf("unknown protocol '%s' in '%s'", scheme, s.Address)
+		return fmt.Errorf("unknown protocol %q in %q", scheme, s.Address)
 	}
 
 	if scheme == "unix" || scheme == "unixpacket" || scheme == "unixgram" {
-		// Accept success and failure in case the file does not exist
-		//nolint:errcheck,revive
 		os.Remove(s.Address)
 	}
 
@@ -142,8 +139,6 @@ func (s *Syslog) Stop() {
 	defer s.mu.Unlock()
 
 	if s.Closer != nil {
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
 		s.Close()
 	}
 	s.wg.Wait()
@@ -155,12 +150,12 @@ func (s *Syslog) Stop() {
 func getAddressParts(a string) (scheme string, host string, err error) {
 	parts := strings.SplitN(a, "://", 2)
 	if len(parts) != 2 {
-		return "", "", fmt.Errorf("missing protocol within address '%s'", a)
+		return "", "", fmt.Errorf("missing protocol within address %q", a)
 	}
 
 	u, err := url.Parse(filepath.ToSlash(a)) //convert backslashes to slashes (to make Windows path a valid URL)
 	if err != nil {
-		return "", "", fmt.Errorf("could not parse address '%s': %v", a, err)
+		return "", "", fmt.Errorf("could not parse address %q: %w", a, err)
 	}
 	switch u.Scheme {
 	case "unix", "unixpacket", "unixgram":
@@ -195,7 +190,7 @@ func (s *Syslog) listenPacket(acc telegraf.Accumulator) {
 		p = rfc3164.NewParser(rfc3164.WithYear(rfc3164.CurrentYear{}), rfc3164.WithBestEffort())
 	}
 	for {
-		n, _, err := s.udpListener.ReadFrom(b)
+		n, sourceAddr, err := s.udpListener.ReadFrom(b)
 		if err != nil {
 			if !strings.HasSuffix(err.Error(), ": use of closed network connection") {
 				acc.AddError(err)
@@ -205,10 +200,13 @@ func (s *Syslog) listenPacket(acc telegraf.Accumulator) {
 
 		message, err := p.Parse(b[:n])
 		if message != nil {
-			acc.AddFields("syslog", fields(message, s), tags(message), s.currentTime())
+			acc.AddFields("syslog", fields(message, s), tags(message, sourceAddr), s.currentTime())
 		}
 		if err != nil {
 			acc.AddError(err)
+		}
+		if err == nil && message == nil {
+			acc.AddError(fmt.Errorf("unable to parse message: %s", string(b[:n])))
 		}
 	}
 }
@@ -243,7 +241,7 @@ func (s *Syslog) listenStream(acc telegraf.Accumulator) {
 		s.connectionsMu.Unlock()
 
 		if err := s.setKeepAlive(tcpConn); err != nil {
-			acc.AddError(fmt.Errorf("unable to configure keep alive (%s): %s", s.Address, err))
+			acc.AddError(fmt.Errorf("unable to configure keep alive %q: %w", s.Address, err))
 		}
 
 		go s.handle(conn, acc)
@@ -267,18 +265,16 @@ func (s *Syslog) removeConnection(c net.Conn) {
 func (s *Syslog) handle(conn net.Conn, acc telegraf.Accumulator) {
 	defer func() {
 		s.removeConnection(conn)
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
 		conn.Close()
 	}()
 
 	var p syslog.Parser
 
 	emit := func(r *syslog.Result) {
-		s.store(*r, acc)
+		s.store(*r, conn.RemoteAddr(), acc)
 		if s.ReadTimeout != nil && time.Duration(*s.ReadTimeout) > 0 {
 			if err := conn.SetReadDeadline(time.Now().Add(time.Duration(*s.ReadTimeout))); err != nil {
-				acc.AddError(fmt.Errorf("setting read deadline failed: %v", err))
+				acc.AddError(fmt.Errorf("setting read deadline failed: %w", err))
 			}
 		}
 	}
@@ -305,7 +301,7 @@ func (s *Syslog) handle(conn net.Conn, acc telegraf.Accumulator) {
 
 	if s.ReadTimeout != nil && time.Duration(*s.ReadTimeout) > 0 {
 		if err := conn.SetReadDeadline(time.Now().Add(time.Duration(*s.ReadTimeout))); err != nil {
-			acc.AddError(fmt.Errorf("setting read deadline failed: %v", err))
+			acc.AddError(fmt.Errorf("setting read deadline failed: %w", err))
 		}
 	}
 }
@@ -324,16 +320,16 @@ func (s *Syslog) setKeepAlive(c *net.TCPConn) error {
 	return c.SetKeepAlivePeriod(time.Duration(*s.KeepAlivePeriod))
 }
 
-func (s *Syslog) store(res syslog.Result, acc telegraf.Accumulator) {
+func (s *Syslog) store(res syslog.Result, remoteAddr net.Addr, acc telegraf.Accumulator) {
 	if res.Error != nil {
 		acc.AddError(res.Error)
 	}
 	if res.Message != nil {
-		acc.AddFields("syslog", fields(res.Message, s), tags(res.Message), s.currentTime())
+		acc.AddFields("syslog", fields(res.Message, s), tags(res.Message, remoteAddr), s.currentTime())
 	}
 }
 
-func tags(msg syslog.Message) map[string]string {
+func tags(msg syslog.Message, sourceAddr net.Addr) map[string]string {
 	ts := map[string]string{}
 
 	// Not checking assuming a minimally valid message
@@ -346,6 +342,13 @@ func tags(msg syslog.Message) map[string]string {
 	case *rfc3164.SyslogMessage:
 		populateCommonTags(&m.Base, ts)
 	}
+
+	if sourceAddr != nil {
+		if source, _, err := net.SplitHostPort(sourceAddr.String()); err == nil {
+			ts["source"] = source
+		}
+	}
+
 	return ts
 }
 
@@ -413,8 +416,6 @@ type unixCloser struct {
 
 func (uc unixCloser) Close() error {
 	err := uc.closer.Close()
-	// Accept success and failure in case the file does not exist
-	//nolint:errcheck,revive
 	os.Remove(uc.path)
 	return err
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -33,14 +32,6 @@ type CPUStats struct {
 	Log telegraf.Logger `toml:"-"`
 }
 
-func NewCPUStats(ps system.PS) *CPUStats {
-	return &CPUStats{
-		ps:             ps,
-		CollectCPUTime: true,
-		ReportActive:   true,
-	}
-}
-
 func (*CPUStats) SampleConfig() string {
 	return sampleConfig
 }
@@ -48,7 +39,7 @@ func (*CPUStats) SampleConfig() string {
 func (c *CPUStats) Gather(acc telegraf.Accumulator) error {
 	times, err := c.ps.CPUTimes(c.PerCPU, c.TotalCPU)
 	if err != nil {
-		return fmt.Errorf("error getting CPU info: %s", err)
+		return fmt.Errorf("error getting CPU info: %w", err)
 	}
 	now := time.Now()
 

@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/serializers"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestSerialize(t *testing.T) {
@@ -140,7 +142,7 @@ http_request_duration_seconds_count 0
 		{
 			name: "simple with timestamp",
 			config: FormatConfig{
-				TimestampExport: ExportTimestamp,
+				ExportTimestamp: true,
 			},
 			metric: testutil.MustMetric(
 				"cpu",
@@ -158,15 +160,82 @@ http_request_duration_seconds_count 0
 cpu_time_idle{host="example.org"} 42 1574279268000
 `),
 		},
+		{
+			name: "simple with CompactEncoding",
+			config: FormatConfig{
+				CompactEncoding: true,
+			},
+			metric: testutil.MustMetric(
+				"cpu",
+				map[string]string{
+					"host": "example.org",
+				},
+				map[string]interface{}{
+					"time_idle": 42.0,
+				},
+				time.Unix(1574279268, 0),
+			),
+			expected: []byte(`
+# TYPE cpu_time_idle untyped
+cpu_time_idle{host="example.org"} 42
+`),
+		},
+		{
+			name: "untyped forced to counter",
+			config: FormatConfig{
+				TypeMappings: MetricTypes{Counter: []string{"cpu_time_idle"}},
+			},
+			metric: testutil.MustMetric(
+				"cpu",
+				map[string]string{
+					"host": "example.org",
+				},
+				map[string]interface{}{
+					"time_idle": 42,
+				},
+				time.Unix(0, 0),
+			),
+			expected: []byte(`
+# HELP cpu_time_idle Telegraf collected metric
+# TYPE cpu_time_idle counter
+cpu_time_idle{host="example.org"} 42
+`),
+		},
+		{
+			name: "untyped forced to gauge",
+			config: FormatConfig{
+				TypeMappings: MetricTypes{Gauge: []string{"cpu_time_idle"}},
+			},
+			metric: testutil.MustMetric(
+				"cpu",
+				map[string]string{
+					"host": "example.org",
+				},
+				map[string]interface{}{
+					"time_idle": 42.0,
+				},
+				time.Unix(0, 0),
+			),
+			expected: []byte(`
+# HELP cpu_time_idle Telegraf collected metric
+# TYPE cpu_time_idle gauge
+cpu_time_idle{host="example.org"} 42
+`),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := NewSerializer(FormatConfig{
-				MetricSortOrder: SortMetrics,
-				TimestampExport: tt.config.TimestampExport,
-				StringHandling:  tt.config.StringHandling,
-			})
-			require.NoError(t, err)
+			s := &Serializer{
+				FormatConfig{
+					SortMetrics:     true,
+					ExportTimestamp: tt.config.ExportTimestamp,
+					StringAsLabel:   tt.config.StringAsLabel,
+					CompactEncoding: tt.config.CompactEncoding,
+					TypeMappings:    tt.config.TypeMappings,
+				},
+			}
+			require.NoError(t, s.Init())
+
 			actual, err := s.Serialize(tt.metric)
 			require.NoError(t, err)
 
@@ -514,7 +583,7 @@ cpu_time_idle 42
 		{
 			name: "string as label",
 			config: FormatConfig{
-				StringHandling: StringAsLabel,
+				StringAsLabel: true,
 			},
 			metrics: []telegraf.Metric{
 				testutil.MustMetric(
@@ -536,7 +605,7 @@ cpu_time_idle{cpu="cpu0"} 42
 		{
 			name: "string as label duplicate tag",
 			config: FormatConfig{
-				StringHandling: StringAsLabel,
+				StringAsLabel: true,
 			},
 			metrics: []telegraf.Metric{
 				testutil.MustMetric(
@@ -560,7 +629,7 @@ cpu_time_idle{cpu="cpu0"} 42
 		{
 			name: "replace characters when using string as label",
 			config: FormatConfig{
-				StringHandling: StringAsLabel,
+				StringAsLabel: true,
 			},
 			metrics: []telegraf.Metric{
 				testutil.MustMetric(
@@ -676,12 +745,13 @@ rpc_duration_seconds_count 2693
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := NewSerializer(FormatConfig{
-				MetricSortOrder: SortMetrics,
-				TimestampExport: tt.config.TimestampExport,
-				StringHandling:  tt.config.StringHandling,
-			})
-			require.NoError(t, err)
+			s := &Serializer{
+				FormatConfig{
+					SortMetrics:     true,
+					ExportTimestamp: tt.config.ExportTimestamp,
+					StringAsLabel:   tt.config.StringAsLabel,
+				},
+			}
 			actual, err := s.SerializeBatch(tt.metrics)
 			require.NoError(t, err)
 
@@ -689,5 +759,28 @@ rpc_duration_seconds_count 2693
 				strings.TrimSpace(string(tt.expected)),
 				strings.TrimSpace(string(actual)))
 		})
+	}
+}
+
+func BenchmarkSerialize(b *testing.B) {
+	s := &Serializer{}
+	require.NoError(b, s.Init())
+	metrics := serializers.BenchmarkMetrics(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.Serialize(metrics[i%len(metrics)])
+		require.NoError(b, err)
+	}
+}
+
+func BenchmarkSerializeBatch(b *testing.B) {
+	s := &Serializer{}
+	require.NoError(b, s.Init())
+	m := serializers.BenchmarkMetrics(b)
+	metrics := m[:]
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.SerializeBatch(metrics)
+		require.NoError(b, err)
 	}
 }

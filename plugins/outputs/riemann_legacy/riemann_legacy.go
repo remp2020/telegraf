@@ -14,11 +14,11 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
-const deprecationMsg = "Error: this Riemann output plugin will be deprecated in a future release, see https://github.com/influxdata/telegraf/issues/1878 for more details & discussion."
+const deprecationMsg = "Error: this Riemann output plugin will be deprecated in a future release, " +
+	"see https://github.com/influxdata/telegraf/issues/1878 for more details & discussion."
 
 type Riemann struct {
 	URL       string          `toml:"url"`
@@ -64,7 +64,7 @@ func (r *Riemann) Write(metrics []telegraf.Metric) error {
 	if r.client == nil {
 		err := r.Connect()
 		if err != nil {
-			return fmt.Errorf("failed to (re)connect to Riemann, error: %s", err)
+			return fmt.Errorf("failed to (re)connect to Riemann: %w", err)
 		}
 	}
 
@@ -76,8 +76,8 @@ func (r *Riemann) Write(metrics []telegraf.Metric) error {
 
 	var senderr = r.client.SendMulti(events)
 	if senderr != nil {
-		r.Close() //nolint:revive // There is another error which will be returned here
-		return fmt.Errorf("failed to send riemann message (will try to reconnect), error: %s", senderr)
+		r.Close()
+		return fmt.Errorf("failed to send riemann message (will try to reconnect): %w", senderr)
 	}
 
 	return nil

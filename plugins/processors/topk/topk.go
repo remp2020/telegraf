@@ -15,7 +15,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/processors"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -92,7 +91,7 @@ func (t *TopK) generateGroupByKey(m telegraf.Metric) (string, error) {
 		var err error
 		t.tagsGlobs, err = filter.Compile(t.GroupBy)
 		if err != nil {
-			return "", fmt.Errorf("could not compile pattern: %v %v", t.GroupBy, err)
+			return "", fmt.Errorf("could not compile pattern: %v %w", t.GroupBy, err)
 		}
 	}
 
@@ -286,7 +285,7 @@ func (t *TopK) getAggregationFunction(aggOperation string) (func([]telegraf.Metr
 				}
 				val, ok := convert(fieldVal)
 				if !ok {
-					t.Log.Infof("Cannot convert value '%s' from metric '%s' with tags '%s'",
+					t.Log.Infof("Cannot convert value %q from metric %q with tags %q",
 						m.Fields()[field], m.Name(), m.Tags())
 					continue
 				}
@@ -352,7 +351,7 @@ func (t *TopK) getAggregationFunction(aggOperation string) (func([]telegraf.Metr
 					}
 					val, ok := convert(fieldVal)
 					if !ok {
-						t.Log.Infof("Cannot convert value '%s' from metric '%s' with tags '%s'",
+						t.Log.Infof("Cannot convert value %q from metric %q with tags %q",
 							m.Fields()[field], m.Name(), m.Tags())
 						continue
 					}
@@ -378,7 +377,7 @@ func (t *TopK) getAggregationFunction(aggOperation string) (func([]telegraf.Metr
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unknown aggregation function '%s', no metrics will be processed", t.Aggregation)
+		return nil, fmt.Errorf("unknown aggregation function %q, no metrics will be processed", t.Aggregation)
 	}
 }
 

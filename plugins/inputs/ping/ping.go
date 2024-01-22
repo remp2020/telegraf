@@ -14,14 +14,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-ping/ping"
+	ping "github.com/prometheus-community/pro-bing"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -71,7 +70,7 @@ type Ping struct {
 	Binary string
 
 	// Arguments for ping command. When arguments is not empty, system binary will be used and
-	// other options (ping_interval, timeout, etc) will be ignored
+	// other options (ping_interval, timeout, etc.) will be ignored
 	Arguments []string
 
 	// Whether to resolve addresses using ipv6 or not.
@@ -87,20 +86,6 @@ type Ping struct {
 
 	// Packet size
 	Size *int
-}
-
-type roundTripTimeStats struct {
-	min    float64
-	avg    float64
-	max    float64
-	stddev float64
-}
-
-type stats struct {
-	trans int
-	recv  int
-	ttl   int
-	roundTripTimeStats
 }
 
 func (*Ping) SampleConfig() string {
@@ -166,7 +151,7 @@ func (p *Ping) nativePing(destination string) (*pingStats, error) {
 	once := &sync.Once{}
 	pinger.OnRecv = func(pkt *ping.Packet) {
 		once.Do(func() {
-			ps.ttl = pkt.Ttl
+			ps.ttl = pkt.TTL
 		})
 	}
 
@@ -180,7 +165,7 @@ func (p *Ping) nativePing(destination string) (*pingStats, error) {
 
 			return nil, fmt.Errorf("permission changes required, refer to the ping plugin's README.md for more info")
 		}
-		return nil, fmt.Errorf("%w", err)
+		return nil, err
 	}
 
 	ps.Statistics = *pinger.Statistics()

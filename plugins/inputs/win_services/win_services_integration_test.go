@@ -1,7 +1,6 @@
 //go:build windows
-// +build windows
 
-//these tests must be run under administrator account
+// these tests must be run under administrator account
 package win_services
 
 import (
@@ -21,12 +20,16 @@ func TestListIntegration(t *testing.T) {
 	provider := &MgProvider{}
 	scmgr, err := provider.Connect()
 	require.NoError(t, err)
-	defer scmgr.Disconnect()
+	defer func() {
+		err := scmgr.Disconnect()
+		require.NoError(t, err)
+	}()
 
 	winServices := &WinServices{
 		ServiceNames: KnownServices,
 	}
-	winServices.Init()
+
+	require.NoError(t, winServices.Init())
 	services, err := winServices.listServices(scmgr)
 	require.NoError(t, err)
 	require.Len(t, services, 2, "Different number of services")
@@ -41,12 +44,16 @@ func TestEmptyListIntegration(t *testing.T) {
 	provider := &MgProvider{}
 	scmgr, err := provider.Connect()
 	require.NoError(t, err)
-	defer scmgr.Disconnect()
+	defer func() {
+		err := scmgr.Disconnect()
+		require.NoError(t, err)
+	}()
 
 	winServices := &WinServices{
 		ServiceNames: []string{},
 	}
-	winServices.Init()
+
+	require.NoError(t, winServices.Init())
 	services, err := winServices.listServices(scmgr)
 	require.NoError(t, err)
 	require.Condition(t, func() bool { return len(services) > 20 }, "Too few service")
@@ -61,7 +68,8 @@ func TestGatherErrorsIntegration(t *testing.T) {
 		ServiceNames: InvalidServices,
 		mgrProvider:  &MgProvider{},
 	}
-	ws.Init()
+
+	require.NoError(t, ws.Init())
 	require.Len(t, ws.ServiceNames, 3, "Different number of services")
 	var acc testutil.Accumulator
 	require.NoError(t, ws.Gather(&acc))

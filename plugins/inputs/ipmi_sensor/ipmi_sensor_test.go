@@ -375,15 +375,12 @@ OS RealTime Mod  | 0x00              | ok
 	cmd := args[3]
 
 	// Ignore the returned errors for the mocked interface as tests will fail anyway
-	if cmd == "ipmitool" {
-		//nolint:errcheck,revive
-		fmt.Fprint(os.Stdout, mockData)
-	} else {
-		//nolint:errcheck,revive
+	if cmd != "ipmitool" {
 		fmt.Fprint(os.Stdout, "command not found")
 		//nolint:revive // error code is important for this "test"
 		os.Exit(1)
 	}
+	fmt.Fprint(os.Stdout, mockData)
 	//nolint:revive // error code is important for this "test"
 	os.Exit(0)
 }
@@ -575,15 +572,12 @@ Power Supply 1   | 03h | ok  | 10.1 | 110 Watts, Presence detected
 	cmd := args[3]
 
 	// Ignore the returned errors for the mocked interface as tests will fail anyway
-	if cmd == "ipmitool" {
-		//nolint:errcheck,revive
-		fmt.Fprint(os.Stdout, mockData)
-	} else {
-		//nolint:errcheck,revive
+	if cmd != "ipmitool" {
 		fmt.Fprint(os.Stdout, "command not found")
 		//nolint:revive // error code is important for this "test"
 		os.Exit(1)
 	}
+	fmt.Fprint(os.Stdout, mockData)
 	//nolint:revive // error code is important for this "test"
 	os.Exit(0)
 }
@@ -819,7 +813,7 @@ func TestSanitizeIPMICmd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var sanitizedArgs []string = sanitizeIPMICmd(tt.args)
+			sanitizedArgs := sanitizeIPMICmd(tt.args)
 			require.Equal(t, tt.expected, sanitizedArgs)
 		})
 	}

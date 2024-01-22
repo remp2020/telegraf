@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -74,7 +73,7 @@ func (j *Jolokia) doRequest(req *http.Request) ([]map[string]interface{}, error)
 
 	// Process response
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("response from url \"%s\" has status code %d (%s), expected %d (%s)",
+		err = fmt.Errorf("response from url %q has status code %d (%s), expected %d (%s)",
 			req.RequestURI,
 			resp.StatusCode,
 			http.StatusText(resp.StatusCode),
@@ -92,7 +91,7 @@ func (j *Jolokia) doRequest(req *http.Request) ([]map[string]interface{}, error)
 	// Unmarshal json
 	var jsonOut []map[string]interface{}
 	if err = json.Unmarshal(body, &jsonOut); err != nil {
-		return nil, fmt.Errorf("error decoding JSON response: %s: %s", err, body)
+		return nil, fmt.Errorf("error decoding JSON response %q: %w", body, err)
 	}
 
 	return jsonOut, nil
@@ -102,7 +101,7 @@ func (j *Jolokia) prepareRequest(server Server, metrics []Metric) (*http.Request
 	var jolokiaURL *url.URL
 	context := j.Context // Usually "/jolokia/"
 
-	var bulkBodyContent []map[string]interface{}
+	bulkBodyContent := make([]map[string]interface{}, 0, len(metrics))
 	for _, metric := range metrics {
 		// Create bodyContent
 		bodyContent := map[string]interface{}{
@@ -217,12 +216,12 @@ func (j *Jolokia) Gather(acc telegraf.Accumulator) error {
 
 		req, err := j.prepareRequest(server, metrics)
 		if err != nil {
-			acc.AddError(fmt.Errorf("unable to create request: %s", err))
+			acc.AddError(fmt.Errorf("unable to create request: %w", err))
 			continue
 		}
 		out, err := j.doRequest(req)
 		if err != nil {
-			acc.AddError(fmt.Errorf("error performing request: %s", err))
+			acc.AddError(fmt.Errorf("error performing request: %w", err))
 			continue
 		}
 
@@ -232,7 +231,7 @@ func (j *Jolokia) Gather(acc telegraf.Accumulator) error {
 		}
 		for i, resp := range out {
 			if status, ok := resp["status"]; ok && status != float64(200) {
-				acc.AddError(fmt.Errorf("not expected status value in response body (%s:%s mbean=\"%s\" attribute=\"%s\"): %3.f",
+				acc.AddError(fmt.Errorf("not expected status value in response body (%s:%s mbean=%q attribute=%q): %3.f",
 					server.Host, server.Port, metrics[i].Mbean, metrics[i].Attribute, status))
 				continue
 			} else if !ok {

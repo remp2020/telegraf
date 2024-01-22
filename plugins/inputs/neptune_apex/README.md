@@ -8,6 +8,15 @@ configuration file.
 The [Neptune Apex](https://www.neptunesystems.com/) input plugin collects
 real-time data from the Apex's status.xml page.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -147,7 +156,6 @@ neptune_apex,hardware=1.0,host=ubuntu,name=ORP,probe_type=ORP,software=5.04_7A18
 neptune_apex,hardware=1.0,host=ubuntu,name=Salt,probe_type=Cond,software=5.04_7A18,source=apex,type=probe value=29.4 1545978278000000000
 neptune_apex,hardware=1.0,host=ubuntu,name=Volt_2,software=5.04_7A18,source=apex,type=probe value=117 1545978278000000000
 neptune_apex,hardware=1.0,host=ubuntu,name=Volt_4,software=5.04_7A18,source=apex,type=probe value=118 1545978278000000000
-
 ```
 
 ## Contributing

@@ -14,6 +14,35 @@ For an introduction to AMQP see:
 - [amqp - concepts](https://www.rabbitmq.com/tutorials/amqp-concepts.html)
 - [rabbitmq: getting started](https://www.rabbitmq.com/getstarted.html)
 
+## Service Input <!-- @/docs/includes/service_input.md -->
+
+This plugin is a service input. Normal plugins gather metrics determined by the
+interval setting. Service plugins start a service to listens and waits for
+metrics or events to occur. Service plugins have two key differences from
+normal plugins:
+
+1. The global or plugin specific `interval` setting may not apply
+2. The CLI options of `--test`, `--test-wait`, and `--once` may not produce
+   output for this plugin
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username` and
+`password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -53,6 +82,10 @@ For an introduction to AMQP see:
   ## If true, queue will be passively declared.
   # queue_passive = false
 
+  ## Additional arguments when consuming from Queue
+  # queue_consume_arguments = { }
+  # queue_consume_arguments = {"x-stream-offset" = "first"}
+
   ## A binding between the exchange and queue using this binding key is
   ## created.  If unset, no binding is created.
   binding_key = "#"
@@ -60,14 +93,16 @@ For an introduction to AMQP see:
   ## Maximum number of messages server should give to the worker.
   # prefetch_count = 50
 
-  ## Maximum messages to read from the broker that have not been written by an
-  ## output.  For best throughput set based on the number of metrics within
-  ## each message and the size of the output's metric_batch_size.
+  ## Max undelivered messages
+  ## This plugin uses tracking metrics, which ensure messages are read to
+  ## outputs before acknowledging them to the original broker to ensure data
+  ## is not lost. This option sets the maximum messages to read from the
+  ## broker that have not been written by an output.
   ##
-  ## For example, if each message from the queue contains 10 metrics and the
-  ## output metric_batch_size is 1000, setting this to 100 will ensure that a
-  ## full batch is collected and the write is triggered immediately without
-  ## waiting until the next flush_interval.
+  ## This value needs to be picked with awareness of the agent's
+  ## metric_batch_size value as well. Setting max undelivered messages too high
+  ## can result in a constant stream of data batches to the output. While
+  ## setting it too low may never flush the broker's messages.
   # max_undelivered_messages = 1000
 
   ## Auth method. PLAIN and EXTERNAL are supported
@@ -82,9 +117,17 @@ For an introduction to AMQP see:
   ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
 
-  ## Content encoding for message payloads, can be set to "gzip" to or
-  ## "identity" to apply no encoding.
+  ## Content encoding for message payloads, can be set to
+  ## "gzip", "identity" or "auto"
+  ## - Use "gzip" to decode gzip
+  ## - Use "identity" to apply no encoding
+  ## - Use "auto" determine the encoding using the ContentEncoding header
   # content_encoding = "identity"
+
+  ## Maximum size of decoded message.
+  ## Acceptable units are B, KiB, KB, MiB, MB...
+  ## Without quotes and units, interpreted as size in bytes.
+  # max_decompression_size = "500MB"
 
   ## Data format to consume.
   ## Each data format has its own unique set of configuration options, read
@@ -92,3 +135,11 @@ For an introduction to AMQP see:
   ## https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_INPUT.md
   data_format = "influx"
 ```
+
+## Metrics
+
+TODO
+
+## Example Output
+
+TODO

@@ -1,6 +1,5 @@
 //go:generate ../../../tools/readme_config_includer/generator
 //go:build !windows
-// +build !windows
 
 // iproute2 doesn't exist on Windows
 
@@ -23,7 +22,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -70,7 +68,7 @@ func socketList(cmdName string, proto string, timeout config.Duration) (*bytes.B
 	cmd.Stdout = &out
 	err := internal.RunTimeout(cmd, time.Duration(timeout))
 	if err != nil {
-		return &out, fmt.Errorf("error running ss -in --%s: %v", proto, err)
+		return &out, fmt.Errorf("error running ss -in --%s: %w", proto, err)
 	}
 	return &out, nil
 }
@@ -134,7 +132,7 @@ func (ss *Socketstat) parseAndGather(acc telegraf.Accumulator, data *bytes.Buffe
 		// formats depending on the protocol.
 		tags, fields = getTagsAndState(proto, words, ss.Log)
 
-		// This line containted metrics, so record that.
+		// This line contained metrics, so record that.
 		flushData = true
 	}
 	if flushData {

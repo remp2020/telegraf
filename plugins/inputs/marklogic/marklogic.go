@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -129,12 +128,11 @@ func (c *Marklogic) Gather(accumulator telegraf.Accumulator) error {
 
 	// Range over all source URL's appended to the struct
 	for _, serv := range c.Sources {
-		//fmt.Printf("Encoded URL is %q\n", serv)
 		wg.Add(1)
 		go func(serv string) {
 			defer wg.Done()
 			if err := c.fetchAndInsertData(accumulator, serv); err != nil {
-				accumulator.AddError(fmt.Errorf("[host=%s]: %s", serv, err))
+				accumulator.AddError(fmt.Errorf("[host=%s]: %w", serv, err))
 			}
 		}(serv)
 	}

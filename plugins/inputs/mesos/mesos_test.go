@@ -288,9 +288,7 @@ func TestMain(m *testing.M) {
 	masterRouter.HandleFunc("/metrics/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
-		json.NewEncoder(w).Encode(masterMetrics)
+		json.NewEncoder(w).Encode(masterMetrics) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 	})
 	masterTestServer = httptest.NewServer(masterRouter)
 
@@ -298,9 +296,7 @@ func TestMain(m *testing.M) {
 	slaveRouter.HandleFunc("/metrics/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
-		json.NewEncoder(w).Encode(slaveMetrics)
+		json.NewEncoder(w).Encode(slaveMetrics) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 	})
 	slaveTestServer = httptest.NewServer(slaveRouter)
 
@@ -420,14 +416,14 @@ func TestWithPathDoesNotModify(t *testing.T) {
 	u, err := url.Parse("http://localhost:5051")
 	require.NoError(t, err)
 	v := withPath(u, "/xyzzy")
-	require.Equal(t, u.String(), "http://localhost:5051")
-	require.Equal(t, v.String(), "http://localhost:5051/xyzzy")
+	require.Equal(t, "http://localhost:5051", u.String())
+	require.Equal(t, "http://localhost:5051/xyzzy", v.String())
 }
 
 func TestURLTagDoesNotModify(t *testing.T) {
 	u, err := url.Parse("http://a:b@localhost:5051?timeout=1ms")
 	require.NoError(t, err)
 	v := urlTag(u)
-	require.Equal(t, u.String(), "http://a:b@localhost:5051?timeout=1ms")
-	require.Equal(t, v, "http://localhost:5051")
+	require.Equal(t, "http://a:b@localhost:5051?timeout=1ms", u.String())
+	require.Equal(t, "http://localhost:5051", v)
 }

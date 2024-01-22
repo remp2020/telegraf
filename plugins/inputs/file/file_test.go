@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 // TODO: Windows - should be enabled for Windows when super asterisk is fixed on Windows
 // https://github.com/influxdata/telegraf/issues/6248
@@ -12,11 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/plugins/parsers"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/parsers/csv"
+	"github.com/influxdata/telegraf/plugins/parsers/grok"
+	"github.com/influxdata/telegraf/plugins/parsers/json"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -25,14 +27,14 @@ func TestRefreshFilePaths(t *testing.T) {
 	require.NoError(t, err)
 
 	r := File{
-		Files: []string{filepath.Join(wd, "dev/testfiles/**.log")},
+		Files: []string{filepath.Join(wd, "dev", "testfiles", "**.log")},
 	}
 	err = r.Init()
 	require.NoError(t, err)
 
 	err = r.refreshFilePaths()
 	require.NoError(t, err)
-	require.Equal(t, 2, len(r.filenames))
+	require.Len(t, r.filenames, 2)
 }
 
 func TestFileTag(t *testing.T) {
@@ -40,19 +42,18 @@ func TestFileTag(t *testing.T) {
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	r := File{
-		Files:   []string{filepath.Join(wd, "dev/testfiles/json_a.log")},
+		Files:   []string{filepath.Join(wd, "dev", "testfiles", "json_a.log")},
 		FileTag: "filename",
 	}
-	err = r.Init()
-	require.NoError(t, err)
+	require.NoError(t, r.Init())
 
-	parserConfig := parsers.Config{
-		DataFormat: "json",
-	}
-	r.SetParserFunc(func() (telegraf.Parser, error) { return parsers.NewParser(&parserConfig) })
+	r.SetParserFunc(func() (telegraf.Parser, error) {
+		p := &json.Parser{}
+		err := p.Init()
+		return p, err
+	})
 
-	err = r.Gather(&acc)
-	require.NoError(t, err)
+	require.NoError(t, r.Gather(&acc))
 
 	for _, m := range acc.Metrics {
 		for key, value := range m.Tags {
@@ -66,36 +67,39 @@ func TestJSONParserCompile(t *testing.T) {
 	var acc testutil.Accumulator
 	wd, _ := os.Getwd()
 	r := File{
-		Files: []string{filepath.Join(wd, "dev/testfiles/json_a.log")},
+		Files: []string{filepath.Join(wd, "dev", "testfiles", "json_a.log")},
 	}
-	err := r.Init()
-	require.NoError(t, err)
-	parserConfig := parsers.Config{
-		DataFormat: "json",
-		TagKeys:    []string{"parent_ignored_child"},
-	}
-	r.SetParserFunc(func() (telegraf.Parser, error) { return parsers.NewParser(&parserConfig) })
+	require.NoError(t, r.Init())
+
+	r.SetParserFunc(func() (telegraf.Parser, error) {
+		p := &json.Parser{TagKeys: []string{"parent_ignored_child"}}
+		err := p.Init()
+		return p, err
+	})
 
 	require.NoError(t, r.Gather(&acc))
 	require.Equal(t, map[string]string{"parent_ignored_child": "hi"}, acc.Metrics[0].Tags)
-	require.Equal(t, 5, len(acc.Metrics[0].Fields))
+	require.Len(t, acc.Metrics[0].Fields, 5)
 }
 
 func TestGrokParser(t *testing.T) {
 	wd, _ := os.Getwd()
 	var acc testutil.Accumulator
 	r := File{
-		Files: []string{filepath.Join(wd, "dev/testfiles/grok_a.log")},
+		Files: []string{filepath.Join(wd, "dev", "testfiles", "grok_a.log")},
 	}
 	err := r.Init()
 	require.NoError(t, err)
 
-	parserConfig := parsers.Config{
-		DataFormat:   "grok",
-		GrokPatterns: []string{"%{COMMON_LOG_FORMAT}"},
-	}
+	r.SetParserFunc(func() (telegraf.Parser, error) {
+		parser := &grok.Parser{
+			Patterns: []string{"%{COMMON_LOG_FORMAT}"},
+			Log:      testutil.Logger{},
+		}
+		err := parser.Init()
 
-	r.SetParserFunc(func() (telegraf.Parser, error) { return parsers.NewParser(&parserConfig) })
+		return parser, err
+	})
 
 	err = r.Gather(&acc)
 	require.NoError(t, err)
@@ -368,4 +372,81 @@ func TestStatefulParsers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCSVBehavior(t *testing.T) {
+	// Setup the CSV parser creator function
+	parserFunc := func() (telegraf.Parser, error) {
+		parser := &csv.Parser{
+			MetricName:     "file",
+			HeaderRowCount: 1,
+		}
+		err := parser.Init()
+		return parser, err
+	}
+
+	// Setup the plugin
+	plugin := &File{
+		Files: []string{filepath.Join("testdata", "csv_behavior_input.csv")},
+	}
+	plugin.SetParserFunc(parserFunc)
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"file",
+			map[string]string{},
+			map[string]interface{}{
+				"a": int64(1),
+				"b": int64(2),
+			},
+			time.Unix(0, 1),
+		),
+		metric.New(
+			"file",
+			map[string]string{},
+			map[string]interface{}{
+				"a": int64(3),
+				"b": int64(4),
+			},
+			time.Unix(0, 2),
+		),
+		metric.New(
+			"file",
+			map[string]string{},
+			map[string]interface{}{
+				"a": int64(1),
+				"b": int64(2),
+			},
+			time.Unix(0, 3),
+		),
+		metric.New(
+			"file",
+			map[string]string{},
+			map[string]interface{}{
+				"a": int64(3),
+				"b": int64(4),
+			},
+			time.Unix(0, 4),
+		),
+	}
+
+	var acc testutil.Accumulator
+	// Run gather once
+	require.NoError(t, plugin.Gather(&acc))
+	// Run gather a second time
+	require.NoError(t, plugin.Gather(&acc))
+	require.Eventuallyf(t, func() bool {
+		acc.Lock()
+		defer acc.Unlock()
+		return acc.NMetrics() >= uint64(len(expected))
+	}, time.Second, 100*time.Millisecond, "Expected %d metrics found %d", len(expected), acc.NMetrics())
+
+	// Check the result
+	options := []cmp.Option{
+		testutil.SortMetrics(),
+		testutil.IgnoreTime(),
+	}
+	actual := acc.GetTelegrafMetrics()
+	testutil.RequireMetricsEqual(t, expected, actual, options...)
 }

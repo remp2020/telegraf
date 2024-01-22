@@ -11,14 +11,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v7"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -54,22 +53,26 @@ func (r *RedisSentinel) Init() error {
 		r.Servers = []string{"tcp://localhost:26379"}
 	}
 
-	r.clients = make([]*RedisSentinelClient, len(r.Servers))
-
 	tlsConfig, err := r.ClientConfig.TLSConfig()
 	if err != nil {
 		return err
 	}
 
-	for i, serv := range r.Servers {
+	r.clients = make([]*RedisSentinelClient, 0, len(r.Servers))
+	for _, serv := range r.Servers {
 		u, err := url.Parse(serv)
 		if err != nil {
-			return fmt.Errorf("unable to parse to address %q: %v", serv, err)
+			return fmt.Errorf("unable to parse to address %q: %w", serv, err)
 		}
 
+		username := ""
 		password := ""
 		if u.User != nil {
-			password, _ = u.User.Password()
+			username = u.User.Username()
+			pw, ok := u.User.Password()
+			if ok {
+				password = pw
+			}
 		}
 
 		var address string
@@ -90,6 +93,7 @@ func (r *RedisSentinel) Init() error {
 		sentinel := redis.NewSentinelClient(
 			&redis.Options{
 				Addr:      address,
+				Username:  username,
 				Password:  password,
 				Network:   u.Scheme,
 				PoolSize:  1,
@@ -97,10 +101,10 @@ func (r *RedisSentinel) Init() error {
 			},
 		)
 
-		r.clients[i] = &RedisSentinelClient{
+		r.clients = append(r.clients, &RedisSentinelClient{
 			sentinel: sentinel,
 			tags:     tags,
-		}
+		})
 	}
 
 	return nil
@@ -138,7 +142,7 @@ func castFieldValue(value string, fieldType configFieldType) (interface{}, error
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("casting value %v failed: %v", value, err)
+		return nil, fmt.Errorf("casting value %q failed: %w", value, err)
 	}
 
 	return castedValue, nil
@@ -217,21 +221,20 @@ func (client *RedisSentinelClient) gatherInfoStats(acc telegraf.Accumulator) err
 }
 
 func (client *RedisSentinelClient) gatherMasterStats(acc telegraf.Accumulator) ([]string, error) {
-	var masterNames []string
-
 	mastersCmd := redis.NewSliceCmd("sentinel", "masters")
 	if err := client.sentinel.Process(mastersCmd); err != nil {
-		return masterNames, err
+		return nil, err
 	}
 
 	masters, err := mastersCmd.Result()
 	if err != nil {
-		return masterNames, err
+		return nil, err
 	}
 
 	// Break out of the loop if one of the items comes out malformed
 	// It's safe to assume that if we fail parsing one item that the rest will fail too
 	// This is because we are iterating over a single server response
+	masterNames := make([]string, 0, len(masters))
 	for _, master := range masters {
 		master, ok := master.([]interface{})
 		if !ok {
@@ -244,6 +247,7 @@ func (client *RedisSentinelClient) gatherMasterStats(acc telegraf.Accumulator) (
 		if !ok {
 			return masterNames, fmt.Errorf("unable to resolve master name")
 		}
+		masterNames = append(masterNames, masterName)
 
 		quorumCmd := redis.NewStringCmd("sentinel", "ckquorum", masterName)
 		quorumErr := client.sentinel.Process(quorumCmd)

@@ -149,6 +149,8 @@ var defaultReplStats = map[string]string{
 	"member_status":                            "NodeType",
 	"state":                                    "NodeState",
 	"repl_state":                               "NodeStateInt",
+	"repl_member_health":                       "NodeHealthInt",
+	"repl_health_avg":                          "ReplHealthAvg",
 	"repl_lag":                                 "ReplLag",
 	"repl_network_bytes":                       "ReplNetworkBytes",
 	"repl_network_getmores_num":                "ReplNetworkGetmoresNum",
@@ -297,7 +299,8 @@ var topDataStats = map[string]string{
 }
 
 func (d *MongodbData) AddDbStats() {
-	for _, dbstat := range d.StatLine.DbStatsLines {
+	for i := range d.StatLine.DbStatsLines {
+		dbstat := d.StatLine.DbStatsLines[i]
 		dbStatLine := reflect.ValueOf(&dbstat).Elem()
 		newDbData := &DbData{
 			Name:   dbstat.Name,
@@ -313,7 +316,8 @@ func (d *MongodbData) AddDbStats() {
 }
 
 func (d *MongodbData) AddColStats() {
-	for _, colstat := range d.StatLine.ColStatsLines {
+	for i := range d.StatLine.ColStatsLines {
+		colstat := d.StatLine.ColStatsLines[i]
 		colStatLine := reflect.ValueOf(&colstat).Elem()
 		newColData := &ColData{
 			Name:   colstat.Name,
@@ -330,7 +334,8 @@ func (d *MongodbData) AddColStats() {
 }
 
 func (d *MongodbData) AddShardHostStats() {
-	for host, hostStat := range d.StatLine.ShardHostStatsLines {
+	for host := range d.StatLine.ShardHostStatsLines {
+		hostStat := d.StatLine.ShardHostStatsLines[host]
 		hostStatLine := reflect.ValueOf(&hostStat).Elem()
 		newDbData := &DbData{
 			Name:   host,
@@ -346,7 +351,8 @@ func (d *MongodbData) AddShardHostStats() {
 }
 
 func (d *MongodbData) AddTopStats() {
-	for _, topStat := range d.StatLine.TopStatLines {
+	for i := range d.StatLine.TopStatLines {
+		topStat := d.StatLine.TopStatLines[i]
 		topStatLine := reflect.ValueOf(&topStat).Elem()
 		newTopStatData := &DbData{
 			Name:   topStat.CollectionName,

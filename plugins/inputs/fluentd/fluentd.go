@@ -14,7 +14,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -53,11 +52,13 @@ type pluginData struct {
 
 // parse JSON from fluentd Endpoint
 // Parameters:
-// 		data: unprocessed json received from endpoint
+//
+//	data: unprocessed json received from endpoint
 //
 // Returns:
-//		pluginData:		slice that contains parsed plugins
-//		error:			error that may have occurred
+//
+//	pluginData:		slice that contains parsed plugins
+//	error:			error that may have occurred
 func parse(data []byte) (datapointArray []pluginData, err error) {
 	var endpointData endpointInfo
 
@@ -78,7 +79,7 @@ func (*Fluentd) SampleConfig() string {
 func (h *Fluentd) Gather(acc telegraf.Accumulator) error {
 	_, err := url.Parse(h.Endpoint)
 	if err != nil {
-		return fmt.Errorf("invalid URL \"%s\"", h.Endpoint)
+		return fmt.Errorf("invalid URL %q", h.Endpoint)
 	}
 
 	if h.client == nil {
@@ -97,7 +98,7 @@ func (h *Fluentd) Gather(acc telegraf.Accumulator) error {
 	resp, err := h.client.Get(h.Endpoint)
 
 	if err != nil {
-		return fmt.Errorf("unable to perform HTTP client GET on \"%s\": %v", h.Endpoint, err)
+		return fmt.Errorf("unable to perform HTTP client GET on %q: %w", h.Endpoint, err)
 	}
 
 	defer resp.Body.Close()
@@ -105,7 +106,7 @@ func (h *Fluentd) Gather(acc telegraf.Accumulator) error {
 	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		return fmt.Errorf("unable to read the HTTP body \"%s\": %v", string(body), err)
+		return fmt.Errorf("unable to read the HTTP body %q: %w", string(body), err)
 	}
 
 	if resp.StatusCode != http.StatusOK {

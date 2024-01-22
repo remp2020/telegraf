@@ -10,11 +10,11 @@ reported as gauges, unless they are specified to be delta counters using the
 ingestion protocol documentation][proto-docs] for details on the types defined
 there.
 
-[api-v2]: https://www.dynatrace.com/support/help/dynatrace-api/environment-api/metric-v2/
+[api-v2]: https://docs.dynatrace.com/docs/shortlink/api-metrics-v2
 
-[docs]: https://www.dynatrace.com/support/help/how-to-use-dynatrace/metrics/metric-ingestion/ingestion-methods/telegraf/
+[docs]: https://docs.dynatrace.com/docs/shortlink/telegraf
 
-[proto-docs]: https://www.dynatrace.com/support/help/how-to-use-dynatrace/metrics/metric-ingestion/metric-ingestion-protocol
+[proto-docs]: https://docs.dynatrace.com/docs/shortlink/metric-ingestion-protocol
 
 ## Requirements
 
@@ -87,9 +87,26 @@ The endpoint for the Dynatrace Metrics API v2 is
 ```
 
 You can learn more about how to use the Dynatrace API
-[here](https://www.dynatrace.com/support/help/dynatrace-api/).
+[here](https://docs.dynatrace.com/docs/shortlink/section-api).
 
-[api-auth]: https://www.dynatrace.com/support/help/dynatrace-api/basics/dynatrace-api-authentication/
+[api-auth]: https://docs.dynatrace.com/docs/shortlink/api-authentication
+
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `api_token` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
 
 ## Configuration
 
@@ -127,6 +144,10 @@ You can learn more about how to use the Dynatrace API
   ## If you want metrics to be treated and reported as delta counters, add the metric names here
   additional_counters = [ ]
 
+  ## NOTE: Due to the way TOML is parsed, tables must be at the END of the
+  ## plugin definition, otherwise additional config options are read as part of
+  ## the table
+
   ## Optional dimensions to be added to every metric
   # [outputs.dynatrace.default_dimensions]
   # default_key = "default value"
@@ -149,7 +170,7 @@ then an API token is required.
 url = "https://{your-environment-id}.live.dynatrace.com/api/v2/metrics/ingest"
 ```
 
-[post-ingest]: https://www.dynatrace.com/support/help/dynatrace-api/environment-api/metric-v2/post-ingest-metrics/
+[post-ingest]: https://docs.dynatrace.com/docs/shortlink/api-metrics-v2-post-datapoints
 
 ### `api_token`
 

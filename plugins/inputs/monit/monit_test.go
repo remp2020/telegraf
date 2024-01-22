@@ -579,8 +579,9 @@ func TestConnection(t *testing.T) {
 
 	err := r.Gather(&acc)
 	require.Error(t, err)
-	_, ok := err.(*url.Error)
-	require.True(t, ok)
+
+	var urlErr *url.Error
+	require.ErrorAs(t, err, &urlErr)
 }
 
 func TestInvalidUsernameOrPassword(t *testing.T) {
@@ -590,7 +591,7 @@ func TestInvalidUsernameOrPassword(t *testing.T) {
 			return
 		}
 
-		require.Equal(t, r.URL.Path, "/_status", "Cannot handle request")
+		require.Equal(t, "/_status", r.URL.Path, "Cannot handle request")
 		http.ServeFile(w, r, "testdata/response_servicetype_0.xml")
 	}))
 
@@ -617,7 +618,7 @@ func TestNoUsernameOrPasswordConfiguration(t *testing.T) {
 			return
 		}
 
-		require.Equal(t, r.URL.Path, "/_status", "Cannot handle request")
+		require.Equal(t, "/_status", r.URL.Path, "Cannot handle request")
 		http.ServeFile(w, r, "testdata/response_servicetype_0.xml")
 	}))
 

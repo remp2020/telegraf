@@ -9,11 +9,12 @@ import (
 	"time"
 
 	eventhub "github.com/Azure/azure-event-hubs-go/v3"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/serializers/json"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 /*
@@ -42,25 +43,26 @@ func (eh *mockEventHub) SendBatch(ctx context.Context, iterator eventhub.BatchIt
 /* End wrapper interface */
 
 func TestInitAndWrite(t *testing.T) {
-	serializer, _ := json.NewSerializer(time.Second, "")
+	serializer := &json.Serializer{}
+	require.NoError(t, serializer.Init())
+
 	mockHub := &mockEventHub{}
 	e := &EventHubs{
 		Hub:              mockHub,
 		ConnectionString: "mock",
 		Timeout:          config.Duration(time.Second * 5),
+		MaxMessageSize:   1000000,
 		serializer:       serializer,
 	}
 
 	mockHub.On("GetHub", mock.Anything).Return(nil).Once()
-	err := e.Init()
-	require.NoError(t, err)
+	require.NoError(t, e.Init())
 	mockHub.AssertExpectations(t)
 
 	metrics := testutil.MockMetrics()
 
 	mockHub.On("SendBatch", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
-	err = e.Write(metrics)
-	require.NoError(t, err)
+	require.NoError(t, e.Write(metrics))
 	mockHub.AssertExpectations(t)
 }
 
@@ -100,8 +102,8 @@ func TestInitAndWriteIntegration(t *testing.T) {
 	testHubCS := os.Getenv("EVENTHUB_CONNECTION_STRING") + ";EntityPath=" + entity.Name
 
 	// Configure the plugin to target the newly created hub
-	serializer, _ := json.NewSerializer(time.Second, "")
-
+	serializer := &json.Serializer{}
+	require.NoError(t, serializer.Init())
 	e := &EventHubs{
 		Hub:              &eventHub{},
 		ConnectionString: testHubCS,
@@ -110,13 +112,11 @@ func TestInitAndWriteIntegration(t *testing.T) {
 	}
 
 	// Verify that we can connect to Event Hubs
-	err = e.Init()
-	require.NoError(t, err)
+	require.NoError(t, e.Init())
 
 	// Verify that we can successfully write data to Event Hubs
 	metrics := testutil.MockMetrics()
-	err = e.Write(metrics)
-	require.NoError(t, err)
+	require.NoError(t, e.Write(metrics))
 
 	/*
 	** Verify we can read data back from the test hub
@@ -158,5 +158,5 @@ wait:
 	}
 
 	// Make sure received == sent
-	require.Equal(t, received, len(metrics))
+	require.Len(t, metrics, received)
 }

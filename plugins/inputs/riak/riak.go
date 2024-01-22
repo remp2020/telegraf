@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -109,7 +108,7 @@ func (r *Riak) gatherServer(s string, acc telegraf.Accumulator) error {
 	// Parse the given URL to extract the server tag
 	u, err := url.Parse(s)
 	if err != nil {
-		return fmt.Errorf("riak unable to parse given server url %s: %s", s, err)
+		return fmt.Errorf("riak unable to parse given server URL %q: %w", s, err)
 	}
 
 	// Perform the GET request to the riak /stats endpoint
@@ -127,7 +126,7 @@ func (r *Riak) gatherServer(s string, acc telegraf.Accumulator) error {
 	// Decode the response JSON into a new stats struct
 	stats := &riakStats{}
 	if err := json.NewDecoder(resp.Body).Decode(stats); err != nil {
-		return fmt.Errorf("unable to decode riak response: %s", err)
+		return fmt.Errorf("unable to decode riak response: %w", err)
 	}
 
 	// Build a map of tags

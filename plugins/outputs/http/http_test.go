@@ -11,14 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf/config"
-
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/config/aws"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
+	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
 	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/common/oauth"
 	"github.com/influxdata/telegraf/plugins/serializers"
@@ -113,7 +112,8 @@ func TestMethod(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			if tt.connectError {
@@ -176,7 +176,8 @@ func TestHTTPClientConfig(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			if tt.connectError {
@@ -268,7 +269,8 @@ func TestStatusCode(t *testing.T) {
 				w.WriteHeader(tt.statusCode)
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			require.NoError(t, err)
@@ -317,7 +319,8 @@ func TestContentType(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			require.NoError(t, err)
@@ -377,7 +380,8 @@ func TestContentEncodingGzip(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			require.NoError(t, err)
@@ -396,55 +400,47 @@ func TestBasicAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name   string
-		plugin *HTTP
+		name     string
+		username string
+		password string
 	}{
 		{
 			name: "default",
-			plugin: &HTTP{
-				URL: u.String(),
-			},
 		},
 		{
-			name: "username only",
-			plugin: &HTTP{
-				URL:      u.String(),
-				Username: "username",
-			},
+			name:     "username only",
+			username: "username",
 		},
 		{
-			name: "password only",
-			plugin: &HTTP{
-				URL:      u.String(),
-				Password: "pa$$word",
-			},
+			name:     "password only",
+			password: "pa$$word",
 		},
 		{
-			name: "username and password",
-			plugin: &HTTP{
-				URL:      u.String(),
-				Username: "username",
-				Password: "pa$$word",
-			},
+			name:     "username and password",
+			username: "username",
+			password: "pa$$word",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			plugin := &HTTP{
+				URL:      u.String(),
+				Username: config.NewSecret([]byte(tt.username)),
+				Password: config.NewSecret([]byte(tt.password)),
+			}
 			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				username, password, _ := r.BasicAuth()
-				require.Equal(t, tt.plugin.Username, username)
-				require.Equal(t, tt.plugin.Password, password)
+				require.Equal(t, tt.username, username)
+				require.Equal(t, tt.password, password)
 				w.WriteHeader(http.StatusOK)
 			})
 
-			serializer := influx.NewSerializer()
-			tt.plugin.SetSerializer(serializer)
-			err = tt.plugin.Connect()
-			require.NoError(t, err)
-
-			err = tt.plugin.Write([]telegraf.Metric{getMetric()})
-			require.NoError(t, err)
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
+			plugin.SetSerializer(serializer)
+			require.NoError(t, plugin.Connect())
+			require.NoError(t, plugin.Write([]telegraf.Metric{getMetric()}))
 		})
 	}
 }
@@ -472,7 +468,7 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 				URL: u.String(),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Len(t, r.Header["Authorization"], 0)
+				require.Empty(t, r.Header["Authorization"])
 				w.WriteHeader(http.StatusOK)
 			},
 		},
@@ -503,6 +499,34 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			},
 		},
+		{
+			name: "audience",
+			plugin: &HTTP{
+				URL: u.String() + "/write",
+				HTTPClientConfig: httpconfig.HTTPClientConfig{
+					OAuth2Config: oauth.OAuth2Config{
+						ClientID:     "howdy",
+						ClientSecret: "secret",
+						TokenURL:     u.String() + "/token",
+						Scopes:       []string{"urn:opc:idm:__myscopes__"},
+						Audience:     "audience",
+					},
+				},
+			},
+			tokenHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				values := url.Values{}
+				values.Add("access_token", token)
+				values.Add("token_type", "bearer")
+				values.Add("expires_in", "3600")
+				_, err = w.Write([]byte(values.Encode()))
+				require.NoError(t, err)
+			},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, []string{"Bearer " + token}, r.Header["Authorization"])
+				w.WriteHeader(http.StatusOK)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -516,7 +540,8 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 				}
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			require.NoError(t, err)
@@ -539,13 +564,35 @@ func TestOAuthAuthorizationCodeGrant(t *testing.T) {
 	require.NoError(t, err)
 
 	tmpTokenURI := u.String() + "/token"
-	data := []byte(fmt.Sprintf("{\n    \"type\": \"service_account\",\n    \"project_id\": \"my-project\",\n    \"private_key_id\": \"223423436436453645363456\",\n    \"private_key\": \"-----BEGIN PRIVATE KEY-----\\nMIICXAIBAAKBgQDX7Plvu0MJtA9TrusYtQnAogsdiYJZd9wfFIjH5FxE3SWJ4KAIE+yRWRqcqX8XnpieQLaNsfXhDPWLkWngTDydk4NO/jlAQk0e6+9+NeiZ2ViIHmtXERb9CyiiWUmo+YCd69lhzSEIMK9EPBSDHQTgQMtEfGak03G5rx3MCakE1QIDAQABAoGAOjRU4Lt3zKvO3d3u3ZAfet+zY1jn3DolCfO9EzUJcj6ymcIFIWhNgrikJcrCyZkkxrPnAbcQ8oNNxTuDcMTcKZbnyUnlQj5NtVuty5Q+zgf3/Q2pRhaE+TwrpOJ+ETtVp9R/PrPN2NC5wPo289fPNWFYkd4DPbdWZp5AJHz1XYECQQD3kKpinJxMYp9FQ1Qj1OkxGln0KPgdqRYjjW/rXI4/hUodfg+xXWHPFSGj3AgEjQIvuengbOAeH3qowF1uxVTlAkEA30hXM3EbboMCDQzNRNkkV9EiZ0MZXhj1aIGl+sQZOmOeFdcdjGkDdsA42nmaYqXCD9KAvc+S/tGJaa0Qg0VhMQJAb2+TAqh0Qn3yK39PFIH2JcAy1ZDLfq5p5L75rfwPm9AnuHbSIYhjSo+8gMG+ai3+2fTZrcfUajrJP8S3SfFRcQJBANQQPOHatxcKzlPeqMaPBXlyY553mAxK4CnVmPLGdL+EBYzwtlu5EVUj09uMSxkOHXYxk5yzHQVvtXbsrBZBOsECQBJLlkMjJmXrIIdLPmHQWL3bm9MMg1PqzupSEwz6cyrGuIIm/X91pDyxCHaKYWp38FXBkYAgohI8ow5/sgRvU5w=\\n-----END PRIVATE KEY-----\\n\",\n    \"client_email\": \"test-service-account-email@example.iam.gserviceaccount.com\",\n    \"client_id\": \"110300009813738675309\",\n    \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n    \"token_uri\": \"%s\",\n    \"auth_provider_x509_cert_url\": \"https://www.googleapis.com/oauth2/v1/certs\",\n    \"client_x509_cert_url\": \"https://www.googleapis.com/robot/v1/metadata/x509/test-service-account-email@example.iam.gserviceaccount.com\"\n}", tmpTokenURI))
+	data := []byte(
+		fmt.Sprintf(
+			"{\n    \"type\": \"service_account\",\n    \"project_id\": \"my-project\",\n    "+
+				"\"private_key_id\": \"223423436436453645363456\",\n    \"private_key\": "+
+				"\"-----BEGIN PRIVATE KEY-----\\nMIICXAIBAAKBgQDX7Plvu0MJtA9TrusYtQnAogsdiYJZd9wfFIjH5FxE3SWJ4KAIE+yRWRqcqX8XnpieQLaNsfXhDPWLkWngTDydk4NO/"+
+				"jlAQk0e6+9+NeiZ2ViIHmtXERb9CyiiWUmo+YCd69lhzSEIMK9EPBSDHQTgQMtEfGak03G5rx3MCakE1QIDAQABAoGAOjRU4Lt3zKvO3d3u3ZAfet+zY1jn3DolCfO9EzUJcj6ymc"+
+				"IFIWhNgrikJcrCyZkkxrPnAbcQ8oNNxTuDcMTcKZbnyUnlQj5NtVuty5Q+zgf3/Q2pRhaE+TwrpOJ+ETtVp9R/PrPN2NC5wPo289fPNWFYkd4DPbdWZp5AJHz1XYECQQD3kKpinJx"+
+				"MYp9FQ1Qj1OkxGln0KPgdqRYjjW/rXI4/hUodfg+xXWHPFSGj3AgEjQIvuengbOAeH3qowF1uxVTlAkEA30hXM3EbboMCDQzNRNkkV9EiZ0MZXhj1aIGl+sQZOmOeFdcdjGkDdsA4"+
+				"2nmaYqXCD9KAvc+S/tGJaa0Qg0VhMQJAb2+TAqh0Qn3yK39PFIH2JcAy1ZDLfq5p5L75rfwPm9AnuHbSIYhjSo+8gMG+ai3+2fTZrcfUajrJP8S3SfFRcQJBANQQPOHatxcKzlPeq"+
+				"MaPBXlyY553mAxK4CnVmPLGdL+EBYzwtlu5EVUj09uMSxkOHXYxk5yzHQVvtXbsrBZBOsECQBJLlkMjJmXrIIdLPmHQWL3bm9MMg1PqzupSEwz6cyrGuIIm/X91pDyxCHaKYWp38F"+
+				"XBkYAgohI8ow5/sgRvU5w=\\n-----END PRIVATE KEY-----\\n\",\n    "+
+				"\"client_email\": \"test-service-account-email@example.iam.gserviceaccount.com\",\n    \"client_id\": \"110300009813738675309\",\n    "+
+				"\"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n    \"token_uri\": \"%s\",\n    "+
+				"\"auth_provider_x509_cert_url\": \"https://www.googleapis.com/oauth2/v1/certs\",\n    "+
+				"\"client_x509_cert_url\": \"https://www.googleapis.com/robot/v1/metadata/x509/test-service-account-email@example.iam.gserviceaccount.com\"\n}",
+			tmpTokenURI,
+		),
+	)
 	_, err = tmpFile.Write(data)
 	require.NoError(t, err)
 
 	require.NoError(t, tmpFile.Close())
 
-	const token = "eyJhbGciOiJSUzI1NiIsImtpZCI6Ijg2NzUzMDliMjJiMDFiZTU2YzIxM2M5ODU0MGFiNTYzYmZmNWE1OGMiLCJ0eXAiOiJKV1QifQ.eyJhdWQiOiJodHRwOi8vMTI3LjAuMC4xOjU4MDI1LyIsImF6cCI6InRlc3Qtc2VydmljZS1hY2NvdW50LWVtYWlsQGV4YW1wbGUuY29tIiwiZW1haWwiOiJ0ZXN0LXNlcnZpY2UtYWNjb3VudC1lbWFpbEBleGFtcGxlLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJleHAiOjk0NjY4NDgwMCwiaWF0Ijo5NDY2ODEyMDAsImlzcyI6Imh0dHBzOi8vYWNjb3VudHMudGVzdC5jb20iLCJzdWIiOiIxMTAzMDAwMDk4MTM3Mzg2NzUzMDkifQ.qi2LsXP2o6nl-rbYKUlHAgTBY0QoU7Nhty5NGR4GMdc8OoGEPW-vlD0WBSaKSr11vyFcIO4ftFDWXElo9Ut-AIQPKVxinsjHIU2-LoIATgI1kyifFLyU_pBecwcI4CIXEcDK5wEkfonWFSkyDZHBeZFKbJXlQXtxj0OHvQ-DEEepXLuKY6v3s4U6GyD9_ppYUy6gzDZPYUbfPfgxCj_Jbv6qkLU0DiZ7F5-do6X6n-qkpgCRLTGHcY__rn8oe8_pSimsyJEeY49ZQ5lj4mXkVCwgL9bvL1_eW1p6sgbHaBnPKVPbM7S1_cBmzgSonm__qWyZUxfDgNdigtNsvzBQTg"
+	const token = "eyJhbGciOiJSUzI1NiIsImtpZCI6Ijg2NzUzMDliMjJiMDFiZTU2YzIxM2M5ODU0MGFiNTYzYmZmNWE1OGMiLCJ0eXAiOiJKV1QifQ.eyJhdWQiOiJodHRwOi8vMTI3LjAuMC4x" +
+		"OjU4MDI1LyIsImF6cCI6InRlc3Qtc2VydmljZS1hY2NvdW50LWVtYWlsQGV4YW1wbGUuY29tIiwiZW1haWwiOiJ0ZXN0LXNlcnZpY2UtYWNjb3VudC1lbWFpbEBleGFtcGxlLmNvbSIsImVtY" +
+		"WlsX3ZlcmlmaWVkIjp0cnVlLCJleHAiOjk0NjY4NDgwMCwiaWF0Ijo5NDY2ODEyMDAsImlzcyI6Imh0dHBzOi8vYWNjb3VudHMudGVzdC5jb20iLCJzdWIiOiIxMTAzMDAwMDk4MTM3Mzg2Nz" +
+		"UzMDkifQ.qi2LsXP2o6nl-rbYKUlHAgTBY0QoU7Nhty5NGR4GMdc8OoGEPW-vlD0WBSaKSr11vyFcIO4ftFDWXElo9Ut-AIQPKVxinsjHIU2-LoIATgI1kyifFLyU_pBecwcI4CIXEcDK5wEk" +
+		"fonWFSkyDZHBeZFKbJXlQXtxj0OHvQ-DEEepXLuKY6v3s4U6GyD9_ppYUy6gzDZPYUbfPfgxCj_Jbv6qkLU0DiZ7F5-do6X6n-qkpgCRLTGHcY__rn8oe8_pSimsyJEeY49ZQ5lj4mXkVCwgL" +
+		"9bvL1_eW1p6sgbHaBnPKVPbM7S1_cBmzgSonm__qWyZUxfDgNdigtNsvzBQTg"
 
 	tests := []struct {
 		name         string
@@ -559,7 +606,7 @@ func TestOAuthAuthorizationCodeGrant(t *testing.T) {
 				URL: u.String(),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Len(t, r.Header["Authorization"], 0)
+				require.Empty(t, r.Header["Authorization"])
 				w.WriteHeader(http.StatusOK)
 			},
 		},
@@ -571,7 +618,7 @@ func TestOAuthAuthorizationCodeGrant(t *testing.T) {
 			},
 			tokenHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				authHeader := fmt.Sprintf(`{"id_token":"%s"}`, token)
+				authHeader := fmt.Sprintf(`{"id_token":%q}`, token)
 				_, err = w.Write([]byte(authHeader))
 				require.NoError(t, err)
 			},
@@ -592,7 +639,10 @@ func TestOAuthAuthorizationCodeGrant(t *testing.T) {
 				}
 			})
 
-			tt.plugin.SetSerializer(influx.NewSerializer())
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
+			tt.plugin.SetSerializer(serializer)
+
 			require.NoError(t, tt.plugin.Connect())
 			require.NoError(t, tt.plugin.Write([]telegraf.Metric{getMetric()}))
 			require.NoError(t, err)
@@ -618,7 +668,8 @@ func TestDefaultUserAgent(t *testing.T) {
 			Method: defaultMethod,
 		}
 
-		serializer := influx.NewSerializer()
+		serializer := &influx.Serializer{}
+		require.NoError(t, serializer.Init())
 		client.SetSerializer(serializer)
 		err = client.Connect()
 		require.NoError(t, err)
@@ -640,12 +691,15 @@ func TestBatchedUnbatched(t *testing.T) {
 		Method: defaultMethod,
 	}
 
-	var s = map[string]serializers.Serializer{
-		"influx": influx.NewSerializer(),
-		"json": func(s serializers.Serializer, err error) serializers.Serializer {
-			require.NoError(t, err)
-			return s
-		}(json.NewSerializer(time.Second, "")),
+	influxSerializer := &influx.Serializer{}
+	require.NoError(t, influxSerializer.Init())
+
+	jsonSerializer := &json.Serializer{}
+	require.NoError(t, jsonSerializer.Init())
+
+	s := map[string]serializers.Serializer{
+		"influx": influxSerializer,
+		"json":   jsonSerializer,
 	}
 
 	for name, serializer := range s {
@@ -715,7 +769,8 @@ func TestAwsCredentials(t *testing.T) {
 				tt.handler(t, w, r)
 			})
 
-			serializer := influx.NewSerializer()
+			serializer := &influx.Serializer{}
+			require.NoError(t, serializer.Init())
 			tt.plugin.SetSerializer(serializer)
 			err = tt.plugin.Connect()
 			require.NoError(t, err)

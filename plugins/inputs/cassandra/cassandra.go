@@ -15,7 +15,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -131,7 +130,7 @@ func (j javaMetric) addTagsFields(out map[string]interface{}) {
 		}
 		j.acc.AddFields(tokens["class"]+tokens["type"], fields, tags)
 	} else {
-		j.acc.AddError(fmt.Errorf("missing key 'value' in '%s' output response: %v", j.metric, out))
+		j.acc.AddError(fmt.Errorf("missing key 'value' in %q output response: %v", j.metric, out))
 	}
 }
 
@@ -155,7 +154,7 @@ func (c cassandraMetric) addTagsFields(out map[string]interface{}) {
 		tokens["scope"] == "*") {
 		valuesMap, ok := out["value"]
 		if !ok {
-			c.acc.AddError(fmt.Errorf("missing key 'value' in '%s' output response: %v", c.metric, out))
+			c.acc.AddError(fmt.Errorf("missing key 'value' in %q output response: %v", c.metric, out))
 			return
 		}
 		for k, v := range valuesMap.(map[string]interface{}) {
@@ -164,7 +163,7 @@ func (c cassandraMetric) addTagsFields(out map[string]interface{}) {
 	} else {
 		values, ok := out["value"]
 		if !ok {
-			c.acc.AddError(fmt.Errorf("missing key 'value' in '%s' output response: %v", c.metric, out))
+			c.acc.AddError(fmt.Errorf("missing key 'value' in %q output response: %v", c.metric, out))
 			return
 		}
 		addCassandraMetric(r.(map[string]interface{})["mbean"].(string), c, values.(map[string]interface{}))
@@ -186,7 +185,7 @@ func (c *Cassandra) getAttr(requestURL *url.URL) (map[string]interface{}, error)
 
 	// Process response
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("response from url \"%s\" has status code %d (%s), expected %d (%s)",
+		err = fmt.Errorf("response from url %q has status code %d (%s), expected %d (%s)",
 			requestURL,
 			resp.StatusCode,
 			http.StatusText(resp.StatusCode),

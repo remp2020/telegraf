@@ -6,44 +6,49 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"time"
 
 	//Register sql drivers
 	_ "github.com/ClickHouse/clickhouse-go" // clickhouse
-	_ "github.com/denisenkom/go-mssqldb"    // mssql (sql server)
 	_ "github.com/go-sql-driver/mysql"      // mysql
 	_ "github.com/jackc/pgx/v4/stdlib"      // pgx (postgres)
+	_ "github.com/microsoft/go-mssqldb"     // mssql (sql server)
 	_ "github.com/snowflakedb/gosnowflake"  // snowflake
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
 type ConvertStruct struct {
-	Integer         string
-	Real            string
-	Text            string
-	Timestamp       string
-	Defaultvalue    string
-	Unsigned        string
-	Bool            string
-	ConversionStyle string
+	Integer         string `toml:"integer"`
+	Real            string `toml:"real"`
+	Text            string `toml:"text"`
+	Timestamp       string `toml:"timestamp"`
+	Defaultvalue    string `toml:"defaultvalue"`
+	Unsigned        string `toml:"unsigned"`
+	Bool            string `toml:"bool"`
+	ConversionStyle string `toml:"conversion_style"`
 }
 
 type SQL struct {
-	Driver              string
-	DataSourceName      string
-	TimestampColumn     string
-	TableTemplate       string
-	TableExistsTemplate string
-	InitSQL             string `toml:"init_sql"`
-	Convert             ConvertStruct
+	Driver                string          `toml:"driver"`
+	DataSourceName        string          `toml:"data_source_name"`
+	TimestampColumn       string          `toml:"timestamp_column"`
+	TableTemplate         string          `toml:"table_template"`
+	TableExistsTemplate   string          `toml:"table_exists_template"`
+	InitSQL               string          `toml:"init_sql"`
+	Convert               ConvertStruct   `toml:"convert"`
+	ConnectionMaxIdleTime config.Duration `toml:"connection_max_idle_time"`
+	ConnectionMaxLifetime config.Duration `toml:"connection_max_lifetime"`
+	ConnectionMaxIdle     int             `toml:"connection_max_idle"`
+	ConnectionMaxOpen     int             `toml:"connection_max_open"`
+	Log                   telegraf.Logger `toml:"-"`
 
 	db     *gosql.DB
-	Log    telegraf.Logger `toml:"-"`
 	tables map[string]bool
 }
 
@@ -61,6 +66,11 @@ func (p *SQL) Connect() error {
 	if err != nil {
 		return err
 	}
+
+	db.SetConnMaxIdleTime(time.Duration(p.ConnectionMaxIdleTime))
+	db.SetConnMaxLifetime(time.Duration(p.ConnectionMaxLifetime))
+	db.SetMaxIdleConns(p.ConnectionMaxIdle)
+	db.SetMaxOpenConns(p.ConnectionMaxOpen)
 
 	if p.InitSQL != "" {
 		_, err = db.Exec(p.InitSQL)
@@ -132,17 +142,13 @@ func (p *SQL) deriveDatatype(value interface{}) string {
 }
 
 func (p *SQL) generateCreateTable(metric telegraf.Metric) string {
-	var columns []string
-	//  ##  {KEY_COLUMNS} is a comma-separated list of key columns (timestamp and tags)
-	//var pk []string
+	columns := make([]string, 0, len(metric.TagList())+len(metric.FieldList())+1)
 
 	if p.TimestampColumn != "" {
-		//pk = append(pk, quoteIdent(p.TimestampColumn))
 		columns = append(columns, fmt.Sprintf("%s %s", quoteIdent(p.TimestampColumn), p.Convert.Timestamp))
 	}
 
 	for _, tag := range metric.TagList() {
-		//pk = append(pk, quoteIdent(tag.Key))
 		columns = append(columns, fmt.Sprintf("%s %s", quoteIdent(tag.Key), p.Convert.Text))
 	}
 
@@ -156,13 +162,13 @@ func (p *SQL) generateCreateTable(metric telegraf.Metric) string {
 	query = strings.ReplaceAll(query, "{TABLE}", quoteIdent(metric.Name()))
 	query = strings.ReplaceAll(query, "{TABLELITERAL}", quoteStr(metric.Name()))
 	query = strings.ReplaceAll(query, "{COLUMNS}", strings.Join(columns, ","))
-	//query = strings.ReplaceAll(query, "{KEY_COLUMNS}", strings.Join(pk, ","))
 
 	return query
 }
 
 func (p *SQL) generateInsert(tablename string, columns []string) string {
-	var placeholders, quotedColumns []string
+	placeholders := make([]string, 0, len(columns))
+	quotedColumns := make([]string, 0, len(columns))
 	for _, column := range columns {
 		quotedColumns = append(quotedColumns, quoteIdent(column))
 	}
@@ -232,26 +238,26 @@ func (p *SQL) Write(metrics []telegraf.Metric) error {
 			// ClickHouse needs to batch inserts with prepared statements
 			tx, err := p.db.Begin()
 			if err != nil {
-				return fmt.Errorf("begin failed: %v", err)
+				return fmt.Errorf("begin failed: %w", err)
 			}
 			stmt, err := tx.Prepare(sql)
 			if err != nil {
-				return fmt.Errorf("prepare failed: %v", err)
+				return fmt.Errorf("prepare failed: %w", err)
 			}
-			defer stmt.Close() //nolint:revive // We cannot do anything about a failing close.
+			defer stmt.Close() //nolint:revive,gocritic // done on purpose, closing will be executed properly
 
 			_, err = stmt.Exec(values...)
 			if err != nil {
-				return fmt.Errorf("execution failed: %v", err)
+				return fmt.Errorf("execution failed: %w", err)
 			}
 			err = tx.Commit()
 			if err != nil {
-				return fmt.Errorf("commit failed: %v", err)
+				return fmt.Errorf("commit failed: %w", err)
 			}
 		default:
 			_, err = p.db.Exec(sql, values...)
 			if err != nil {
-				return fmt.Errorf("execution failed: %v", err)
+				return fmt.Errorf("execution failed: %w", err)
 			}
 		}
 	}
@@ -277,5 +283,11 @@ func newSQL() *SQL {
 			Bool:            "BOOL",
 			ConversionStyle: "unsigned_suffix",
 		},
+		// Defaults for the connection settings (ConnectionMaxIdleTime,
+		// ConnectionMaxLifetime, ConnectionMaxIdle, and ConnectionMaxOpen)
+		// mirror the golang defaults. As of go 1.18 all of them default to 0
+		// except max idle connections which is 2. See
+		// https://pkg.go.dev/database/sql#DB.SetMaxIdleConns
+		ConnectionMaxIdle: 2,
 	}
 }

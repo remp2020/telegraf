@@ -22,6 +22,15 @@ You may edit your sudo configuration with the following:
 telegraf ALL=(root) NOPASSWD: /sbin/pfctl -s info
 ```
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -59,7 +68,7 @@ telegraf ALL=(root) NOPASSWD: /sbin/pfctl -s info
 
 ## Example Output
 
-```text
+```shell
 > pfctl -s info
 Status: Enabled for 0 days 00:26:05           Debug: Urgent
 
@@ -86,8 +95,6 @@ Counters
   synproxy                               0            0.0/s
 ```
 
-```shell
-> ./telegraf --config telegraf.conf --input-filter pf --test
-* Plugin: inputs.pf, Collection 1
-> pf,host=columbia entries=3i,searches=2668i,inserts=12i,removals=9i 1510941775000000000
+```text
+pf,host=columbia entries=3i,searches=2668i,inserts=12i,removals=9i 1510941775000000000
 ```

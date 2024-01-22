@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -123,6 +122,15 @@ func resolveEndpoint(ecs *Ecs) {
 
 	// Auto-detect metadata endpoint version.
 
+	// Use metadata v4 if available.
+	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-metadata-endpoint-v4.html
+	v4Endpoint := os.Getenv("ECS_CONTAINER_METADATA_URI_V4")
+	if v4Endpoint != "" {
+		ecs.EndpointURL = v4Endpoint
+		ecs.metadataVersion = 4
+		return
+	}
+
 	// Use metadata v3 if available.
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-metadata-endpoint-v3.html
 	v3Endpoint := os.Getenv("ECS_CONTAINER_METADATA_URI")
@@ -149,7 +157,8 @@ func (ecs *Ecs) accTask(task *Task, tags map[string]string, acc telegraf.Accumul
 }
 
 func (ecs *Ecs) accContainers(task *Task, taskTags map[string]string, acc telegraf.Accumulator) {
-	for _, c := range task.Containers {
+	for i := range task.Containers {
+		c := &task.Containers[i]
 		if !ecs.containerNameFilter.Match(c.Name) {
 			continue
 		}

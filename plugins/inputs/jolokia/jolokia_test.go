@@ -122,11 +122,13 @@ func (c jolokiaClientStub) MakeRequest(_ *http.Request) (*http.Response, error) 
 
 // Generates a pointer to an HttpJson object that uses a mock HTTP client.
 // Parameters:
-//     response  : Body of the response that the mock HTTP client should return
-//     statusCode: HTTP status code the mock HTTP client should return
+//
+//	response  : Body of the response that the mock HTTP client should return
+//	statusCode: HTTP status code the mock HTTP client should return
 //
 // Returns:
-//     *HttpJson: Pointer to an HttpJson object that uses the generated mock HTTP client
+//
+//	*HttpJson: Pointer to an HttpJson object that uses the generated mock HTTP client
 func genJolokiaClientStub(response string, statusCode int, servers []Server, metrics []Metric) *Jolokia {
 	return &Jolokia{
 		jClient:   jolokiaClientStub{responseBody: response, statusCode: statusCode},
@@ -144,7 +146,7 @@ func TestHttpJsonMultiValue(t *testing.T) {
 	err := acc.GatherError(jolokia.Gather)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 1)
 
 	fields := map[string]interface{}{
 		"heap_memory_usage_init":      67108864.0,
@@ -168,7 +170,7 @@ func TestHttpJsonBulkResponse(t *testing.T) {
 	err := jolokia.Gather(&acc)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 1)
 
 	fields := map[string]interface{}{
 		"heap_memory_usage_init":          67108864.0,
@@ -196,7 +198,7 @@ func TestHttpJsonThreeLevelMultiValue(t *testing.T) {
 	err := acc.GatherError(jolokia.Gather)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, len(acc.Metrics))
+	require.Len(t, acc.Metrics, 1)
 
 	fields := map[string]interface{}{
 		"heap_memory_usage_java.lang:type=Memory_ObjectPendingFinalizationCount": 0.0,
@@ -229,7 +231,7 @@ func TestHttp404(t *testing.T) {
 	err := acc.GatherError(jolokia.Gather)
 
 	require.Error(t, err)
-	require.Equal(t, 0, len(acc.Metrics))
+	require.Empty(t, acc.Metrics)
 	require.Contains(t, err.Error(), "has status code 404")
 }
 
@@ -242,6 +244,6 @@ func TestHttpInvalidJson(t *testing.T) {
 	err := acc.GatherError(jolokia.Gather)
 
 	require.Error(t, err)
-	require.Equal(t, 0, len(acc.Metrics))
+	require.Empty(t, acc.Metrics)
 	require.Contains(t, err.Error(), "error decoding JSON response")
 }

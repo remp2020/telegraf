@@ -5,6 +5,15 @@ including memory and GPU usage, temperatures and other.
 
 [1]: https://github.com/RadeonOpenCompute/rocm_smi_lib/tree/master/python_smi_tools
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -55,7 +64,7 @@ with ROCm version.
 
 ## Example Output
 
-```shell
+```text
 amd_rocm_smi,gpu_id=0x6861,gpu_unique_id=0x2150e7d042a1124,host=ali47xl,name=card0 clocks_current_memory=167i,clocks_current_sm=852i,driver_version=51114i,fan_speed=14i,memory_free=17145282560i,memory_total=17163091968i,memory_used=17809408i,power_draw=7,temperature_sensor_edge=28,temperature_sensor_junction=29,temperature_sensor_memory=92,utilization_gpu=0i 1630572551000000000
 amd_rocm_smi,gpu_id=0x6861,gpu_unique_id=0x2150e7d042a1124,host=ali47xl,name=card0 clocks_current_memory=167i,clocks_current_sm=852i,driver_version=51114i,fan_speed=14i,memory_free=17145282560i,memory_total=17163091968i,memory_used=17809408i,power_draw=7,temperature_sensor_edge=29,temperature_sensor_junction=30,temperature_sensor_memory=91,utilization_gpu=0i 1630572701000000000
 amd_rocm_smi,gpu_id=0x6861,gpu_unique_id=0x2150e7d042a1124,host=ali47xl,name=card0 clocks_current_memory=167i,clocks_current_sm=852i,driver_version=51114i,fan_speed=14i,memory_free=17145282560i,memory_total=17163091968i,memory_used=17809408i,power_draw=7,temperature_sensor_edge=29,temperature_sensor_junction=29,temperature_sensor_memory=92,utilization_gpu=0i 1630572749000000000

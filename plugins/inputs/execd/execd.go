@@ -7,19 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal/process"
+	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
-	"github.com/influxdata/telegraf/plugins/parsers/prometheus"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -29,18 +28,28 @@ type Execd struct {
 	Signal       string          `toml:"signal"`
 	RestartDelay config.Duration `toml:"restart_delay"`
 	Log          telegraf.Logger `toml:"-"`
+	BufferSize   config.Size     `toml:"buffer_size"`
 
-	process *process.Process
-	acc     telegraf.Accumulator
-	parser  parsers.Parser
+	process      *process.Process
+	acc          telegraf.Accumulator
+	parser       telegraf.Parser
+	outputReader func(io.Reader)
 }
 
 func (*Execd) SampleConfig() string {
 	return sampleConfig
 }
 
-func (e *Execd) SetParser(parser parsers.Parser) {
+func (e *Execd) SetParser(parser telegraf.Parser) {
 	e.parser = parser
+	e.outputReader = e.cmdReadOut
+
+	unwrapped, ok := parser.(*models.RunningParser)
+	if ok {
+		if _, ok := unwrapped.Parser.(*influx.Parser); ok {
+			e.outputReader = e.cmdReadOutStream
+		}
+	}
 }
 
 func (e *Execd) Start(acc telegraf.Accumulator) error {
@@ -52,7 +61,7 @@ func (e *Execd) Start(acc telegraf.Accumulator) error {
 	}
 	e.process.Log = e.Log
 	e.process.RestartDelay = time.Duration(e.RestartDelay)
-	e.process.ReadStdoutFn = e.cmdReadOut
+	e.process.ReadStdoutFn = e.outputReader
 	e.process.ReadStderrFn = e.cmdReadErr
 
 	if err = e.process.Start(); err != nil {
@@ -74,20 +83,16 @@ func (e *Execd) Stop() {
 }
 
 func (e *Execd) cmdReadOut(out io.Reader) {
-	if _, isInfluxParser := e.parser.(*influx.Parser); isInfluxParser {
-		// work around the lack of built-in streaming parser. :(
-		e.cmdReadOutStream(out)
-		return
-	}
+	rdr := bufio.NewReaderSize(out, int(e.BufferSize))
 
-	_, isPrometheus := e.parser.(*prometheus.Parser)
-
-	scanner := bufio.NewScanner(out)
-
-	for scanner.Scan() {
-		data := scanner.Bytes()
-		if isPrometheus {
-			data = append(data, []byte("\n")...)
+	for {
+		data, err := rdr.ReadBytes('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+				break
+			}
+			e.acc.AddError(fmt.Errorf("error reading stdout: %w", err))
+			continue
 		}
 
 		metrics, err := e.parser.Parse(data)
@@ -99,10 +104,6 @@ func (e *Execd) cmdReadOut(out io.Reader) {
 			e.acc.AddMetric(metric)
 		}
 	}
-
-	if err := scanner.Err(); err != nil {
-		e.acc.AddError(fmt.Errorf("error reading stdout: %w", err))
-	}
 }
 
 func (e *Execd) cmdReadOutStream(out io.Reader) {
@@ -111,10 +112,11 @@ func (e *Execd) cmdReadOutStream(out io.Reader) {
 	for {
 		metric, err := parser.Next()
 		if err != nil {
-			if err == influx.EOF {
+			if errors.Is(err, influx.EOF) {
 				break // stream ended
 			}
-			if parseErr, isParseError := err.(*influx.ParseError); isParseError {
+			var parseErr *influx.ParseError
+			if errors.As(err, &parseErr) {
 				// parse error.
 				e.acc.AddError(parseErr)
 				continue
@@ -152,6 +154,7 @@ func init() {
 		return &Execd{
 			Signal:       "none",
 			RestartDelay: config.Duration(10 * time.Second),
+			BufferSize:   config.Size(64 * 1024),
 		}
 	})
 }

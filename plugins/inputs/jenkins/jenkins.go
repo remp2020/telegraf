@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +20,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -42,6 +42,7 @@ type Jenkins struct {
 	MaxBuildAge       config.Duration `toml:"max_build_age"`
 	MaxSubJobDepth    int             `toml:"max_subjob_depth"`
 	MaxSubJobPerLayer int             `toml:"max_subjob_per_layer"`
+	NodeLabelsAsTag   bool            `toml:"node_labels_as_tag"`
 	JobExclude        []string        `toml:"job_exclude"`
 	JobInclude        []string        `toml:"job_include"`
 	jobFilter         filter.Filter
@@ -71,7 +72,7 @@ func (j *Jenkins) Gather(acc telegraf.Accumulator) error {
 		if err != nil {
 			return err
 		}
-		if err = j.initialize(client); err != nil {
+		if err := j.initialize(client); err != nil {
 			return err
 		}
 	}
@@ -85,7 +86,7 @@ func (j *Jenkins) Gather(acc telegraf.Accumulator) error {
 func (j *Jenkins) newHTTPClient() (*http.Client, error) {
 	tlsCfg, err := j.ClientConfig.TLSConfig()
 	if err != nil {
-		return nil, fmt.Errorf("error parse jenkins config[%s]: %v", j.URL, err)
+		return nil, fmt.Errorf("error parse jenkins config %q: %w", j.URL, err)
 	}
 	return &http.Client{
 		Transport: &http.Transport{
@@ -119,11 +120,11 @@ func (j *Jenkins) initialize(client *http.Client) error {
 	// init filters
 	j.jobFilter, err = filter.NewIncludeExcludeFilter(j.JobInclude, j.JobExclude)
 	if err != nil {
-		return fmt.Errorf("error compiling job filters[%s]: %v", j.URL, err)
+		return fmt.Errorf("error compiling job filters %q: %w", j.URL, err)
 	}
 	j.nodeFilter, err = filter.NewIncludeExcludeFilter(j.NodeInclude, j.NodeExclude)
 	if err != nil {
-		return fmt.Errorf("error compiling node filters[%s]: %v", j.URL, err)
+		return fmt.Errorf("error compiling node filters %q: %w", j.URL, err)
 	}
 
 	// init tcp pool with default value
@@ -172,6 +173,20 @@ func (j *Jenkins) gatherNodeData(n node, acc telegraf.Accumulator) error {
 
 	fields := make(map[string]interface{})
 	fields["num_executors"] = n.NumExecutors
+
+	if j.NodeLabelsAsTag {
+		labels := make([]string, 0, len(n.AssignedLabels))
+		for _, label := range n.AssignedLabels {
+			labels = append(labels, strings.ReplaceAll(label.Name, ",", "_"))
+		}
+
+		if len(labels) == 0 {
+			tags["labels"] = "none"
+		} else {
+			sort.Strings(labels)
+			tags["labels"] = strings.Join(labels, ",")
+		}
+	}
 
 	if monitorData.HudsonNodeMonitorsResponseTimeMonitor != nil {
 		fields["response_time"] = monitorData.HudsonNodeMonitorsResponseTimeMonitor.Average
@@ -248,11 +263,6 @@ func (j *Jenkins) getJobDetail(jr jobRequest, acc telegraf.Accumulator) error {
 		return nil
 	}
 
-	// filter out excluded or not included jobs
-	if !j.jobFilter.Match(jr.hierarchyName()) {
-		return nil
-	}
-
 	js, err := j.client.getJobs(context.Background(), &jr)
 	if err != nil {
 		return err
@@ -277,6 +287,11 @@ func (j *Jenkins) getJobDetail(jr jobRequest, acc telegraf.Accumulator) error {
 		}(ij, jr, acc)
 	}
 	wg.Wait()
+
+	// filter out excluded or not included jobs
+	if !j.jobFilter.Match(jr.hierarchyName()) {
+		return nil
+	}
 
 	// collect build info
 	number := js.LastBuild.Number
@@ -314,10 +329,15 @@ type nodeResponse struct {
 }
 
 type node struct {
-	DisplayName  string      `json:"displayName"`
-	Offline      bool        `json:"offline"`
-	NumExecutors int         `json:"numExecutors"`
-	MonitorData  monitorData `json:"monitorData"`
+	DisplayName    string      `json:"displayName"`
+	Offline        bool        `json:"offline"`
+	NumExecutors   int         `json:"numExecutors"`
+	MonitorData    monitorData `json:"monitorData"`
+	AssignedLabels []label     `json:"assignedLabels"`
+}
+
+type label struct {
+	Name string `json:"name"`
 }
 
 type monitorData struct {
@@ -385,8 +405,8 @@ type jobRequest struct {
 }
 
 func (jr jobRequest) combined() []string {
-	path := make([]string, len(jr.parents))
-	copy(path, jr.parents)
+	path := make([]string, 0, len(jr.parents)+1)
+	path = append(path, jr.parents...)
 	return append(path, jr.name)
 }
 

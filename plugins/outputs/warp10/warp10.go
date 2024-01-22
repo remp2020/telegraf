@@ -4,6 +4,7 @@ package warp10
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -20,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -32,7 +32,7 @@ const (
 type Warp10 struct {
 	Prefix             string          `toml:"prefix"`
 	WarpURL            string          `toml:"warp_url"`
-	Token              string          `toml:"token"`
+	Token              config.Secret   `toml:"token"`
 	Timeout            config.Duration `toml:"timeout"`
 	PrintErrorBody     bool            `toml:"print_error_body"`
 	MaxStringErrorSize int             `toml:"max_string_error_size"`
@@ -110,7 +110,7 @@ func (w *Warp10) GenWarp10Payload(metrics []telegraf.Metric) string {
 			collectString = append(collectString, messageLine)
 		}
 	}
-	return fmt.Sprint(strings.Join(collectString, ""))
+	return strings.Join(collectString, "")
 }
 
 // Write metrics to Warp10
@@ -123,11 +123,16 @@ func (w *Warp10) Write(metrics []telegraf.Metric) error {
 	addr := w.WarpURL + "/api/v0/update"
 	req, err := http.NewRequest("POST", addr, bytes.NewBufferString(payload))
 	if err != nil {
-		return fmt.Errorf("unable to create new request '%s': %s", addr, err)
+		return fmt.Errorf("unable to create new request %q: %w", addr, err)
 	}
 
-	req.Header.Set("X-Warp10-Token", w.Token)
 	req.Header.Set("Content-Type", "text/plain")
+	token, err := w.Token.Get()
+	if err != nil {
+		return fmt.Errorf("getting token failed: %w", err)
+	}
+	req.Header.Set("X-Warp10-Token", token.String())
+	token.Destroy()
 
 	resp, err := w.client.Do(req)
 	if err != nil {
@@ -138,30 +143,27 @@ func (w *Warp10) Write(metrics []telegraf.Metric) error {
 	if resp.StatusCode != http.StatusOK {
 		if w.PrintErrorBody {
 			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf(w.WarpURL + ": " + w.HandleError(string(body), w.MaxStringErrorSize))
+			return errors.New(w.WarpURL + ": " + w.HandleError(string(body), w.MaxStringErrorSize))
 		}
 
 		if len(resp.Status) < w.MaxStringErrorSize {
-			return fmt.Errorf(w.WarpURL + ": " + resp.Status)
+			return errors.New(w.WarpURL + ": " + resp.Status)
 		}
 
-		return fmt.Errorf(w.WarpURL + ": " + resp.Status[0:w.MaxStringErrorSize])
+		return errors.New(w.WarpURL + ": " + resp.Status[0:w.MaxStringErrorSize])
 	}
 
 	return nil
 }
 
 func buildTags(tags []*telegraf.Tag) []string {
-	tagsString := make([]string, len(tags)+1)
-	indexSource := 0
-	for index, tag := range tags {
+	tagsString := make([]string, 0, len(tags)+1)
+	for _, tag := range tags {
 		key := url.QueryEscape(tag.Key)
 		value := url.QueryEscape(tag.Value)
-		tagsString[index] = fmt.Sprintf("%s=%s", key, value)
-		indexSource = index
+		tagsString = append(tagsString, fmt.Sprintf("%s=%s", key, value))
 	}
-	indexSource++
-	tagsString[indexSource] = "source=telegraf"
+	tagsString = append(tagsString, "source=telegraf")
 	sort.Strings(tagsString)
 	return tagsString
 }
@@ -197,7 +199,38 @@ func boolToString(inputBool bool) string {
 	return strconv.FormatBool(inputBool)
 }
 
+/*
+Warp10 supports Infinity/-Infinity/NaN
+<'
+// class{label=value} 42.0
+0// class-1{label=value}{attribute=value} 42
+=1// Infinity
+'>
+PARSE
+
+<'
+// class{label=value} 42.0
+0// class-1{label=value}{attribute=value} 42
+=1// -Infinity
+'>
+PARSE
+
+<'
+// class{label=value} 42.0
+0// class-1{label=value}{attribute=value} 42
+=1// NaN
+'>
+PARSE
+*/
 func floatToString(inputNum float64) string {
+	switch {
+	case math.IsNaN(inputNum):
+		return "NaN"
+	case math.IsInf(inputNum, -1):
+		return "-Infinity"
+	case math.IsInf(inputNum, 1):
+		return "Infinity"
+	}
 	return strconv.FormatFloat(inputNum, 'f', 6, 64)
 }
 

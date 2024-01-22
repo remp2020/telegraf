@@ -1,5 +1,4 @@
 //go:generate ../../../tools/readme_config_includer/generator
-//nolint
 package influxdb
 
 import (
@@ -18,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/serializers/influx"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -38,10 +36,10 @@ type Client interface {
 
 // InfluxDB struct is the primary data structure for the plugin
 type InfluxDB struct {
-	URL                       string            `toml:"url" deprecated:"0.1.9;2.0.0;use 'urls' instead"`
+	URL                       string            `toml:"url" deprecated:"0.1.9;1.30.0;use 'urls' instead"`
 	URLs                      []string          `toml:"urls"`
-	Username                  string            `toml:"username"`
-	Password                  string            `toml:"password"`
+	Username                  config.Secret     `toml:"username"`
+	Password                  config.Secret     `toml:"password"`
 	Database                  string            `toml:"database"`
 	DatabaseTag               string            `toml:"database_tag"`
 	ExcludeDatabaseTag        bool              `toml:"exclude_database_tag"`
@@ -89,14 +87,14 @@ func (i *InfluxDB) Connect() error {
 	for _, u := range urls {
 		parts, err := url.Parse(u)
 		if err != nil {
-			return fmt.Errorf("error parsing url [%q]: %v", u, err)
+			return fmt.Errorf("error parsing url [%q]: %w", u, err)
 		}
 
 		var proxy *url.URL
 		if len(i.HTTPProxy) > 0 {
 			proxy, err = url.Parse(i.HTTPProxy)
 			if err != nil {
-				return fmt.Errorf("error parsing proxy_url [%s]: %v", i.HTTPProxy, err)
+				return fmt.Errorf("error parsing proxy_url [%s]: %w", i.HTTPProxy, err)
 			}
 		}
 
@@ -147,21 +145,18 @@ func (i *InfluxDB) Write(metrics []telegraf.Metric) error {
 
 		i.Log.Errorf("When writing to [%s]: %v", client.URL(), err)
 
-		switch apiError := err.(type) {
-		case *DatabaseNotFoundError:
+		var apiError *DatabaseNotFoundError
+		if errors.As(err, &apiError) {
 			if i.SkipDatabaseCreation {
 				continue
 			}
 			// retry control
 			// error so the write is retried
-			err := client.CreateDatabase(ctx, apiError.Database)
-			if err != nil {
-				i.Log.Errorf("When writing to [%s]: database %q not found and failed to recreate",
-					client.URL(), apiError.Database)
-			} else {
+			if err := client.CreateDatabase(ctx, apiError.Database); err == nil {
 				return errors.New("database created; retry write")
 			}
-		default:
+			i.Log.Errorf("When writing to [%s]: database %q not found and failed to recreate", client.URL(), apiError.Database)
+		} else {
 			allErrorsAreDatabaseNotFoundErrors = false
 		}
 	}
@@ -173,30 +168,40 @@ func (i *InfluxDB) Write(metrics []telegraf.Metric) error {
 	return errors.New("could not write any address")
 }
 
-func (i *InfluxDB) udpClient(url *url.URL) (Client, error) {
-	config := &UDPConfig{
-		URL:            url,
+func (i *InfluxDB) udpClient(address *url.URL) (Client, error) {
+	serializer := &influx.Serializer{UintSupport: i.InfluxUintSupport}
+	if err := serializer.Init(); err != nil {
+		return nil, err
+	}
+
+	udpConfig := &UDPConfig{
+		URL:            address,
 		MaxPayloadSize: int(i.UDPPayload),
-		Serializer:     i.newSerializer(),
+		Serializer:     serializer,
 		Log:            i.Log,
 	}
 
-	c, err := i.CreateUDPClientF(config)
+	c, err := i.CreateUDPClientF(udpConfig)
 	if err != nil {
-		return nil, fmt.Errorf("error creating UDP client [%s]: %v", url, err)
+		return nil, fmt.Errorf("error creating UDP client [%s]: %w", address, err)
 	}
 
 	return c, nil
 }
 
-func (i *InfluxDB) httpClient(ctx context.Context, url *url.URL, proxy *url.URL) (Client, error) {
+func (i *InfluxDB) httpClient(ctx context.Context, address *url.URL, proxy *url.URL) (Client, error) {
 	tlsConfig, err := i.ClientConfig.TLSConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	config := &HTTPConfig{
-		URL:                       url,
+	serializer := &influx.Serializer{UintSupport: i.InfluxUintSupport}
+	if err := serializer.Init(); err != nil {
+		return nil, err
+	}
+
+	httpConfig := &HTTPConfig{
+		URL:                       address,
 		Timeout:                   time.Duration(i.Timeout),
 		TLSConfig:                 tlsConfig,
 		UserAgent:                 i.UserAgent,
@@ -213,13 +218,13 @@ func (i *InfluxDB) httpClient(ctx context.Context, url *url.URL, proxy *url.URL)
 		RetentionPolicyTag:        i.RetentionPolicyTag,
 		ExcludeRetentionPolicyTag: i.ExcludeRetentionPolicyTag,
 		Consistency:               i.WriteConsistency,
-		Serializer:                i.newSerializer(),
+		Serializer:                serializer,
 		Log:                       i.Log,
 	}
 
-	c, err := i.CreateHTTPClientF(config)
+	c, err := i.CreateHTTPClientF(httpConfig)
 	if err != nil {
-		return nil, fmt.Errorf("error creating HTTP client [%s]: %v", url, err)
+		return nil, fmt.Errorf("error creating HTTP client [%s]: %w", address, err)
 	}
 
 	if !i.SkipDatabaseCreation {
@@ -231,15 +236,6 @@ func (i *InfluxDB) httpClient(ctx context.Context, url *url.URL, proxy *url.URL)
 	}
 
 	return c, nil
-}
-
-func (i *InfluxDB) newSerializer() *influx.Serializer {
-	serializer := influx.NewSerializer()
-	if i.InfluxUintSupport {
-		serializer.SetFieldTypeSupport(influx.UintSupport)
-	}
-
-	return serializer
 }
 
 func init() {

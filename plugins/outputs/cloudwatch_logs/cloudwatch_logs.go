@@ -9,15 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/config/aws"
+	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
 //go:embed sample.conf
 var sampleConfig string
 
@@ -32,11 +33,23 @@ type logStreamContainer struct {
 	sequenceToken         string
 }
 
-//Cloudwatch Logs service interface
+// Cloudwatch Logs service interface
 type cloudWatchLogs interface {
-	DescribeLogGroups(context.Context, *cloudwatchlogs.DescribeLogGroupsInput, ...func(options *cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogGroupsOutput, error)
-	DescribeLogStreams(context.Context, *cloudwatchlogs.DescribeLogStreamsInput, ...func(options *cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogStreamsOutput, error)
-	CreateLogStream(context.Context, *cloudwatchlogs.CreateLogStreamInput, ...func(options *cloudwatchlogs.Options)) (*cloudwatchlogs.CreateLogStreamOutput, error)
+	DescribeLogGroups(
+		context.Context,
+		*cloudwatchlogs.DescribeLogGroupsInput,
+		...func(options *cloudwatchlogs.Options),
+	) (*cloudwatchlogs.DescribeLogGroupsOutput, error)
+	DescribeLogStreams(
+		context.Context,
+		*cloudwatchlogs.DescribeLogStreamsInput,
+		...func(options *cloudwatchlogs.Options),
+	) (*cloudwatchlogs.DescribeLogStreamsOutput, error)
+	CreateLogStream(
+		context.Context,
+		*cloudwatchlogs.CreateLogStreamInput,
+		...func(options *cloudwatchlogs.Options),
+	) (*cloudwatchlogs.CreateLogStreamOutput, error)
 	PutLogEvents(context.Context, *cloudwatchlogs.PutLogEventsInput, ...func(options *cloudwatchlogs.Options)) (*cloudwatchlogs.PutLogEventsOutput, error)
 }
 
@@ -114,11 +127,11 @@ func (c *CloudWatchLogs) Init() error {
 
 	c.logDatKey = lsSplitArray[0]
 	c.logDataSource = lsSplitArray[1]
-	c.Log.Debugf("Log data: key '%s', source '%s'...", c.logDatKey, c.logDataSource)
+	c.Log.Debugf("Log data: key %q, source %q...", c.logDatKey, c.logDataSource)
 
 	if c.lsSource == "" {
 		c.lsSource = c.LogStream
-		c.Log.Debugf("Log stream '%s'...", c.lsSource)
+		c.Log.Debugf("Log stream %q...", c.lsSource)
 	}
 
 	return nil
@@ -131,10 +144,31 @@ func (c *CloudWatchLogs) Connect() error {
 	var logGroupsOutput = &cloudwatchlogs.DescribeLogGroupsOutput{NextToken: &dummyToken}
 	var err error
 
-	cfg, err := c.CredentialConfig.Credentials()
+	awsCreds, awsErr := c.CredentialConfig.Credentials()
+	if awsErr != nil {
+		return awsErr
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
 	}
+	if c.CredentialConfig.EndpointURL != "" && c.CredentialConfig.Region != "" {
+		customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				PartitionID:   "aws",
+				URL:           c.CredentialConfig.EndpointURL,
+				SigningRegion: c.CredentialConfig.Region,
+			}, nil
+		})
+
+		cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithEndpointResolverWithOptions(customResolver))
+		if err != nil {
+			return err
+		}
+	}
+
+	cfg.Credentials = awsCreds.Credentials
 	c.svc = cloudwatchlogs.NewFromConfig(cfg)
 
 	//Find log group with name 'c.LogGroup'
@@ -152,9 +186,10 @@ func (c *CloudWatchLogs) Connect() error {
 			queryToken = logGroupsOutput.NextToken
 
 			for _, logGroup := range logGroupsOutput.LogGroups {
-				if *(logGroup.LogGroupName) == c.LogGroup {
+				lg := logGroup
+				if *(lg.LogGroupName) == c.LogGroup {
 					c.Log.Debugf("Found log group %q", c.LogGroup)
-					c.lg = &logGroup //nolint:revive
+					c.lg = &lg
 				}
 			}
 		}
@@ -256,7 +291,11 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 		//Check if message size is not fit to batch
 		if len(logData) > maxLogMessageLength {
 			metricStr := fmt.Sprintf("%v", m)
-			c.Log.Errorf("Processing metric '%s...', message is too large to fit to aws max log message size: %d (bytes) !", metricStr[0:maxLogMessageLength/1000], maxLogMessageLength)
+			c.Log.Errorf(
+				"Processing metric '%s...', message is too large to fit to aws max log message size: %d (bytes) !",
+				metricStr[0:maxLogMessageLength/1000],
+				maxLogMessageLength,
+			)
 			continue
 		}
 		//Batching log messages
@@ -302,8 +341,7 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 	// Sorting out log events by TS and sending them to cloud watch logs
 	for logStream, elem := range c.ls {
 		for index, batch := range elem.messageBatches {
-			if len(batch.logEvents) == 0 { //can't push empty batch
-				//c.Log.Warnf("Empty batch detected, skipping...")
+			if len(batch.logEvents) == 0 {
 				continue
 			}
 			//Sorting
@@ -337,7 +375,7 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 					continue
 				}
 			} else {
-				putLogEvents.SequenceToken = &elem.sequenceToken
+				putLogEvents.SequenceToken = &c.ls[logStream].sequenceToken
 			}
 
 			//Upload log events

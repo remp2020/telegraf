@@ -20,6 +20,15 @@ Telegraf minimum version: Telegraf 1.15.0
   the requirement that it is serialize-parse symmetrical and does not lose any
   critical type data.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -38,6 +47,11 @@ Telegraf minimum version: Telegraf 1.15.0
 
   ## Delay before the process is restarted after an unexpected termination
   # restart_delay = "10s"
+
+  ## Serialization format for communicating with the executed program
+  ## Please note that the corresponding data-format must exist both in
+  ## parsers and serializers
+  # data_format = "influx"
 ```
 
 ## Example
@@ -56,12 +70,16 @@ import (
 
     "github.com/influxdata/telegraf/metric"
     "github.com/influxdata/telegraf/plugins/parsers/influx"
-    "github.com/influxdata/telegraf/plugins/serializers"
+    influxSerializer "github.com/influxdata/telegraf/plugins/serializers/influx"
 )
 
 func main() {
     parser := influx.NewStreamParser(os.Stdin)
-    serializer, _ := serializers.NewInfluxSerializer()
+    serializer := influxSerializer.Serializer{}
+    if err := serializer.Init(); err != nil {
+        fmt.Fprintf(os.Stderr, "serializer init failed: %v\n", err)
+        os.Exit(1)
+    }
 
     for {
         metric, err := parser.Next()
