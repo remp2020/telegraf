@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -45,8 +46,8 @@ type MongoDB struct {
 }
 
 type Ssl struct {
-	Enabled bool     `toml:"ssl_enabled" deprecated:"1.3.0;use 'tls_*' options instead"`
-	CaCerts []string `toml:"cacerts" deprecated:"1.3.0;use 'tls_ca' instead"`
+	Enabled bool     `toml:"ssl_enabled" deprecated:"1.3.0;1.35.0;use 'tls_*' options instead"`
+	CaCerts []string `toml:"cacerts" deprecated:"1.3.0;1.35.0;use 'tls_ca' instead"`
 }
 
 func (*MongoDB) SampleConfig() string {
@@ -68,13 +69,13 @@ func (m *MongoDB) Init() error {
 			InsecureSkipVerify: m.ClientConfig.InsecureSkipVerify,
 		}
 		if len(m.Ssl.CaCerts) == 0 {
-			return fmt.Errorf("you must explicitly set insecure_skip_verify to skip certificate validation")
+			return errors.New("you must explicitly set insecure_skip_verify to skip certificate validation")
 		}
 
 		roots := x509.NewCertPool()
 		for _, caCert := range m.Ssl.CaCerts {
 			if ok := roots.AppendCertsFromPEM([]byte(caCert)); !ok {
-				return fmt.Errorf("failed to parse root certificate")
+				return errors.New("failed to parse root certificate")
 			}
 		}
 		m.tlsConfig.RootCAs = roots

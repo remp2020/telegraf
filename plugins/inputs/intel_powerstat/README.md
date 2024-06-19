@@ -1,11 +1,4 @@
 # Intel PowerStat Input Plugin
-This input plugin monitors power statistics on Intel-based platforms and assumes presence of Linux based OS. 
-
-Main use cases are power saving and workload migration. Telemetry frameworks allow users to monitor critical platform level metrics. 
-Key source of platform telemetry is power domain that is beneficial for MANO/Monitoring&Analytics systems 
-to take preventive/corrective actions based on platform busyness, CPU temperature, actual CPU utilization and power statistics. 
-
-### Configuration:
 
 This input plugin monitors power statistics on Intel-based platforms and
 assumes presence of Linux based OS.

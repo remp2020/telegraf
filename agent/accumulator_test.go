@@ -2,7 +2,7 @@ package agent
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"log"
 	"os"
 	"testing"
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/models"
+	"github.com/influxdata/telegraf/logger"
 )
 
 func TestAddFields(t *testing.T) {
@@ -55,9 +55,9 @@ func TestAccAddError(t *testing.T) {
 	defer close(metrics)
 	a := NewAccumulator(&TestMetricMaker{}, metrics)
 
-	a.AddError(fmt.Errorf("foo"))
-	a.AddError(fmt.Errorf("bar"))
-	a.AddError(fmt.Errorf("baz"))
+	a.AddError(errors.New("foo"))
+	a.AddError(errors.New("bar"))
+	a.AddError(errors.New("baz"))
 
 	errs := bytes.Split(errBuf.Bytes(), []byte{'\n'})
 	require.Len(t, errs, 4) // 4 because of trailing newline
@@ -156,5 +156,5 @@ func (tm *TestMetricMaker) MakeMetric(metric telegraf.Metric) telegraf.Metric {
 }
 
 func (tm *TestMetricMaker) Log() telegraf.Logger {
-	return models.NewLogger("TestPlugin", "test", "")
+	return logger.NewLogger("TestPlugin", "test", "")
 }

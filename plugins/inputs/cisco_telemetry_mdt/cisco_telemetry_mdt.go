@@ -241,7 +241,8 @@ func (c *CiscoTelemetryMDT) acceptTCPClients() {
 		c.wg.Add(1)
 		go func() {
 			c.Log.Debugf("Accepted Cisco MDT TCP dialout connection from %s", conn.RemoteAddr())
-			if err := c.handleTCPClient(conn); err != nil {
+			err := c.handleTCPClient(conn)
+			if err != nil {
 				c.acc.AddError(err)
 			}
 			c.Log.Debugf("Closed Cisco MDT TCP dialout connection from %s", conn.RemoteAddr())
@@ -303,7 +304,7 @@ func (c *CiscoTelemetryMDT) handleTCPClient(conn net.Conn) error {
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("TCP dialout premature EOF")
+			return errors.New("TCP dialout premature EOF")
 		}
 
 		c.handleTelemetry(payload.Bytes())
@@ -751,7 +752,7 @@ func (c *CiscoTelemetryMDT) parseContentField(grouper *metric.SeriesGrouper, fie
 	if len(rn) > 0 {
 		tags[prefix] = rn
 	} else if !dn { // Check for distinguished name being present
-		c.acc.AddError(fmt.Errorf("NX-OS decoding failed: missing dn field"))
+		c.acc.AddError(errors.New("NX-OS decoding failed: missing dn field"))
 		return
 	}
 

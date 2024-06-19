@@ -30,7 +30,8 @@ type ReadClient struct {
 	Workarounds ReadClientWorkarounds
 
 	// internal values
-	req *ua.ReadRequest
+	reqIDs []*ua.ReadValueID
+	ctx    context.Context
 }
 
 func (rc *ReadClientConfig) CreateReadClient(log telegraf.Logger) (*ReadClient, error) {
@@ -52,7 +53,9 @@ func (rc *ReadClientConfig) CreateReadClient(log telegraf.Logger) (*ReadClient, 
 }
 
 func (o *ReadClient) Connect() error {
-	if err := o.OpcUAClient.Connect(); err != nil {
+	o.ctx = context.Background()
+
+	if err := o.OpcUAClient.Connect(o.ctx); err != nil {
 		return fmt.Errorf("connect failed: %w", err)
 	}
 
@@ -62,13 +65,13 @@ func (o *ReadClient) Connect() error {
 		return fmt.Errorf("initializing node IDs failed: %w", err)
 	}
 
-	readValueIds := make([]*ua.ReadValueID, 0, len(o.NodeIDs))
+	o.reqIDs = make([]*ua.ReadValueID, 0, len(o.NodeIDs))
 	if o.Workarounds.UseUnregisteredReads {
 		for _, nid := range o.NodeIDs {
-			readValueIds = append(readValueIds, &ua.ReadValueID{NodeID: nid})
+			o.reqIDs = append(o.reqIDs, &ua.ReadValueID{NodeID: nid})
 		}
 	} else {
-		regResp, err := o.Client.RegisterNodes(&ua.RegisterNodesRequest{
+		regResp, err := o.Client.RegisterNodes(o.ctx, &ua.RegisterNodesRequest{
 			NodesToRegister: o.NodeIDs,
 		})
 		if err != nil {
@@ -76,14 +79,8 @@ func (o *ReadClient) Connect() error {
 		}
 
 		for _, v := range regResp.RegisteredNodeIDs {
-			readValueIds = append(readValueIds, &ua.ReadValueID{NodeID: v})
+			o.reqIDs = append(o.reqIDs, &ua.ReadValueID{NodeID: v})
 		}
-	}
-
-	o.req = &ua.ReadRequest{
-		MaxAge:             2000,
-		TimestampsToReturn: ua.TimestampsToReturnBoth,
-		NodesToRead:        readValueIds,
 	}
 
 	if err := o.read(); err != nil {
@@ -133,7 +130,13 @@ func (o *ReadClient) CurrentValues() ([]telegraf.Metric, error) {
 }
 
 func (o *ReadClient) read() error {
-	resp, err := o.Client.Read(o.req)
+	req := &ua.ReadRequest{
+		MaxAge:             2000,
+		TimestampsToReturn: ua.TimestampsToReturnBoth,
+		NodesToRead:        o.reqIDs,
+	}
+
+	resp, err := o.Client.Read(o.ctx, req)
 	if err != nil {
 		o.ReadError.Incr(1)
 		return fmt.Errorf("RegisterNodes Read failed: %w", err)

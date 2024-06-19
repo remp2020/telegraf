@@ -49,6 +49,12 @@ func (l *CaptureLogger) loga(level byte, args ...any) {
 	l.print(Entry{level, l.Name, fmt.Sprint(args...)})
 }
 
+func (l *CaptureLogger) Level() telegraf.LogLevel {
+	return telegraf.Debug
+}
+
+func (*CaptureLogger) RegisterErrorCallback(func()) {}
+
 // Errorf logs an error message, patterned after log.Printf.
 func (l *CaptureLogger) Errorf(format string, args ...interface{}) {
 	l.logf(LevelError, format, args...)
@@ -87,6 +93,12 @@ func (l *CaptureLogger) Infof(format string, args ...interface{}) {
 // Info logs an information message, patterned after log.Print.
 func (l *CaptureLogger) Info(args ...interface{}) {
 	l.loga(LevelInfo, args...)
+}
+
+func (l *CaptureLogger) NMessages() int {
+	l.Lock()
+	defer l.Unlock()
+	return len(l.messages)
 }
 
 func (l *CaptureLogger) Messages() []Entry {

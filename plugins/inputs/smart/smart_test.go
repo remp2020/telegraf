@@ -2,6 +2,7 @@ package smart
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestGatherAttributes(t *testing.T) {
 
 	require.Equal(t, time.Second*30, time.Duration(s.Timeout))
 
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(_ config.Duration, _ bool, _ string, args ...string) ([]byte, error) {
 		if len(args) > 0 {
 			if args[0] == "--info" && args[7] == "/dev/ada0" {
 				return []byte(mockInfoAttributeData), nil
@@ -85,7 +86,7 @@ func TestGatherInParallelMode(t *testing.T) {
 	s.EnableExtensions = append(s.EnableExtensions, "auto-on")
 	s.Devices = []string{"/dev/nvme0"}
 
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(_ config.Duration, _ bool, _ string, args ...string) ([]byte, error) {
 		if len(args) > 0 {
 			if args[0] == "--info" && args[7] == "/dev/ada0" {
 				return []byte(mockInfoAttributeData), nil
@@ -149,7 +150,7 @@ func TestGatherNoAttributes(t *testing.T) {
 
 	require.Equal(t, time.Second*30, time.Duration(s.Timeout))
 
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(_ config.Duration, _ bool, _ string, args ...string) ([]byte, error) {
 		if len(args) > 0 {
 			if args[0] == "--scan" && len(args) == 1 {
 				return []byte(mockScanData), nil
@@ -200,7 +201,7 @@ var (
 )
 
 func TestGatherSATAInfo(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(hgstSATAInfoData), nil
 	}
 
@@ -217,7 +218,7 @@ func TestGatherSATAInfo(t *testing.T) {
 }
 
 func TestGatherSATAInfo65(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(hgstSATAInfoData65), nil
 	}
 
@@ -233,7 +234,7 @@ func TestGatherSATAInfo65(t *testing.T) {
 }
 
 func TestGatherHgstSAS(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(hgstSASInfoData), nil
 	}
 
@@ -249,7 +250,7 @@ func TestGatherHgstSAS(t *testing.T) {
 }
 
 func TestGatherHtSAS(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(htSASInfoData), nil
 	}
 
@@ -265,7 +266,7 @@ func TestGatherHtSAS(t *testing.T) {
 }
 
 func TestGatherLongFormEnduranceAttrib(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(mockHGST), nil
 	}
 
@@ -282,7 +283,7 @@ func TestGatherLongFormEnduranceAttrib(t *testing.T) {
 }
 
 func TestGatherSSD(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(ssdInfoData), nil
 	}
 
@@ -298,7 +299,7 @@ func TestGatherSSD(t *testing.T) {
 }
 
 func TestGatherSSDRaid(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(ssdRaidInfoData), nil
 	}
 
@@ -313,8 +314,41 @@ func TestGatherSSDRaid(t *testing.T) {
 	require.Equal(t, uint64(15), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
+func TestGatherDeviceTypeTag(t *testing.T) {
+	runCmd = func(_ config.Duration, _ bool, _ string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "--scan":
+			return nil, errors.New("scan command should not be run, since devices are provided in config")
+		case "--info":
+			switch args[len(args)-1] {
+			case "megaraid,0":
+				return []byte(smartctlMegaraidInfo1), nil
+			case "megaraid,1":
+				return []byte(smartctlMegaraidInfo2), nil
+			default:
+				return nil, fmt.Errorf("unexpected device type %q", args[len(args)-1])
+			}
+		default:
+			return nil, fmt.Errorf("unexpected command %q", args[0])
+		}
+	}
+
+	s := newSmart()
+	s.Devices = []string{"/dev/bus/0 -d megaraid,0", "/dev/bus/0 -d megaraid,1"}
+	s.TagWithDeviceType = true
+
+	acc := testutil.Accumulator{}
+
+	err := s.Gather(&acc)
+	require.NoError(t, err)
+	require.NoError(t, errors.Join(acc.Errors...))
+
+	result := acc.GetTelegrafMetrics()
+	testutil.RequireMetricsEqual(t, testSmartctlDeviceTypeTag, result, testutil.SortMetrics(), testutil.IgnoreTime())
+}
+
 func TestGatherNVMe(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(smartctlNVMeInfoData), nil
 	}
 
@@ -331,7 +365,7 @@ func TestGatherNVMe(t *testing.T) {
 }
 
 func TestGatherNVMeWindows(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(smartctlNVMeInfoDataWindows), nil
 	}
 
@@ -349,7 +383,7 @@ func TestGatherNVMeWindows(t *testing.T) {
 }
 
 func TestGatherIntelNVMeMetrics(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(nvmeIntelInfoDataMetricsFormat), nil
 	}
 
@@ -372,7 +406,7 @@ func TestGatherIntelNVMeMetrics(t *testing.T) {
 }
 
 func TestGatherIntelNVMeDeprecatedFormatMetrics(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(nvmeIntelInfoDataDeprecatedMetricsFormat), nil
 	}
 
@@ -427,7 +461,7 @@ func Test_difference(t *testing.T) {
 }
 
 func Test_integerOverflow(t *testing.T) {
-	runCmd = func(timeout config.Duration, sudo bool, command string, args ...string) ([]byte, error) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(smartctlNVMeInfoDataWithOverflow), nil
 	}
 
@@ -791,6 +825,45 @@ var (
 
 	mockModel  = "INTEL SSDPEDABCDEFG"
 	mockSerial = "CVFT5123456789ABCD"
+
+	testSmartctlDeviceTypeTag = []telegraf.Metric{
+		testutil.MustMetric(
+			"smart_device",
+			map[string]string{
+				"capacity":    "600000000000",
+				"device":      "0",
+				"device_type": "megaraid,0",
+				"enabled":     "Enabled",
+				"model":       "ST3450857SS",
+				"power":       "ACTIVE",
+				"serial_no":   "xxx",
+			},
+			map[string]any{
+				"exit_status": int64(0),
+				"health_ok":   true,
+				"temp_c":      int64(37),
+			},
+			time.Unix(0, 0),
+		),
+		testutil.MustMetric(
+			"smart_device",
+			map[string]string{
+				"capacity":    "600000000000",
+				"device":      "0",
+				"device_type": "megaraid,1",
+				"enabled":     "Enabled",
+				"model":       "ST3450857SS",
+				"power":       "ACTIVE",
+				"serial_no":   "xxx",
+			},
+			map[string]any{
+				"exit_status": int64(0),
+				"health_ok":   true,
+				"temp_c":      int64(47),
+			},
+			time.Unix(0, 0),
+		),
+	}
 
 	testSmartctlNVMeAttributes = []telegraf.Metric{
 		testutil.MustMetric("smart_device",
@@ -2237,6 +2310,93 @@ Selective self-test flags (0x0):
 	After scanning selected spans, do NOT read-scan remainder of disk.
 If Selective self-test is pending on power-up, resume after 0 minute delay.
 `
+
+	smartctlMegaraidInfo1 = `smartctl 7.3 2022-02-28 r5338 [x86_64-linux-6.2.16-12-pve] (local build)
+Copyright (C) 2002-22, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Vendor:               SEAGATE
+Product:              ST3450857SS
+Revision:             ES12
+Compliance:           SPC-3
+User Capacity:        600,000,000,000 bytes [600 GB]
+Logical block size:   512 bytes
+Rotation Rate:        15000 rpm
+Form Factor:          3.5 inches
+Logical Unit id:      0x6000c60641d10397
+Serial number:        xxx
+Device type:          disk
+Transport protocol:   SAS (SPL-4)
+Local Time is:        Fri Jan 12 11:43:49 2024 CET
+SMART support is:     Available - device has SMART capability.
+SMART support is:     Enabled
+Temperature Warning:  Disabled or Not Supported
+Power mode is:        ACTIVE
+
+=== START OF READ SMART DATA SECTION ===
+SMART Health Status: OK
+
+Current Drive Temperature:     37 C
+Drive Trip Temperature:        63 C
+
+Accumulated power on time, hours:minutes 16003:18
+Elements in grown defect list: 0
+
+Vendor (Seagate Cache) information
+  Blocks sent to initiator = 3000000000
+  Blocks received from initiator = 3000000000
+  Blocks read from cache and sent to initiator = 3000000000
+  Number of read and write commands whose size <= segment size = 3000000000
+  Number of read and write commands whose size > segment size = 300
+
+Vendor (Seagate/Hitachi) factory information
+  number of hours powered up = 30000.30
+  number of minutes until next internal SMART test = 7
+`
+
+	smartctlMegaraidInfo2 = `smartctl 7.3 2022-02-28 r5338 [x86_64-linux-6.2.16-12-pve] (local build)
+Copyright (C) 2002-22, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Vendor:               SEAGATE
+Product:              ST3450857SS
+Revision:             ES12
+Compliance:           SPC-3
+User Capacity:        600,000,000,000 bytes [600 GB]
+Logical block size:   512 bytes
+Rotation Rate:        15000 rpm
+Form Factor:          3.5 inches
+Logical Unit id:      0x6000c60641d10497
+Serial number:        xxx
+Device type:          disk
+Transport protocol:   SAS (SPL-4)
+Local Time is:        Fri Jan 12 11:44:49 2024 CET
+SMART support is:     Available - device has SMART capability.
+SMART support is:     Enabled
+Temperature Warning:  Disabled or Not Supported
+Power mode is:        ACTIVE
+
+=== START OF READ SMART DATA SECTION ===
+SMART Health Status: OK
+
+Current Drive Temperature:     47 C
+Drive Trip Temperature:        64 C
+
+Accumulated power on time, hours:minutes 16004:18
+Elements in grown defect list: 0
+
+Vendor (Seagate Cache) information
+  Blocks sent to initiator = 4000000000
+  Blocks received from initiator = 4000000000
+  Blocks read from cache and sent to initiator = 4000000000
+  Number of read and write commands whose size <= segment size = 4000000000
+  Number of read and write commands whose size > segment size = 400
+
+Vendor (Seagate/Hitachi) factory information
+  number of hours powered up = 30000.30
+  number of minutes until next internal SMART test = 7
+`
+
 	smartctlNVMeInfoData = `smartctl 6.5 2016-05-07 r4318 [x86_64-linux-4.1.27-gvt-yocto-standard] (local build)
 Copyright (C) 2002-16, Bruce Allen, Christian Franke, www.smartmontools.org
 

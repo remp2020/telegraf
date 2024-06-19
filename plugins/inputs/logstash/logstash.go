@@ -284,7 +284,7 @@ func (logstash *Logstash) gatherPluginsStats(
 				if strings.HasPrefix(k, "bulk_requests") {
 					continue
 				}
-				newKey := fmt.Sprintf("bulk_requests_%s", k)
+				newKey := "bulk_requests_" + k
 				flattener.Fields[newKey] = v
 				delete(flattener.Fields, k)
 			}
@@ -307,7 +307,7 @@ func (logstash *Logstash) gatherPluginsStats(
 				if strings.HasPrefix(k, "documents") {
 					continue
 				}
-				newKey := fmt.Sprintf("documents_%s", k)
+				newKey := "documents_" + k
 				flattener.Fields[newKey] = v
 				delete(flattener.Fields, k)
 			}
@@ -454,6 +454,10 @@ func (logstash *Logstash) gatherPipelinesStats(address string, accumulator teleg
 	return nil
 }
 
+func (logstash *Logstash) Start(_ telegraf.Accumulator) error {
+	return nil
+}
+
 // Gather ask this plugin to start gathering metrics
 func (logstash *Logstash) Gather(accumulator telegraf.Accumulator) error {
 	if logstash.client == nil {
@@ -506,6 +510,12 @@ func (logstash *Logstash) Gather(accumulator telegraf.Accumulator) error {
 	}
 
 	return nil
+}
+
+func (logstash *Logstash) Stop() {
+	if logstash.client != nil {
+		logstash.client.CloseIdleConnections()
+	}
 }
 
 // init registers this plugin instance

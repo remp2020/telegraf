@@ -28,8 +28,8 @@ type SQLServer struct {
 	Servers      []*config.Secret `toml:"servers"`
 	QueryTimeout config.Duration  `toml:"query_timeout"`
 	AuthMethod   string           `toml:"auth_method"`
-	QueryVersion int              `toml:"query_version" deprecated:"1.16.0;use 'database_type' instead"`
-	AzureDB      bool             `toml:"azuredb" deprecated:"1.16.0;use 'database_type' instead"`
+	QueryVersion int              `toml:"query_version" deprecated:"1.16.0;1.35.0;use 'database_type' instead"`
+	AzureDB      bool             `toml:"azuredb" deprecated:"1.16.0;1.35.0;use 'database_type' instead"`
 	DatabaseType string           `toml:"database_type"`
 	IncludeQuery []string         `toml:"include_query"`
 	ExcludeQuery []string         `toml:"exclude_query"`
@@ -151,6 +151,8 @@ func (s *SQLServer) initQueries() error {
 		queries["SQLServerDatabaseReplicaStates"] =
 			Query{ScriptName: "SQLServerDatabaseReplicaStates", Script: sqlServerDatabaseReplicaStates, ResultByRow: false}
 		queries["SQLServerRecentBackups"] = Query{ScriptName: "SQLServerRecentBackups", Script: sqlServerRecentBackups, ResultByRow: false}
+		queries["SQLServerPersistentVersionStore"] =
+			Query{ScriptName: "SQLServerPersistentVersionStore", Script: sqlServerPersistentVersionStore, ResultByRow: false}
 	} else {
 		// If this is an AzureDB instance, grab some extra metrics
 		if s.AzureDB {
@@ -519,7 +521,7 @@ func (s *SQLServer) loadToken() (*adal.Token, error) {
 	// however it's been structured here to allow extending the cache mechanism to a different approach in future
 
 	if s.adalToken == nil {
-		return nil, fmt.Errorf("token is nil or failed to load existing token")
+		return nil, errors.New("token is nil or failed to load existing token")
 	}
 
 	return s.adalToken, nil

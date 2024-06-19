@@ -311,7 +311,7 @@ func (e *Endpoint) startDiscovery(ctx context.Context) {
 	}()
 }
 
-func (e *Endpoint) initalDiscovery(ctx context.Context) {
+func (e *Endpoint) initialDiscovery(ctx context.Context) {
 	err := e.discover(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		e.log.Errorf("Discovery for %s: %s", e.URL.Host, err.Error())
@@ -347,7 +347,7 @@ func (e *Endpoint) init(ctx context.Context) error {
 
 	if time.Duration(e.Parent.ObjectDiscoveryInterval) > 0 {
 		e.Parent.Log.Debug("Running initial discovery")
-		e.initalDiscovery(ctx)
+		e.initialDiscovery(ctx)
 	}
 	e.initialized = true
 	return nil
@@ -840,6 +840,9 @@ func getVMs(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilter) (o
 		// Sometimes Config is unknown and returns a nil pointer
 		if r.Config != nil {
 			guest = cleanGuestID(r.Config.GuestId)
+			if r.Guest.GuestId != "" {
+				guest = cleanGuestID(r.Guest.GuestId)
+			}
 			uuid = r.Config.Uuid
 		}
 		cvs := make(map[string]string)

@@ -58,6 +58,12 @@ them with `${}`.  Replacement occurs before file parsing. For strings
 the variable must be within quotes, e.g., `"${STR_VAR}"`, for numbers and booleans
 they should be unquoted, e.g., `${INT_VAR}`, `${BOOL_VAR}`.
 
+Users need to keep in mind that when using double quotes the user needs to
+escape any backslashes (e.g. `"C:\\Program Files"`) or other special characters.
+If using an environment variable with a single backslash, then enclose the
+variable in single quotes which signifies a string literal (e.g.
+`'C:\Program Files'`).
+
 In addition to this, Telegraf also supports Shell parameter expansion for environment variables
 which allows syntax such as:
 
@@ -342,6 +348,10 @@ The agent table configures Telegraf and the defaults used across all plugins.
   tag-filtering   via `taginclude` or `tagexclude`. This removes the need to
   specify those tags twice.
 
+- **skip_processors_after_aggregators**:
+  By default, processors are run a second time after aggregators. Changing
+  this setting to true will skip the second run of processors.
+
 ## Plugins
 
 Telegraf plugins are divided into 4 types: [inputs][], [outputs][],
@@ -381,12 +391,12 @@ Parameters that can be used with any input plugin:
 - **collection_jitter**:
   Overrides the `collection_jitter` setting of the [agent][Agent] for the
   plugin.  Collection jitter is used to jitter the collection by a random
-  [interval][].
+  [interval][]. The value must be non-zero to override the agent setting.
 
 - **collection_offset**:
   Overrides the `collection_offset` setting of the [agent][Agent] for the
   plugin. Collection offset is used to shift the collection by the given
-  [interval][].
+  [interval][]. The value must be non-zero to override the agent setting.
 
 - **name_override**: Override the base name of the measurement.  (Default is
   the name of the input).
@@ -471,7 +481,8 @@ Parameters that can be used with any output plugin:
 - **flush_interval**: The maximum time between flushes.  Use this setting to
   override the agent `flush_interval` on a per plugin basis.
 - **flush_jitter**: The amount of time to jitter the flush interval.  Use this
-  setting to override the agent `flush_jitter` on a per plugin basis.
+  setting to override the agent `flush_jitter` on a per plugin basis. The value
+  must be non-zero to override the agent setting.
 - **metric_batch_size**: The maximum number of metrics to send at once.  Use
   this setting to override the agent `metric_batch_size` on a per plugin basis.
 - **metric_buffer_limit**: The maximum number of unsent metrics to buffer.
@@ -834,7 +845,7 @@ tags and the agent `host` tag.
 #### Routing metrics to different outputs based on the input
 
 Metrics are tagged with `influxdb_database` in the input, which is then used to
-select the output.  The tag is removed in the outputs before writing.
+select the output.  The tag is removed in the outputs before writing with `tagexclude`.
 
 ```toml
 [[outputs.influxdb]]

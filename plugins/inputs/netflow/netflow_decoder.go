@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/netsampler/goflow2/decoders/netflow"
+	"github.com/netsampler/goflow2/v2/decoders/netflow"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
@@ -533,7 +533,7 @@ type netflowDecoder struct {
 	PENFiles []string
 	Log      telegraf.Logger
 
-	templates     map[string]*netflow.BasicTemplateSystem
+	templates     map[string]netflow.NetFlowTemplateSystem
 	mappingsV9    map[uint16]fieldMapping
 	mappingsIPFIX map[uint16]fieldMapping
 	mappingsPEN   map[string]fieldMapping
@@ -557,25 +557,55 @@ func (d *netflowDecoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 	d.Unlock()
 
 	// Decode the overall message
+	var msg9 netflow.NFv9Packet
+	var msg10 netflow.IPFIXPacket
 	buf := bytes.NewBuffer(payload)
-	packet, err := netflow.DecodeMessage(buf, templates)
-	if err != nil {
-		var terr *netflow.ErrorTemplateNotFound
-		if errors.As(err, &terr) {
-			d.Log.Warnf("%v; skipping packet", err)
+	if err := netflow.DecodeMessageVersion(buf, templates, &msg9, &msg10); err != nil {
+		if errors.Is(err, netflow.ErrorTemplateNotFound) {
+			msg := "Skipping packet until the device resends the required template..."
+			d.Log.Warnf("%v. %s", err, msg)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("decoding message failed: %w", err)
 	}
 
 	// Extract metrics
-	switch msg := packet.(type) {
-	case netflow.NFv9Packet:
+	switch {
+	case msg9.Version == 9:
+		msg := msg9
 		for _, flowsets := range msg.FlowSets {
 			switch fs := flowsets.(type) {
 			case netflow.TemplateFlowSet:
 			case netflow.NFv9OptionsTemplateFlowSet:
 			case netflow.OptionsDataFlowSet:
+				for _, record := range fs.Records {
+					tags := map[string]string{
+						"source":  src,
+						"version": "NetFlowV9",
+					}
+					fields := make(map[string]interface{})
+					for _, value := range record.ScopesValues {
+						decodedFields, err := d.decodeValueV9(value)
+						if err != nil {
+							d.Log.Errorf("decoding option record %+v failed: %v", record, err)
+							continue
+						}
+						for _, field := range decodedFields {
+							fields[field.Key] = field.Value
+						}
+					}
+					for _, value := range record.OptionsValues {
+						decodedFields, err := d.decodeValueV9(value)
+						if err != nil {
+							d.Log.Errorf("decoding option record %+v failed: %v", record, err)
+							continue
+						}
+						for _, field := range decodedFields {
+							fields[field.Key] = field.Value
+						}
+					}
+					metrics = append(metrics, metric.New("netflow_options", tags, fields, t))
+				}
 			case netflow.DataFlowSet:
 				for _, record := range fs.Records {
 					tags := map[string]string{
@@ -597,12 +627,41 @@ func (d *netflowDecoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 				}
 			}
 		}
-	case netflow.IPFIXPacket:
+	case msg10.Version == 10:
+		msg := msg10
 		for _, flowsets := range msg.FlowSets {
 			switch fs := flowsets.(type) {
 			case netflow.TemplateFlowSet:
 			case netflow.IPFIXOptionsTemplateFlowSet:
 			case netflow.OptionsDataFlowSet:
+				for _, record := range fs.Records {
+					tags := map[string]string{
+						"source":  src,
+						"version": "IPFIX",
+					}
+					fields := make(map[string]interface{})
+					for _, value := range record.ScopesValues {
+						decodedFields, err := d.decodeValueIPFIX(value)
+						if err != nil {
+							d.Log.Errorf("decoding option record %+v failed: %v", record, err)
+							continue
+						}
+						for _, field := range decodedFields {
+							fields[field.Key] = field.Value
+						}
+					}
+					for _, value := range record.OptionsValues {
+						decodedFields, err := d.decodeValueIPFIX(value)
+						if err != nil {
+							d.Log.Errorf("decoding option record %+v failed: %v", record, err)
+							continue
+						}
+						for _, field := range decodedFields {
+							fields[field.Key] = field.Value
+						}
+					}
+					metrics = append(metrics, metric.New("netflow_options", tags, fields, t))
+				}
 			case netflow.DataFlowSet:
 				for _, record := range fs.Records {
 					tags := map[string]string{
@@ -626,7 +685,7 @@ func (d *netflowDecoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 			}
 		}
 	default:
-		return nil, fmt.Errorf("invalid message of type %T", packet)
+		return nil, errors.New("invalid message of type")
 	}
 
 	return metrics, nil
@@ -640,7 +699,7 @@ func (d *netflowDecoder) Init() error {
 		return fmt.Errorf("initializing IPv4 options mapping failed: %w", err)
 	}
 
-	d.templates = make(map[string]*netflow.BasicTemplateSystem)
+	d.templates = make(map[string]netflow.NetFlowTemplateSystem)
 	d.mappingsV9 = make(map[uint16]fieldMapping)
 	d.mappingsIPFIX = make(map[uint16]fieldMapping)
 	d.mappingsPEN = make(map[string]fieldMapping)
@@ -706,10 +765,26 @@ func (d *netflowDecoder) decodeValueV9(field netflow.DataField) ([]telegraf.Fiel
 		return fields, nil
 	}
 
+	// Fallback to IPFIX mappings as some devices seem to send IPFIX elements in
+	// Netflow v9 packets. See https://github.com/influxdata/telegraf/issues/14902
+	// and https://github.com/influxdata/telegraf/issues/14903.
+	if mappings, found := fieldMappingsIPFIX[elementID]; found {
+		var fields []telegraf.Field
+		for _, m := range mappings {
+			v, err := m.decoder(raw)
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, telegraf.Field{Key: m.name, Value: v})
+		}
+		return fields, nil
+	}
+
 	// Return the raw data if no mapping was found
 	key := fmt.Sprintf("type_%d", elementID)
 	if !d.logged[key] {
 		d.Log.Debugf("unknown Netflow v9 data field %v", field)
+		d.logged[key] = true
 	}
 	v, err := decodeHex(raw)
 	if err != nil {
@@ -743,6 +818,7 @@ func (d *netflowDecoder) decodeValueIPFIX(field netflow.DataField) ([]telegraf.F
 		}
 		if !d.logged[key] {
 			d.Log.Debugf("unknown IPFIX PEN data field %v", field)
+			d.logged[key] = true
 		}
 		name := fmt.Sprintf("type_%d_%s%d", field.Pen, prefix, elementID)
 		v, err := decodeHex(raw)
@@ -791,6 +867,7 @@ func (d *netflowDecoder) decodeValueIPFIX(field netflow.DataField) ([]telegraf.F
 	key := fmt.Sprintf("type_%d", elementID)
 	if !d.logged[key] {
 		d.Log.Debugf("unknown IPFIX data field %v", field)
+		d.logged[key] = true
 	}
 	v, err := decodeHex(raw)
 	if err != nil {

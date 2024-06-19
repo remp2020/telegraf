@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/models"
+	"github.com/influxdata/telegraf/config"
 )
 
 //go:embed sample_register.conf
@@ -35,6 +35,13 @@ func (c *ConfigurationOriginal) SampleConfigPart() string {
 }
 
 func (c *ConfigurationOriginal) Check() error {
+	switch c.workarounds.StringRegisterLocation {
+	case "", "both", "lower", "upper":
+		// Do nothing as those are valid
+	default:
+		return fmt.Errorf("invalid 'string_register_location' %q", c.workarounds.StringRegisterLocation)
+	}
+
 	if err := c.validateFieldDefinitions(c.DiscreteInputs, cDiscreteInputs); err != nil {
 		return err
 	}
@@ -165,7 +172,7 @@ func (c *ConfigurationOriginal) newFieldFromDefinition(def fieldDefinition, type
 			return f, err
 		}
 
-		f.converter, err = determineConverter(inType, byteOrder, outType, def.Scale)
+		f.converter, err = determineConverter(inType, byteOrder, outType, def.Scale, c.workarounds.StringRegisterLocation)
 		if err != nil {
 			return f, err
 		}
@@ -262,9 +269,9 @@ func (c *ConfigurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefini
 
 func (c *ConfigurationOriginal) normalizeInputDatatype(dataType string, words int) (string, error) {
 	if dataType == "FLOAT32" {
-		models.PrintOptionValueDeprecationNotice(telegraf.Warn, "input.modbus", "data_type", "FLOAT32", telegraf.DeprecationInfo{
+		config.PrintOptionValueDeprecationNotice("input.modbus", "data_type", "FLOAT32", telegraf.DeprecationInfo{
 			Since:     "v1.16.0",
-			RemovalIn: "v2.0.0",
+			RemovalIn: "v1.35.0",
 			Notice:    "Use 'UFIXED' instead",
 		})
 	}

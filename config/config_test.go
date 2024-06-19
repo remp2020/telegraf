@@ -22,6 +22,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	logging "github.com/influxdata/telegraf/logger"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/persister"
@@ -191,6 +192,15 @@ func TestConfig_LoadSingleInput_WithSeparators(t *testing.T) {
 	c.Inputs[0].Config.ID = ""
 	require.Equal(t, input, c.Inputs[0].Input, "Testdata did not produce a correct memcached struct.")
 	require.Equal(t, inputConfig, c.Inputs[0].Config, "Testdata did not produce correct memcached metadata.")
+}
+
+func TestConfig_LoadSingleInput_WithCommentInArray(t *testing.T) {
+	c := config.NewConfig()
+	require.NoError(t, c.LoadConfig("./testdata/single_plugin_with_comment_in_array.toml"))
+	require.Len(t, c.Inputs, 1)
+
+	input := c.Inputs[0].Input.(*MockupInputPlugin)
+	require.ElementsMatch(t, input.Servers, []string{"localhost"})
 }
 
 func TestConfig_LoadDirectory(t *testing.T) {
@@ -373,52 +383,62 @@ func TestConfig_FieldNotDefined(t *testing.T) {
 		{
 			name:     "in input plugin without parser",
 			filename: "./testdata/invalid_field.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in input plugin with parser",
 			filename: "./testdata/invalid_field_with_parser.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in input plugin with parser func",
 			filename: "./testdata/invalid_field_with_parserfunc.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in parser of input plugin",
 			filename: "./testdata/invalid_field_in_parser_table.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in parser of input plugin with parser-func",
 			filename: "./testdata/invalid_field_in_parserfunc_table.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in processor plugin without parser",
 			filename: "./testdata/invalid_field_processor.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in processor plugin with parser",
 			filename: "./testdata/invalid_field_processor_with_parser.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in processor plugin with parser func",
 			filename: "./testdata/invalid_field_processor_with_parserfunc.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in parser of processor plugin",
 			filename: "./testdata/invalid_field_processor_in_parser_table.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 		{
 			name:     "in parser of processor plugin with parser-func",
 			filename: "./testdata/invalid_field_processor_in_parserfunc_table.toml",
-			expected: `line 1: configuration specified the fields ["not_a_field"], but they weren't used`,
+			expected: "line 1: configuration specified the fields [\"not_a_field\"], but they were not used. " +
+				"This is either a typo or this config option does not exist in this version.",
 		},
 	}
 
@@ -451,7 +471,7 @@ func TestConfig_InlineTables(t *testing.T) {
 	require.NoError(t, c.LoadConfig("./testdata/inline_table.toml"))
 	require.Len(t, c.Outputs, 2)
 
-	output, ok := c.Outputs[1].Output.(*MockupOuputPlugin)
+	output, ok := c.Outputs[1].Output.(*MockupOutputPlugin)
 	require.True(t, ok)
 	require.Equal(t, map[string]string{"Authorization": "Token test", "Content-Type": "application/json"}, output.Headers)
 	require.Equal(t, []string{"org_id"}, c.Outputs[0].Config.Filter.TagInclude)
@@ -464,7 +484,7 @@ func TestConfig_SliceComment(t *testing.T) {
 	require.NoError(t, c.LoadConfig("./testdata/slice_comment.toml"))
 	require.Len(t, c.Outputs, 1)
 
-	output, ok := c.Outputs[0].Output.(*MockupOuputPlugin)
+	output, ok := c.Outputs[0].Output.(*MockupOutputPlugin)
 	require.True(t, ok)
 	require.Equal(t, []string{"test"}, output.Scopes)
 }
@@ -490,16 +510,17 @@ func TestConfig_AzureMonitorNamespacePrefix(t *testing.T) {
 
 	expectedPrefix := []string{"Telegraf/", ""}
 	for i, plugin := range c.Outputs {
-		output, ok := plugin.Output.(*MockupOuputPlugin)
+		output, ok := plugin.Output.(*MockupOutputPlugin)
 		require.True(t, ok)
 		require.Equal(t, expectedPrefix[i], output.NamespacePrefix)
 	}
 }
 
 func TestGetDefaultConfigPathFromEnvURL(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("[agent]\ndebug = true"))
+		_, err := w.Write([]byte("[agent]\ndebug = true"))
+		require.NoError(t, err)
 	}))
 	defer ts.Close()
 
@@ -618,7 +639,7 @@ func TestConfig_SerializerInterfaceNewFormat(t *testing.T) {
 		formatCfg := &cfg
 		formatCfg.DataFormat = format
 
-		logger := models.NewLogger("serializers", format, "test")
+		logger := logging.NewLogger("serializers", format, "test")
 
 		var serializer telegraf.Serializer
 		if creator, found := serializers.Serializers[format]; found {
@@ -710,7 +731,7 @@ func TestConfig_SerializerInterfaceOldFormat(t *testing.T) {
 		formatCfg := &cfg
 		formatCfg.DataFormat = format
 
-		logger := models.NewLogger("serializers", format, "test")
+		logger := logging.NewLogger("serializers", format, "test")
 
 		var serializer serializers.Serializer
 		if creator, found := serializers.Serializers[format]; found {
@@ -816,7 +837,7 @@ func TestConfig_ParserInterface(t *testing.T) {
 
 	expected := make([]telegraf.Parser, 0, len(formats))
 	for _, format := range formats {
-		logger := models.NewLogger("parsers", format, "parser_test_new")
+		logger := logging.NewLogger("parsers", format, "parser_test_new")
 
 		creator, found := parsers.Parsers[format]
 		require.Truef(t, found, "No parser for format %q", format)
@@ -1022,7 +1043,7 @@ func TestConfig_ProcessorsWithParsers(t *testing.T) {
 
 	expected := make([]telegraf.Parser, 0, len(formats))
 	for _, format := range formats {
-		logger := models.NewLogger("parsers", format, "processors_with_parsers")
+		logger := logging.NewLogger("parsers", format, "processors_with_parsers")
 
 		creator, found := parsers.Parsers[format]
 		require.Truef(t, found, "No parser for format %q", format)
@@ -1173,7 +1194,8 @@ func TestPersisterInputStoreLoad(t *testing.T) {
 		p.state.Version++
 		p.state.Offset += uint64(i + 1)
 		p.state.Bits = append(p.state.Bits, len(p.state.Bits))
-		p.state.Modified, _ = time.Parse(time.RFC3339, "2022-11-03T16:49:00+02:00")
+		p.state.Modified, err = time.Parse(time.RFC3339, "2022-11-03T16:49:00+02:00")
+		require.NoError(t, err)
 
 		// Store the state for later comparison
 		expected[plugin.ID()] = p.GetState()
@@ -1274,6 +1296,7 @@ type MockupInputPlugin struct {
 	MaxBodySize  config.Size     `toml:"max_body_size"`
 	Paths        []string        `toml:"paths"`
 	Port         int             `toml:"port"`
+	Password     config.Secret   `toml:"password"`
 	Command      string
 	Files        []string
 	PidFile      string
@@ -1432,7 +1455,7 @@ func (m *MockupProcessorPluginParserFunc) SetParserFunc(pf telegraf.ParserFunc) 
 }
 
 /*** Mockup OUTPUT plugin for testing to avoid cyclic dependencies ***/
-type MockupOuputPlugin struct {
+type MockupOutputPlugin struct {
 	URL             string            `toml:"url"`
 	Headers         map[string]string `toml:"headers"`
 	Scopes          []string          `toml:"scopes"`
@@ -1441,16 +1464,16 @@ type MockupOuputPlugin struct {
 	tls.ClientConfig
 }
 
-func (m *MockupOuputPlugin) Connect() error {
+func (m *MockupOutputPlugin) Connect() error {
 	return nil
 }
-func (m *MockupOuputPlugin) Close() error {
+func (m *MockupOutputPlugin) Close() error {
 	return nil
 }
-func (m *MockupOuputPlugin) SampleConfig() string {
+func (m *MockupOutputPlugin) SampleConfig() string {
 	return "Mockup test output plugin"
 }
-func (m *MockupOuputPlugin) Write(_ []telegraf.Metric) error {
+func (m *MockupOutputPlugin) Write(_ []telegraf.Metric) error {
 	return nil
 }
 
@@ -1521,7 +1544,10 @@ type MockupStatePlugin struct {
 }
 
 func (m *MockupStatePlugin) Init() error {
-	t0, _ := time.Parse(time.RFC3339, "2021-04-24T23:42:00+02:00")
+	t0, err := time.Parse(time.RFC3339, "2021-04-24T23:42:00+02:00")
+	if err != nil {
+		return err
+	}
 	m.state = MockupState{
 		Name:     "mockup",
 		Bits:     []int{},
@@ -1603,10 +1629,10 @@ func init() {
 
 	// Register the mockup output plugin for the required names
 	outputs.Add("azure_monitor", func() telegraf.Output {
-		return &MockupOuputPlugin{NamespacePrefix: "Telegraf/"}
+		return &MockupOutputPlugin{NamespacePrefix: "Telegraf/"}
 	})
 	outputs.Add("http", func() telegraf.Output {
-		return &MockupOuputPlugin{}
+		return &MockupOutputPlugin{}
 	})
 	outputs.Add("serializer_test_new", func() telegraf.Output {
 		return &MockupOutputPluginSerializerNew{}

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -72,7 +73,7 @@ func (*Opensearch) SampleConfig() string {
 
 func (o *Opensearch) Init() error {
 	if len(o.URLs) == 0 || o.IndexName == "" {
-		return fmt.Errorf("opensearch urls or index_name is not defined")
+		return errors.New("opensearch urls or index_name is not defined")
 	}
 
 	// Determine if we should process NaN and inf values
@@ -97,10 +98,10 @@ func (o *Opensearch) Init() error {
 	}
 	o.pipelineTmpl = pipelineTmpl
 
-	o.onSucc = func(ctx context.Context, item opensearchutil.BulkIndexerItem, res opensearchutil.BulkIndexerResponseItem) {
+	o.onSucc = func(_ context.Context, _ opensearchutil.BulkIndexerItem, res opensearchutil.BulkIndexerResponseItem) {
 		o.Log.Debugf("Indexed to OpenSearch with status- [%d] Result- %s DocumentID- %s ", res.Status, res.Result, res.DocumentID)
 	}
-	o.onFail = func(ctx context.Context, item opensearchutil.BulkIndexerItem, res opensearchutil.BulkIndexerResponseItem, err error) {
+	o.onFail = func(_ context.Context, _ opensearchutil.BulkIndexerItem, res opensearchutil.BulkIndexerResponseItem, err error) {
 		if err != nil {
 			o.Log.Errorf("error while OpenSearch bulkIndexing: %v", err)
 		} else {
@@ -109,7 +110,7 @@ func (o *Opensearch) Init() error {
 	}
 
 	if o.TemplateName == "" {
-		return fmt.Errorf("template_name configuration not defined")
+		return errors.New("template_name configuration not defined")
 	}
 
 	return nil
@@ -139,6 +140,11 @@ func (o *Opensearch) Connect() error {
 		if err != nil {
 			return err
 		}
+	}
+
+	_, err = o.osClient.Ping()
+	if err != nil {
+		return fmt.Errorf("unable to ping OpenSearch server: %w", err)
 	}
 
 	return nil
@@ -209,7 +215,7 @@ func (o *Opensearch) Write(metrics []telegraf.Metric) error {
 	// get indexers based on unique pipeline values
 	indexers := getTargetIndexers(metrics, o)
 	if len(indexers) == 0 {
-		return fmt.Errorf("failed to instantiate OpenSearch bulkindexer")
+		return errors.New("failed to instantiate OpenSearch bulkindexer")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(o.Timeout))
@@ -295,9 +301,10 @@ func (o *Opensearch) Write(metrics []telegraf.Metric) error {
 
 		// Report the indexer statistics
 		stats := bulkIndxr.Stats()
-		if stats.NumAdded < uint64(len(metrics)) {
-			return fmt.Errorf("indexed [%d] documents with [%d] errors", stats.NumAdded, stats.NumFailed)
+		if stats.NumFailed > 0 {
+			return fmt.Errorf("failed to index [%d] documents", stats.NumFailed)
 		}
+
 		o.Log.Debugf("Successfully indexed [%d] documents", stats.NumAdded)
 	}
 
@@ -363,7 +370,6 @@ func (o *Opensearch) GetIndexName(metric telegraf.Metric) (string, error) {
 	if strings.Contains(indexName, "{{") {
 		return "", fmt.Errorf("failed to evaluate valid indexname: %s", indexName)
 	}
-	o.Log.Debugf("indexName- %s", indexName)
 	return indexName, nil
 }
 
@@ -407,7 +413,7 @@ func (o *Opensearch) manageTemplate(ctx context.Context) error {
 	}
 
 	if templatePattern == "" {
-		return fmt.Errorf("template cannot be created for dynamic index names without an index prefix")
+		return errors.New("template cannot be created for dynamic index names without an index prefix")
 	}
 
 	if o.OverwriteTemplate || !templateExists || templatePattern != "" {

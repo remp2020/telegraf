@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -27,26 +28,27 @@ import (
 var sampleConfig string
 
 type Elasticsearch struct {
-	AuthBearerToken     config.Secret   `toml:"auth_bearer_token"`
-	DefaultPipeline     string          `toml:"default_pipeline"`
-	DefaultTagValue     string          `toml:"default_tag_value"`
-	EnableGzip          bool            `toml:"enable_gzip"`
-	EnableSniffer       bool            `toml:"enable_sniffer"`
-	FloatHandling       string          `toml:"float_handling"`
-	FloatReplacement    float64         `toml:"float_replacement_value"`
-	ForceDocumentID     bool            `toml:"force_document_id"`
-	HealthCheckInterval config.Duration `toml:"health_check_interval"`
-	HealthCheckTimeout  config.Duration `toml:"health_check_timeout"`
-	IndexName           string          `toml:"index_name"`
-	ManageTemplate      bool            `toml:"manage_template"`
-	OverwriteTemplate   bool            `toml:"overwrite_template"`
-	Username            config.Secret   `toml:"username"`
-	Password            config.Secret   `toml:"password"`
-	TemplateName        string          `toml:"template_name"`
-	Timeout             config.Duration `toml:"timeout"`
-	URLs                []string        `toml:"urls"`
-	UsePipeline         string          `toml:"use_pipeline"`
-	Log                 telegraf.Logger `toml:"-"`
+	AuthBearerToken     config.Secret     `toml:"auth_bearer_token"`
+	DefaultPipeline     string            `toml:"default_pipeline"`
+	DefaultTagValue     string            `toml:"default_tag_value"`
+	EnableGzip          bool              `toml:"enable_gzip"`
+	EnableSniffer       bool              `toml:"enable_sniffer"`
+	FloatHandling       string            `toml:"float_handling"`
+	FloatReplacement    float64           `toml:"float_replacement_value"`
+	ForceDocumentID     bool              `toml:"force_document_id"`
+	HealthCheckInterval config.Duration   `toml:"health_check_interval"`
+	HealthCheckTimeout  config.Duration   `toml:"health_check_timeout"`
+	IndexName           string            `toml:"index_name"`
+	ManageTemplate      bool              `toml:"manage_template"`
+	OverwriteTemplate   bool              `toml:"overwrite_template"`
+	Username            config.Secret     `toml:"username"`
+	Password            config.Secret     `toml:"password"`
+	TemplateName        string            `toml:"template_name"`
+	Timeout             config.Duration   `toml:"timeout"`
+	URLs                []string          `toml:"urls"`
+	UsePipeline         string            `toml:"use_pipeline"`
+	Headers             map[string]string `toml:"headers"`
+	Log                 telegraf.Logger   `toml:"-"`
 	majorReleaseNumber  int
 	pipelineName        string
 	pipelineTagKeys     []string
@@ -137,7 +139,7 @@ func (*Elasticsearch) SampleConfig() string {
 
 func (a *Elasticsearch) Connect() error {
 	if a.URLs == nil || a.IndexName == "" {
-		return fmt.Errorf("elasticsearch urls or index_name is not defined")
+		return errors.New("elasticsearch urls or index_name is not defined")
 	}
 
 	// Determine if we should process NaN and inf values
@@ -181,6 +183,16 @@ func (a *Elasticsearch) Connect() error {
 		elastic.SetHealthcheckTimeout(time.Duration(a.HealthCheckTimeout)),
 		elastic.SetGzip(a.EnableGzip),
 	)
+
+	if len(a.Headers) > 0 {
+		headers := http.Header{}
+		for k, vals := range a.Headers {
+			for _, v := range strings.Split(vals, ",") {
+				headers.Add(k, v)
+			}
+		}
+		clientOptions = append(clientOptions, elastic.SetHeaders(headers))
+	}
 
 	authOptions, err := a.getAuthOptions()
 	if err != nil {
@@ -333,7 +345,7 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 
 func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	if a.TemplateName == "" {
-		return fmt.Errorf("elasticsearch template_name configuration not defined")
+		return errors.New("elasticsearch template_name configuration not defined")
 	}
 
 	templateExists, errExists := a.Client.IndexTemplateExists(a.TemplateName).Do(ctx)
@@ -353,7 +365,7 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	}
 
 	if templatePattern == "" {
-		return fmt.Errorf("template cannot be created for dynamic index names without an index prefix")
+		return errors.New("template cannot be created for dynamic index names without an index prefix")
 	}
 
 	if (a.OverwriteTemplate) || (!templateExists) || (templatePattern != "") {

@@ -3,11 +3,14 @@ package snmp_trap
 
 import (
 	_ "embed"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gosnmp/gosnmp"
 
@@ -40,7 +43,7 @@ func (l wrapLog) Print(args ...interface{}) {
 
 type SnmpTrap struct {
 	ServiceAddress string          `toml:"service_address"`
-	Timeout        config.Duration `toml:"timeout" deprecated:"1.20.0;unused option"`
+	Timeout        config.Duration `toml:"timeout" deprecated:"1.20.0;1.35.0;unused option"`
 	Version        string          `toml:"version"`
 	Translator     string          `toml:"-"`
 	Path           []string        `toml:"path"`
@@ -103,7 +106,7 @@ func (s *SnmpTrap) Init() error {
 	case "netsnmp":
 		s.transl = newNetsnmpTranslator(s.Timeout)
 	default:
-		return fmt.Errorf("invalid translator value")
+		return errors.New("invalid translator value")
 	}
 
 	if err != nil {
@@ -154,14 +157,14 @@ func (s *SnmpTrap) Start(acc telegraf.Accumulator) error {
 			authenticationProtocol = gosnmp.MD5
 		case "sha":
 			authenticationProtocol = gosnmp.SHA
-		//case "sha224":
-		//	authenticationProtocol = gosnmp.SHA224
-		//case "sha256":
-		//	authenticationProtocol = gosnmp.SHA256
-		//case "sha384":
-		//	authenticationProtocol = gosnmp.SHA384
-		//case "sha512":
-		//	authenticationProtocol = gosnmp.SHA512
+		case "sha224":
+			authenticationProtocol = gosnmp.SHA224
+		case "sha256":
+			authenticationProtocol = gosnmp.SHA256
+		case "sha384":
+			authenticationProtocol = gosnmp.SHA384
+		case "sha512":
+			authenticationProtocol = gosnmp.SHA512
 		case "":
 			authenticationProtocol = gosnmp.NoAuth
 		default:
@@ -342,6 +345,13 @@ func makeTrapHandler(s *SnmpTrap) gosnmp.TrapHandlerFunc {
 				if v.Name == ".1.3.6.1.6.3.1.1.4.1.0" {
 					setTrapOid(tags, val, e)
 					continue
+				}
+			case gosnmp.OctetString:
+				// OctetStrings may contain hex data that needs its own conversion
+				if !utf8.ValidString(string(v.Value.([]byte)[:])) {
+					value = hex.EncodeToString(v.Value.([]byte))
+				} else {
+					value = v.Value
 				}
 			default:
 				value = v.Value

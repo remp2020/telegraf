@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sync"
@@ -128,14 +127,6 @@ func (a *Accumulator) addMeasurement(
 		} else {
 			t = a.TimeFunc()
 		}
-	}
-
-	if a.debug {
-		pretty, _ := json.MarshalIndent(fields, "", "  ")
-		prettyTags, _ := json.MarshalIndent(tags, "", "  ")
-		msg := fmt.Sprintf("Adding Measurement [%s]\nFields:%s\nTags:%s\n",
-			measurement, string(pretty), string(prettyTags))
-		fmt.Print(msg)
 	}
 
 	m := &Metric{
@@ -475,7 +466,7 @@ func (a *Accumulator) AssertDoesNotContainMeasurement(t *testing.T, measurement 
 	defer a.Unlock()
 	for _, p := range a.Metrics {
 		if p.Measurement == measurement {
-			msg := fmt.Sprintf("found unexpected measurement %s", measurement)
+			msg := "found unexpected measurement " + measurement
 			require.Fail(t, msg)
 		}
 	}

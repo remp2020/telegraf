@@ -3,6 +3,7 @@ package starlark
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 
 	"go.starlark.net/starlark"
@@ -26,14 +27,12 @@ func (*Starlark) SampleConfig() string {
 }
 
 func (s *Starlark) Init() error {
-	err := s.Common.Init()
-	if err != nil {
+	if err := s.Common.Init(); err != nil {
 		return err
 	}
 
 	// The source should define an apply function.
-	err = s.AddFunction("apply", &common.Metric{})
-	if err != nil {
+	if err := s.AddFunction("apply", &common.Metric{}); err != nil {
 		return err
 	}
 
@@ -50,7 +49,7 @@ func (s *Starlark) Start(_ telegraf.Accumulator) error {
 func (s *Starlark) Add(origMetric telegraf.Metric, acc telegraf.Accumulator) error {
 	parameters, found := s.GetParameters("apply")
 	if !found {
-		return fmt.Errorf("the parameters of the apply function could not be found")
+		return errors.New("the parameters of the apply function could not be found")
 	}
 	parameters[0].(*common.Metric).Wrap(origMetric)
 
@@ -117,6 +116,7 @@ func (s *Starlark) Add(origMetric telegraf.Metric, acc telegraf.Accumulator) err
 	default:
 		return fmt.Errorf("invalid type returned: %T", rv)
 	}
+
 	return nil
 }
 

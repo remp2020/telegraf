@@ -6,9 +6,11 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,18 +35,19 @@ const (
 )
 
 type Loki struct {
-	Domain          string            `toml:"domain"`
-	Endpoint        string            `toml:"endpoint"`
-	Timeout         config.Duration   `toml:"timeout"`
-	Username        config.Secret     `toml:"username"`
-	Password        config.Secret     `toml:"password"`
-	Headers         map[string]string `toml:"http_headers"`
-	ClientID        string            `toml:"client_id"`
-	ClientSecret    string            `toml:"client_secret"`
-	TokenURL        string            `toml:"token_url"`
-	Scopes          []string          `toml:"scopes"`
-	GZipRequest     bool              `toml:"gzip_request"`
-	MetricNameLabel string            `toml:"metric_name_label"`
+	Domain             string            `toml:"domain"`
+	Endpoint           string            `toml:"endpoint"`
+	Timeout            config.Duration   `toml:"timeout"`
+	Username           config.Secret     `toml:"username"`
+	Password           config.Secret     `toml:"password"`
+	Headers            map[string]string `toml:"http_headers"`
+	ClientID           string            `toml:"client_id"`
+	ClientSecret       string            `toml:"client_secret"`
+	TokenURL           string            `toml:"token_url"`
+	Scopes             []string          `toml:"scopes"`
+	GZipRequest        bool              `toml:"gzip_request"`
+	MetricNameLabel    string            `toml:"metric_name_label"`
+	SanitizeLabelNames bool              `toml:"sanitize_label_names"`
 
 	url    string
 	client *http.Client
@@ -85,7 +88,7 @@ func (*Loki) SampleConfig() string {
 
 func (l *Loki) Connect() (err error) {
 	if l.Domain == "" {
-		return fmt.Errorf("domain is required")
+		return errors.New("domain is required")
 	}
 
 	if l.Endpoint == "" {
@@ -126,8 +129,13 @@ func (l *Loki) Write(metrics []telegraf.Metric) error {
 		}
 
 		tags := m.TagList()
-		var line string
+		if l.SanitizeLabelNames {
+			for _, t := range tags {
+				t.Key = sanitizeLabelName(t.Key)
+			}
+		}
 
+		var line string
 		for _, f := range m.FieldList() {
 			line += fmt.Sprintf("%s=\"%v\" ", f.Key, f.Value)
 		}
@@ -189,7 +197,7 @@ func (l *Loki) writeMetrics(s Streams) error {
 	if err != nil {
 		return err
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -197,6 +205,15 @@ func (l *Loki) writeMetrics(s Streams) error {
 	}
 
 	return nil
+}
+
+// Verify the label name matches the regex [a-zA-Z_:][a-zA-Z0-9_:]*
+func sanitizeLabelName(name string) string {
+	re := regexp.MustCompile(`^[^a-zA-Z_:]`)
+	result := re.ReplaceAllString(name, "_")
+
+	re = regexp.MustCompile(`[^a-zA-Z0-9_:]`)
+	return re.ReplaceAllString(result, "_")
 }
 
 func init() {

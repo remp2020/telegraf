@@ -854,7 +854,7 @@ func TestParserTimestampPrecision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			d := config.Duration(0)
 			require.NoError(t, d.UnmarshalText([]byte(tt.precision)))
-			parser := Parser{InfluxTimestampPrecsion: d}
+			parser := Parser{InfluxTimestampPrecision: d}
 			require.NoError(t, parser.Init())
 
 			metrics, err := parser.Parse(tt.input)
@@ -869,7 +869,7 @@ func TestParserInvalidTimestampPrecision(t *testing.T) {
 	d := config.Duration(0)
 	for _, precision := range []string{"1h", "1d", "2s", "1m", "2ns"} {
 		require.NoError(t, d.UnmarshalText([]byte(precision)))
-		parser := Parser{InfluxTimestampPrecsion: d}
+		parser := Parser{InfluxTimestampPrecision: d}
 		require.ErrorContains(t, parser.Init(), "invalid time precision")
 	}
 }
@@ -976,11 +976,11 @@ func TestStreamParserErrorString(t *testing.T) {
 }
 
 type MockReader struct {
-	ReadF func(p []byte) (int, error)
+	ReadF func() (int, error)
 }
 
-func (r *MockReader) Read(p []byte) (int, error) {
-	return r.ReadF(p)
+func (r *MockReader) Read([]byte) (int, error) {
+	return r.ReadF()
 }
 
 // Errors from the Reader are returned from the Parser
@@ -988,7 +988,7 @@ func TestStreamParserReaderError(t *testing.T) {
 	readerErr := errors.New("error but not eof")
 
 	parser := NewStreamParser(&MockReader{
-		ReadF: func(p []byte) (int, error) {
+		ReadF: func() (int, error) {
 			return 0, readerErr
 		},
 	})

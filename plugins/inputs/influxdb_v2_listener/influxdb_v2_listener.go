@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/influxdata/telegraf"
@@ -52,19 +54,27 @@ type InfluxDBV2Listener struct {
 	port           int
 	tlsint.ServerConfig
 
-	ReadTimeout  config.Duration `toml:"read_timeout"`
-	WriteTimeout config.Duration `toml:"write_timeout"`
-	MaxBodySize  config.Size     `toml:"max_body_size"`
-	Token        string          `toml:"token"`
-	BucketTag    string          `toml:"bucket_tag"`
-	ParserType   string          `toml:"parser_type"`
+	MaxUndeliveredMetrics int             `toml:"max_undelivered_metrics"`
+	ReadTimeout           config.Duration `toml:"read_timeout"`
+	WriteTimeout          config.Duration `toml:"write_timeout"`
+	MaxBodySize           config.Size     `toml:"max_body_size"`
+	Token                 config.Secret   `toml:"token"`
+	BucketTag             string          `toml:"bucket_tag"`
+	ParserType            string          `toml:"parser_type"`
+
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	trackingMetricCount     map[telegraf.TrackingID]int64
+	countLock               sync.Mutex
+	totalUndeliveredMetrics atomic.Int64
 
 	timeFunc influx.TimeFunc
 
 	listener net.Listener
 	server   http.Server
 
-	acc telegraf.Accumulator
+	acc         telegraf.Accumulator
+	trackingAcc telegraf.TrackingAccumulator
 
 	bytesRecv       selfstat.Stat
 	requestsServed  selfstat.Stat
@@ -89,11 +99,18 @@ func (h *InfluxDBV2Listener) Gather(_ telegraf.Accumulator) error {
 	return nil
 }
 
-func (h *InfluxDBV2Listener) routes() {
+func (h *InfluxDBV2Listener) routes() error {
 	credentials := ""
-	if h.Token != "" {
-		credentials = fmt.Sprintf("Token %s", h.Token)
+	if !h.Token.Empty() {
+		secBuf, err := h.Token.Get()
+		if err != nil {
+			return err
+		}
+
+		credentials = "Token " + secBuf.String()
+		secBuf.Destroy()
 	}
+
 	authHandler := internal.GenericAuthHandler(credentials,
 		func(_ http.ResponseWriter) {
 			h.authFailures.Incr(1)
@@ -103,6 +120,8 @@ func (h *InfluxDBV2Listener) routes() {
 	h.mux.Handle("/api/v2/write", authHandler(h.handleWrite()))
 	h.mux.Handle("/api/v2/ready", h.handleReady())
 	h.mux.Handle("/", authHandler(h.handleDefault()))
+
+	return nil
 }
 
 func (h *InfluxDBV2Listener) Init() error {
@@ -116,7 +135,9 @@ func (h *InfluxDBV2Listener) Init() error {
 	h.requestsRecv = selfstat.Register("influxdb_v2_listener", "requests_received", tags)
 	h.notFoundsServed = selfstat.Register("influxdb_v2_listener", "not_founds_served", tags)
 	h.authFailures = selfstat.Register("influxdb_v2_listener", "auth_failures", tags)
-	h.routes()
+	if err := h.routes(); err != nil {
+		return err
+	}
 
 	if h.MaxBodySize == 0 {
 		h.MaxBodySize = config.Size(defaultMaxBodySize)
@@ -135,6 +156,26 @@ func (h *InfluxDBV2Listener) Init() error {
 // Start starts the InfluxDB listener service.
 func (h *InfluxDBV2Listener) Start(acc telegraf.Accumulator) error {
 	h.acc = acc
+	h.ctx, h.cancel = context.WithCancel(context.Background())
+	if h.MaxUndeliveredMetrics > 0 {
+		h.trackingAcc = h.acc.WithTracking(h.MaxUndeliveredMetrics)
+		h.trackingMetricCount = make(map[telegraf.TrackingID]int64, h.MaxUndeliveredMetrics)
+		go func() {
+			for {
+				select {
+				case <-h.ctx.Done():
+					return
+				case info := <-h.trackingAcc.Delivered():
+					if count, ok := h.trackingMetricCount[info.ID()]; ok {
+						h.countLock.Lock()
+						h.totalUndeliveredMetrics.Add(-count)
+						delete(h.trackingMetricCount, info.ID())
+						h.countLock.Unlock()
+					}
+				}
+			}
+		}()
+	}
 
 	tlsConf, err := h.ServerConfig.TLSConfig()
 	if err != nil {
@@ -180,6 +221,7 @@ func (h *InfluxDBV2Listener) Start(acc telegraf.Accumulator) error {
 
 // Stop cleans up all resources
 func (h *InfluxDBV2Listener) Stop() {
+	h.cancel()
 	err := h.server.Shutdown(context.Background())
 	if err != nil {
 		h.Log.Infof("Error shutting down HTTP server: %v", err.Error())
@@ -193,7 +235,7 @@ func (h *InfluxDBV2Listener) ServeHTTP(res http.ResponseWriter, req *http.Reques
 }
 
 func (h *InfluxDBV2Listener) handleReady() http.HandlerFunc {
-	return func(res http.ResponseWriter, req *http.Request) {
+	return func(res http.ResponseWriter, _ *http.Request) {
 		defer h.readysServed.Incr(1)
 
 		// respond to ready requests
@@ -219,6 +261,7 @@ func (h *InfluxDBV2Listener) handleDefault() http.HandlerFunc {
 func (h *InfluxDBV2Listener) handleWrite() http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		defer h.writesServed.Incr(1)
+
 		// Check that the content length is not too large for us to handle.
 		if req.ContentLength > int64(h.MaxBodySize) {
 			if err := tooLarge(res, int64(h.MaxBodySize)); err != nil {
@@ -308,13 +351,48 @@ func (h *InfluxDBV2Listener) handleWrite() http.HandlerFunc {
 			if h.BucketTag != "" && bucket != "" {
 				m.AddTag(h.BucketTag, bucket)
 			}
-
-			h.acc.AddMetric(m)
 		}
 
-		// http request success
-		res.WriteHeader(http.StatusNoContent)
+		if h.MaxUndeliveredMetrics > 0 {
+			h.writeWithTracking(res, metrics)
+		} else {
+			h.write(res, metrics)
+		}
 	}
+}
+
+func (h *InfluxDBV2Listener) writeWithTracking(res http.ResponseWriter, metrics []telegraf.Metric) {
+	if len(metrics) > h.MaxUndeliveredMetrics {
+		res.WriteHeader(http.StatusRequestEntityTooLarge)
+		h.Log.Debugf("status %d, always rejecting batch of %d metrics: larger than max_undelivered_metrics %d",
+			http.StatusRequestEntityTooLarge, len(metrics), h.MaxUndeliveredMetrics)
+		return
+	}
+
+	pending := h.totalUndeliveredMetrics.Load()
+	remainingUndeliveredMetrics := int64(h.MaxUndeliveredMetrics) - pending
+	if int64(len(metrics)) > remainingUndeliveredMetrics {
+		res.WriteHeader(http.StatusTooManyRequests)
+		h.Log.Debugf("status %d, rejecting batch of %d metrics: larger than remaining undelivered metrics %d",
+			http.StatusTooManyRequests, len(metrics), remainingUndeliveredMetrics)
+		return
+	}
+
+	h.countLock.Lock()
+	trackingID := h.trackingAcc.AddTrackingMetricGroup(metrics)
+	h.trackingMetricCount[trackingID] = int64(len(metrics))
+	h.totalUndeliveredMetrics.Add(int64(len(metrics)))
+	h.countLock.Unlock()
+
+	res.WriteHeader(http.StatusNoContent)
+}
+
+func (h *InfluxDBV2Listener) write(res http.ResponseWriter, metrics []telegraf.Metric) {
+	for _, m := range metrics {
+		h.acc.AddMetric(m)
+	}
+
+	res.WriteHeader(http.StatusNoContent)
 }
 
 func tooLarge(res http.ResponseWriter, maxLength int64) error {

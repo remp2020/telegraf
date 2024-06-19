@@ -3,9 +3,6 @@
 The [Kafka][kafka] consumer plugin reads from Kafka
 and creates metrics using one of the supported [input data formats][].
 
-For old kafka version (< 0.8), please use the [kafka_consumer_legacy][] input
-plugin and use the old zookeeper connection method.
-
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
@@ -66,11 +63,11 @@ to use them.
   ## The list of Kafka message headers that should be pass as metric tags
   ## works only for Kafka version 0.11+, on lower versions the message headers
   ## are not available
-  # msg_headers_to_tags = []
+  # msg_headers_as_tags = []
 
   ## The name of kafka message header which value should override the metric name.
-  ## In case when the same header specified in current option and in msg_headers_to_tags
-  ## option, it will be excluded from the msg_headers_to_tags list.
+  ## In case when the same header specified in current option and in msg_headers_as_tags
+  ## option, it will be excluded from the msg_headers_as_tags list.
   # msg_header_as_metric_name = ""
 
   ## Optional Client id
@@ -152,6 +149,11 @@ to use them.
   ## limit.
   # metadata_retry_max_duration = 0
 
+  ## When set to true, this turns each bootstrap broker address into a set of
+  ## IPs, then does a reverse lookup on each one to get its canonical hostname.
+  ## This list of hostnames then replaces the original address list.
+  ## resolve_canonical_bootstrap_servers_only = false
+
   ## Strategy for making connection to kafka brokers. Valid options: "startup",
   ## "defer". If set to "defer" the plugin is allowed to start before making a
   ## connection. This is useful if the broker may be down when telegraf is
@@ -199,7 +201,6 @@ to use them.
 ```
 
 [kafka]: https://kafka.apache.org
-[kafka_consumer_legacy]: /plugins/inputs/kafka_consumer_legacy/README.md
 [input data formats]: /docs/DATA_FORMATS_INPUT.md
 
 ## Metrics

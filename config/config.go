@@ -26,6 +26,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
+	logging "github.com/influxdata/telegraf/logger"
 	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/persister"
 	"github.com/influxdata/telegraf/plugins/aggregators"
@@ -54,6 +55,9 @@ var (
 
 	// Password specified via command-line
 	Password Secret
+
+	// telegrafVersion contains the parsed semantic Telegraf version
+	telegrafVersion *semver.Version = semver.New("0.0.0-unknown")
 )
 
 // Config specifies the URL/user/password for the database that telegraf
@@ -86,11 +90,13 @@ type Config struct {
 	// like the other plugins because they need to be garbage collected (See issue #11809)
 
 	Deprecations map[string][]int64
-	version      *semver.Version
 
 	Persister *persister.Persister
 
 	NumberSecrets uint64
+
+	seenAgentTable     bool
+	seenAgentTableOnce sync.Once
 }
 
 // Ordered plugins used to keep the order in which they appear in a file
@@ -136,11 +142,9 @@ func NewConfig() *Config {
 	}
 
 	// Handle unknown version
-	version := internal.Version
-	if version == "" || version == "unknown" {
-		version = "0.0.0-unknown"
+	if internal.Version != "" && internal.Version != "unknown" {
+		telegrafVersion = semver.New(internal.Version)
 	}
-	c.version = semver.New(version)
 
 	tomlCfg := &toml.Config{
 		NormFieldName: toml.DefaultConfig.NormFieldName,
@@ -208,12 +212,12 @@ type AgentConfig struct {
 	// FlushBufferWhenFull tells Telegraf to flush the metric buffer whenever
 	// it fills up, regardless of FlushInterval. Setting this option to true
 	// does _not_ deactivate FlushInterval.
-	FlushBufferWhenFull bool `toml:"flush_buffer_when_full" deprecated:"0.13.0;1.30.0;option is ignored"`
+	FlushBufferWhenFull bool `toml:"flush_buffer_when_full" deprecated:"0.13.0;1.35.0;option is ignored"`
 
 	// TODO(cam): Remove UTC and parameter, they are no longer
 	// valid for the agent config. Leaving them here for now for backwards-
 	// compatibility
-	UTC bool `toml:"utc" deprecated:"1.0.0;option is ignored"`
+	UTC bool `toml:"utc" deprecated:"1.0.0;1.35.0;option is ignored"`
 
 	// Debug is the option for running in debug mode
 	Debug bool `toml:"debug"`
@@ -265,6 +269,15 @@ type AgentConfig struct {
 	// Flag to always keep tags explicitly defined in the global tags section
 	// and ensure those tags always pass filtering.
 	AlwaysIncludeGlobalTags bool `toml:"always_include_global_tags"`
+
+	// Flag to skip running processors after aggregators
+	// By default, processors are run a second time after aggregators. Changing
+	// this setting to true will skip the second run of processors.
+	SkipProcessorsAfterAggregators bool `toml:"skip_processors_after_aggregators"`
+
+	// Number of attempts to obtain a remote configuration via a URL during
+	// startup. Set to -1 for unlimited attempts.
+	ConfigURLRetryAttempts int `toml:"config_url_retry_attempts"`
 }
 
 // InputNames returns a list of strings of the configured inputs.
@@ -443,7 +456,7 @@ func (c *Config) LoadConfig(path string) error {
 		log.Printf("I! Loading config: %s", path)
 	}
 
-	data, _, err := LoadConfigFile(path)
+	data, _, err := LoadConfigFileWithRetries(path, c.Agent.ConfigURLRetryAttempts)
 	if err != nil {
 		return fmt.Errorf("error loading config file %s: %w", path, err)
 	}
@@ -473,7 +486,12 @@ func (c *Config) LoadAll(configFiles ...string) error {
 	}
 
 	// Check if there is enough lockable memory for the secret
-	c.NumberSecrets = uint64(secretCount.Load())
+	count := secretCount.Load()
+	if count < 0 {
+		log.Printf("E! Invalid secret count %d, please report this incident including your configuration!", count)
+		count = 0
+	}
+	c.NumberSecrets = uint64(count)
 
 	// Let's link all secrets to their secret-stores
 	return c.LinkSecrets()
@@ -501,9 +519,16 @@ func (c *Config) LoadConfigData(data []byte) error {
 
 	// Parse agent table:
 	if val, ok := tbl.Fields["agent"]; ok {
+		if c.seenAgentTable {
+			c.seenAgentTableOnce.Do(func() {
+				log.Printf("W! Overlapping settings in multiple agent tables are not supported: may cause undefined behavior")
+			})
+		}
+		c.seenAgentTable = true
+
 		subTable, ok := val.(*ast.Table)
 		if !ok {
-			return fmt.Errorf("invalid configuration, error parsing agent table")
+			return errors.New("invalid configuration, error parsing agent table")
 		}
 		if err = c.toml.UnmarshalTable(subTable, c.Agent); err != nil {
 			return fmt.Errorf("error parsing [agent]: %w", err)
@@ -525,9 +550,9 @@ func (c *Config) LoadConfigData(data []byte) error {
 
 	// Warn when explicitly setting the old snmp translator
 	if c.Agent.SnmpTranslator == "netsnmp" {
-		models.PrintOptionValueDeprecationNotice(telegraf.Warn, "agent", "snmp_translator", "netsnmp", telegraf.DeprecationInfo{
+		PrintOptionValueDeprecationNotice("agent", "snmp_translator", "netsnmp", telegraf.DeprecationInfo{
 			Since:     "1.25.0",
-			RemovalIn: "2.0.0",
+			RemovalIn: "1.40.0",
 			Notice:    "Use 'gosmi' instead",
 		})
 	}
@@ -540,7 +565,10 @@ func (c *Config) LoadConfigData(data []byte) error {
 	}
 
 	if len(c.UnusedFields) > 0 {
-		return fmt.Errorf("line %d: configuration specified the fields %q, but they weren't used", tbl.Line, keys(c.UnusedFields))
+		return fmt.Errorf(
+			"line %d: configuration specified the fields %q, but they were not used. "+
+				"This is either a typo or this config option does not exist in this version.",
+			tbl.Line, keys(c.UnusedFields))
 	}
 
 	// Initialize the file-sorting slices
@@ -575,7 +603,9 @@ func (c *Config) LoadConfigData(data []byte) error {
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+					return fmt.Errorf(
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
+							"This is either a typo or this config option does not exist in this version.",
 						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -598,7 +628,9 @@ func (c *Config) LoadConfigData(data []byte) error {
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+					return fmt.Errorf(
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
+							"This is either a typo or this config option does not exist in this version.",
 						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -617,7 +649,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 				}
 				if len(c.UnusedFields) > 0 {
 					return fmt.Errorf(
-						"plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
+							"This is either a typo or this config option does not exist in this version.",
 						name,
 						pluginName,
 						subTable.Line,
@@ -639,7 +672,9 @@ func (c *Config) LoadConfigData(data []byte) error {
 						pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					return fmt.Errorf("plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used",
+					return fmt.Errorf(
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
+							"This is either a typo or this config option does not exist in this version.",
 						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -656,7 +691,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 					return fmt.Errorf("unsupported config format: %s", pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					msg := "plugin %s.%s: line %d: configuration specified the fields %q, but they weren't used"
+					msg := "plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. " +
+						"This is either a typo or this config option does not exist in this version."
 					return fmt.Errorf(msg, name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -696,6 +732,10 @@ func trimBOM(f []byte) []byte {
 // together with a flag denoting if the file is from a remote location such
 // as a web server.
 func LoadConfigFile(config string) ([]byte, bool, error) {
+	return LoadConfigFileWithRetries(config, 0)
+}
+
+func LoadConfigFileWithRetries(config string, urlRetryAttempts int) ([]byte, bool, error) {
 	if fetchURLRe.MatchString(config) {
 		u, err := url.Parse(config)
 		if err != nil {
@@ -704,7 +744,7 @@ func LoadConfigFile(config string) ([]byte, bool, error) {
 
 		switch u.Scheme {
 		case "https", "http":
-			data, err := fetchConfig(u)
+			data, err := fetchConfig(u, urlRetryAttempts)
 			return data, true, err
 		default:
 			return nil, true, fmt.Errorf("scheme %q not supported", u.Scheme)
@@ -725,7 +765,7 @@ func LoadConfigFile(config string) ([]byte, bool, error) {
 	return buffer, false, nil
 }
 
-func fetchConfig(u *url.URL) ([]byte, error) {
+func fetchConfig(u *url.URL, urlRetryAttempts int) ([]byte, error) {
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -737,38 +777,52 @@ func fetchConfig(u *url.URL) ([]byte, error) {
 	req.Header.Add("Accept", "application/toml")
 	req.Header.Set("User-Agent", internal.ProductToken())
 
-	retries := 3
-	for i := 0; i <= retries; i++ {
-		body, err, retry := func() ([]byte, error, bool) {
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return nil, fmt.Errorf("retry %d of %d failed connecting to HTTP config server: %w", i, retries, err), false
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				if i < retries {
-					log.Printf("Error getting HTTP config.  Retry %d of %d in %s.  Status=%d", i, retries, httpLoadConfigRetryInterval, resp.StatusCode)
-					return nil, nil, true
-				}
-				return nil, fmt.Errorf("retry %d of %d failed to retrieve remote config: %s", i, retries, resp.Status), false
-			}
-			body, err := io.ReadAll(resp.Body)
-			return body, err, false
-		}()
+	var totalAttempts int
+	if urlRetryAttempts == -1 {
+		totalAttempts = -1
+		log.Printf("Using unlimited number of attempts to fetch HTTP config")
+	} else if urlRetryAttempts == 0 {
+		totalAttempts = 3
+	} else if urlRetryAttempts > 0 {
+		totalAttempts = urlRetryAttempts
+	} else {
+		return nil, fmt.Errorf("invalid number of attempts: %d", urlRetryAttempts)
+	}
 
-		if err != nil {
+	attempt := 0
+	for {
+		body, err := requestURLConfig(req)
+		if err == nil {
+			return body, nil
+		}
+
+		log.Printf("Error getting HTTP config (attempt %d of %d): %s", attempt, totalAttempts, err)
+		if urlRetryAttempts != -1 && attempt >= totalAttempts {
 			return nil, err
 		}
 
-		if retry {
-			time.Sleep(httpLoadConfigRetryInterval)
-			continue
-		}
+		time.Sleep(httpLoadConfigRetryInterval)
+		attempt++
+	}
+}
 
-		return body, err
+func requestURLConfig(req *http.Request) ([]byte, error) {
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to HTTP config server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch HTTP config: %s", resp.Status)
 	}
 
-	return nil, nil
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return body, nil
 }
 
 // parseConfig loads a TOML configuration from a provided path and
@@ -794,7 +848,7 @@ func (c *Config) addAggregator(name string, table *ast.Table) error {
 		// Handle removed, deprecated plugins
 		if di, deprecated := aggregators.Deprecations[name]; deprecated {
 			printHistoricPluginDeprecationNotice("aggregators", name, di)
-			return fmt.Errorf("plugin deprecated")
+			return errors.New("plugin deprecated")
 		}
 		return fmt.Errorf("undefined but requested aggregator: %s", name)
 	}
@@ -850,7 +904,7 @@ func (c *Config) addSecretStore(name string, table *ast.Table) error {
 		return err
 	}
 
-	logger := models.NewLogger("secretstores", name, "")
+	logger := logging.NewLogger("secretstores", name, "")
 	models.SetLoggerOnPlugin(store, logger)
 
 	if err := store.Init(); err != nil {
@@ -901,9 +955,9 @@ func (c *Config) probeParser(parentcategory string, parentname string, table *as
 	}
 
 	// Try to parse the options to detect if any of them is misspelled
-	// We don't actually use the parser, so no need to check the error.
 	parser := creator("")
-	_ = c.toml.UnmarshalTable(table, parser)
+	//nolint:errcheck // We don't actually use the parser, so no need to check the error.
+	c.toml.UnmarshalTable(table, parser)
 
 	return true
 }
@@ -980,7 +1034,7 @@ func (c *Config) addProcessor(name string, table *ast.Table) error {
 		// Handle removed, deprecated plugins
 		if di, deprecated := processors.Deprecations[name]; deprecated {
 			printHistoricPluginDeprecationNotice("processors", name, di)
-			return fmt.Errorf("plugin deprecated")
+			return errors.New("plugin deprecated")
 		}
 		return fmt.Errorf("undefined but requested processor: %s", name)
 	}
@@ -1109,7 +1163,7 @@ func (c *Config) addOutput(name string, table *ast.Table) error {
 		// Handle removed, deprecated plugins
 		if di, deprecated := outputs.Deprecations[name]; deprecated {
 			printHistoricPluginDeprecationNotice("outputs", name, di)
-			return fmt.Errorf("plugin deprecated")
+			return errors.New("plugin deprecated")
 		}
 		return fmt.Errorf("undefined but requested output: %s", name)
 	}
@@ -1191,7 +1245,7 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 		// Handle removed, deprecated plugins
 		if di, deprecated := inputs.Deprecations[name]; deprecated {
 			printHistoricPluginDeprecationNotice("inputs", name, di)
-			return fmt.Errorf("plugin deprecated")
+			return errors.New("plugin deprecated")
 		}
 
 		return fmt.Errorf("undefined but requested input: %s", name)
@@ -1338,9 +1392,9 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 	var oldPass []string
 	c.getFieldStringSlice(tbl, "pass", &oldPass)
 	if len(oldPass) > 0 {
-		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "pass", telegraf.DeprecationInfo{
+		PrintOptionDeprecationNotice(plugin, "pass", telegraf.DeprecationInfo{
 			Since:     "0.10.4",
-			RemovalIn: "2.0.0",
+			RemovalIn: "1.35.0",
 			Notice:    "use 'fieldinclude' instead",
 		})
 		f.FieldInclude = append(f.FieldInclude, oldPass...)
@@ -1348,9 +1402,9 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 	var oldFieldPass []string
 	c.getFieldStringSlice(tbl, "fieldpass", &oldFieldPass)
 	if len(oldFieldPass) > 0 {
-		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "fieldpass", telegraf.DeprecationInfo{
+		PrintOptionDeprecationNotice(plugin, "fieldpass", telegraf.DeprecationInfo{
 			Since:     "1.29.0",
-			RemovalIn: "2.0.0",
+			RemovalIn: "1.40.0",
 			Notice:    "use 'fieldinclude' instead",
 		})
 		f.FieldInclude = append(f.FieldInclude, oldFieldPass...)
@@ -1360,9 +1414,9 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 	var oldDrop []string
 	c.getFieldStringSlice(tbl, "drop", &oldDrop)
 	if len(oldDrop) > 0 {
-		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "drop", telegraf.DeprecationInfo{
+		PrintOptionDeprecationNotice(plugin, "drop", telegraf.DeprecationInfo{
 			Since:     "0.10.4",
-			RemovalIn: "2.0.0",
+			RemovalIn: "1.35.0",
 			Notice:    "use 'fieldexclude' instead",
 		})
 		f.FieldExclude = append(f.FieldExclude, oldDrop...)
@@ -1370,9 +1424,9 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 	var oldFieldDrop []string
 	c.getFieldStringSlice(tbl, "fielddrop", &oldFieldDrop)
 	if len(oldFieldDrop) > 0 {
-		models.PrintOptionDeprecationNotice(telegraf.Warn, plugin, "fielddrop", telegraf.DeprecationInfo{
+		PrintOptionDeprecationNotice(plugin, "fielddrop", telegraf.DeprecationInfo{
 			Since:     "1.29.0",
-			RemovalIn: "2.0.0",
+			RemovalIn: "1.40.0",
 			Notice:    "use 'fieldexclude' instead",
 		})
 		f.FieldExclude = append(f.FieldExclude, oldFieldDrop...)
@@ -1411,6 +1465,7 @@ func (c *Config) buildInput(name string, tbl *ast.Table) (*models.InputConfig, e
 	c.getFieldDuration(tbl, "precision", &cp.Precision)
 	c.getFieldDuration(tbl, "collection_jitter", &cp.CollectionJitter)
 	c.getFieldDuration(tbl, "collection_offset", &cp.CollectionOffset)
+	c.getFieldString(tbl, "startup_error_behavior", &cp.StartupErrorBehavior)
 	c.getFieldString(tbl, "name_prefix", &cp.MeasurementPrefix)
 	c.getFieldString(tbl, "name_suffix", &cp.MeasurementSuffix)
 	c.getFieldString(tbl, "name_override", &cp.NameOverride)
@@ -1465,6 +1520,7 @@ func (c *Config) buildOutput(name string, tbl *ast.Table) (*models.OutputConfig,
 	c.getFieldString(tbl, "name_override", &oc.NameOverride)
 	c.getFieldString(tbl, "name_suffix", &oc.NameSuffix)
 	c.getFieldString(tbl, "name_prefix", &oc.NamePrefix)
+	c.getFieldString(tbl, "startup_error_behavior", &oc.StartupErrorBehavior)
 
 	if c.hasErrs() {
 		return nil, c.firstErr()
@@ -1489,7 +1545,7 @@ func (c *Config) missingTomlField(_ reflect.Type, key string) error {
 		"name_override", "name_prefix", "name_suffix", "namedrop", "namedrop_separator", "namepass", "namepass_separator",
 		"order",
 		"pass", "period", "precision",
-		"tagdrop", "tagexclude", "taginclude", "tagpass", "tags":
+		"tagdrop", "tagexclude", "taginclude", "tagpass", "tags", "startup_error_behavior":
 
 	// Secret-store options to ignore
 	case "id":

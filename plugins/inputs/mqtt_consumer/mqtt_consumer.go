@@ -48,7 +48,9 @@ type Client interface {
 	AddRoute(topic string, callback mqtt.MessageHandler)
 	Disconnect(quiesce uint)
 }
+
 type ClientFactory func(o *mqtt.ClientOptions) Client
+
 type TopicParsingConfig struct {
 	Topic       string            `toml:"topic"`
 	Measurement string            `toml:"measurement"`
@@ -61,6 +63,7 @@ type TopicParsingConfig struct {
 	SplitFields      []string
 	SplitTopic       []string
 }
+
 type MQTTConsumer struct {
 	Servers                []string             `toml:"servers"`
 	Topics                 []string             `toml:"topics"`
@@ -70,17 +73,13 @@ type MQTTConsumer struct {
 	Password               config.Secret        `toml:"password"`
 	QoS                    int                  `toml:"qos"`
 	ConnectionTimeout      config.Duration      `toml:"connection_timeout"`
-	ClientTrace            bool                 `toml:"client_trace"`
 	MaxUndeliveredMessages int                  `toml:"max_undelivered_messages"`
-	parser                 telegraf.Parser
-
-	MetricBuffer      int `toml:"metric_buffer" deprecated:"0.10.3;1.30.0;option is ignored"`
-	PersistentSession bool
-	ClientID          string `toml:"client_id"`
-
+	PersistentSession      bool                 `toml:"persistent_session"`
+	ClientID               string               `toml:"client_id"`
+	Log                    telegraf.Logger      `toml:"-"`
 	tls.ClientConfig
 
-	Log           telegraf.Logger
+	parser        telegraf.Parser
 	clientFactory ClientFactory
 	client        Client
 	opts          *mqtt.ClientOptions
@@ -105,14 +104,6 @@ func (m *MQTTConsumer) SetParser(parser telegraf.Parser) {
 	m.parser = parser
 }
 func (m *MQTTConsumer) Init() error {
-	if m.ClientTrace {
-		log := &mqttLogger{m.Log}
-		mqtt.ERROR = log
-		mqtt.CRITICAL = log
-		mqtt.WARN = log
-		mqtt.DEBUG = log
-	}
-
 	m.state = Disconnected
 	if m.PersistentSession && m.ClientID == "" {
 		return errors.New("persistent_session requires client_id")
@@ -147,15 +138,15 @@ func (m *MQTTConsumer) Init() error {
 		m.TopicParsing[i].SplitTopic = strings.Split(p.Topic, "/")
 
 		if len(splitMeasurement) != len(m.TopicParsing[i].SplitTopic) && len(splitMeasurement) != 1 {
-			return fmt.Errorf("config error topic parsing: measurement length does not equal topic length")
+			return errors.New("config error topic parsing: measurement length does not equal topic length")
 		}
 
 		if len(m.TopicParsing[i].SplitFields) != len(m.TopicParsing[i].SplitTopic) && p.Fields != "" {
-			return fmt.Errorf("config error topic parsing: fields length does not equal topic length")
+			return errors.New("config error topic parsing: fields length does not equal topic length")
 		}
 
 		if len(m.TopicParsing[i].SplitTags) != len(m.TopicParsing[i].SplitTopic) && p.Tags != "" {
-			return fmt.Errorf("config error topic parsing: tags length does not equal topic length")
+			return errors.New("config error topic parsing: tags length does not equal topic length")
 		}
 	}
 
@@ -275,8 +266,7 @@ func (m *MQTTConsumer) onMessage(_ mqtt.Client, msg mqtt.Message) {
 	if err != nil || len(metrics) == 0 {
 		if len(metrics) == 0 {
 			once.Do(func() {
-				const msg = "No metrics were created from a message. Verify your parser settings. This message is only printed once."
-				m.Log.Debug(msg)
+				m.Log.Debug(internal.NoMetricsCreatedMsg)
 			})
 		}
 
@@ -383,7 +373,7 @@ func (m *MQTTConsumer) createOpts() (*mqtt.ClientOptions, error) {
 		password.Destroy()
 	}
 	if len(m.Servers) == 0 {
-		return opts, fmt.Errorf("could not get host information")
+		return opts, errors.New("could not get host information")
 	}
 	for _, server := range m.Servers {
 		// Preserve support for host:port style servers; deprecated in Telegraf 1.4.4

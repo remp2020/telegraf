@@ -377,13 +377,13 @@ func TestRemoveComments(t *testing.T) {
 func TestURLRetries3Fails(t *testing.T) {
 	httpLoadConfigRetryInterval = 0 * time.Second
 	responseCounter := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		responseCounter++
 	}))
 	defer ts.Close()
 
-	expected := fmt.Sprintf("error loading config file %s: retry 3 of 3 failed to retrieve remote config: 404 Not Found", ts.URL)
+	expected := fmt.Sprintf("error loading config file %s: failed to fetch HTTP config: 404 Not Found", ts.URL)
 
 	c := NewConfig()
 	err := c.LoadConfig(ts.URL)
@@ -395,7 +395,7 @@ func TestURLRetries3Fails(t *testing.T) {
 func TestURLRetries3FailsThenPasses(t *testing.T) {
 	httpLoadConfigRetryInterval = 0 * time.Second
 	responseCounter := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if responseCounter <= 2 {
 			w.WriteHeader(http.StatusNotFound)
 		} else {

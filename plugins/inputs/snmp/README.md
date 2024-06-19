@@ -18,6 +18,15 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `auth_password` and
+`priv_password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## SNMP backend: gosmi and netsnmp
 
 Telegraf has two backends to translate SNMP objects. By default, Telegraf will
@@ -69,6 +78,10 @@ details.
 
   ## Agent host tag; should be set to "source" for consistent usage across plugins
   ##   example: agent_host_tag = "source"
+  ## The default value is inconsistent with other plugins. Users will get a
+  ## warning that can be ignored if this is not changed. However, to have a
+  ## consistent experience, set this to "source" in your config to align with
+  ## other plugins.
   # agent_host_tag = "agent_host"
 
   ## Number of retries to attempt.
@@ -158,11 +171,12 @@ option operate similar to the `snmpget` utility.
     ##   int:         Convert the value into an integer.
     ##   hwaddr:      Convert the value to a MAC address.
     ##   ipaddr:      Convert the value to an IP address.
-    ##   hextoint:X:Y Convert a hex string value to integer. Where X is the Endian
-    ##                and Y the bit size. For example: hextoint:LittleEndian:uint64
-    ##                or hextoint:BigEndian:uint32. Valid options for the Endian are:
-    ##                BigEndian and LittleEndian. For the bit size: uint16, uint32
-    ##                and uint64.
+    ##   hex:         Convert bytes to a hex string.
+    ##   hextoint:X:Y Convert bytes to integer, where X is the endian and Y the
+    ##                bit size. For example: hextoint:LittleEndian:uint64 or
+    ##                hextoint:BigEndian:uint32. Valid options for the endian
+    ##                are: BigEndian and LittleEndian. For the bit size: 
+    ##                uint16, uint32 and uint64.
     ##   enum(1):     Convert the value according to its syntax in the MIB (full).
     ##                (Only supported with gosmi translator)
     ##   enum:        Convert the value according to its syntax in the MIB.

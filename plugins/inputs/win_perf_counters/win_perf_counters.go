@@ -25,7 +25,7 @@ var defaultMaxBufferSize = config.Size(100 * 1024 * 1024)
 
 type WinPerfCounters struct {
 	PrintValid                 bool `toml:"PrintValid"`
-	PreVistaSupport            bool `toml:"PreVistaSupport" deprecated:"1.7.0;determined dynamically"`
+	PreVistaSupport            bool `toml:"PreVistaSupport" deprecated:"1.7.0;1.35.0;determined dynamically"`
 	UsePerfCounterTime         bool
 	Object                     []perfObject
 	CountersRefreshInterval    config.Duration
@@ -457,7 +457,7 @@ func (m *WinPerfCounters) Gather(acc telegraf.Accumulator) error {
 			start := time.Now()
 			err := m.gatherComputerCounters(hostInfo, acc)
 			m.Log.Debugf("Gathering from %s finished in %v", hostInfo.computer, time.Since(start))
-			if err != nil {
+			if err != nil && m.checkError(err) != nil {
 				acc.AddError(fmt.Errorf("error during collecting data on host %q: %w", hostInfo.computer, err))
 			}
 			wg.Done()
@@ -576,6 +576,7 @@ func isKnownCounterDataError(err error) bool {
 		pdhErr.ErrorCode == PdhCalcNegativeDenominator ||
 		pdhErr.ErrorCode == PdhCalcNegativeValue ||
 		pdhErr.ErrorCode == PdhCstatusInvalidData ||
+		pdhErr.ErrorCode == PdhCstatusNoInstance ||
 		pdhErr.ErrorCode == PdhNoData) {
 		return true
 	}
@@ -614,7 +615,7 @@ func (m *WinPerfCounters) Init() error {
 		}
 
 		if found {
-			return fmt.Errorf("wildcards can't be used with LocalizeWildcardsExpansion=false")
+			return errors.New("wildcards can't be used with LocalizeWildcardsExpansion=false")
 		}
 	}
 	return nil

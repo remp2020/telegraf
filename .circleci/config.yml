@@ -8,14 +8,14 @@ executors:
     working_directory: '/go/src/github.com/influxdata/telegraf'
     resource_class: large
     docker:
-      - image: 'quay.io/influxdb/telegraf-ci:1.21.5'
+      - image: 'quay.io/influxdb/telegraf-ci:1.22.4'
     environment:
       GOFLAGS: -p=4
   mac:
     working_directory: '~/go/src/github.com/influxdata/telegraf'
     resource_class: macos.m1.medium.gen1
     macos:
-      xcode: 14.2.0
+      xcode: 15.4.0
     environment:
       HOMEBREW_NO_AUTO_UPDATE: 1
       GOFLAGS: -p=4
@@ -42,6 +42,16 @@ commands:
             equal: [ "386", << parameters.arch >> ]
           steps:
             - run: echo 'export RACE="-race"' >> $BASH_ENV
+      - when:
+          condition:
+            equal: [ windows, << parameters.os >> ]
+          steps:
+            - run: echo 'export CGO_ENABLED=1' >> $BASH_ENV
+      - when:
+          condition:
+            equal: [ darwin, << parameters.os >> ]
+          steps:
+            - run: echo 'export RACE="$RACE -ldflags=-extldflags=-Wl,-ld_classic"' >> $BASH_ENV
       - run: |
           GOARCH=<< parameters.arch >> ./<< parameters.gotestsum >> -- ${RACE} -short ./...
   package-build:
@@ -88,18 +98,18 @@ jobs:
     executor: telegraf-ci
     steps:
       - checkout
-      - check-changed-files-or-halt
       - run: ./scripts/make_docs.sh
+      - check-changed-files-or-halt
       - run: 'make deps'
       - run: 'make tidy'
       - run: 'make check'
       - run: 'make check-deps'
       - run:
           name: "Install golangci-lint"
-          command: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.0
+          command: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.0
       - run:
-          name: "Linux"
-          command: GOGC=20 /go/bin/golangci-lint run --verbose
+          name: "golangci-lint/Linux"
+          command: GOGC=80 GOMEMLIMIT=6656MiB /go/bin/golangci-lint run --verbose
   lint-macos:
     executor: telegraf-ci
     steps:
@@ -107,10 +117,10 @@ jobs:
       - check-changed-files-or-halt
       - run:
           name: "Install golangci-lint"
-          command: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.0
+          command: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.0
       - run:
-          name: "macOS"
-          command: GOGC=20 GOOS=darwin /go/bin/golangci-lint run --verbose --timeout=30m
+          name: "golangci-lint/macOS"
+          command: GOGC=80 GOMEMLIMIT=6656MiB GOOS=darwin /go/bin/golangci-lint run --verbose --timeout=30m
           no_output_timeout: 30m
   lint-windows:
     executor: telegraf-ci
@@ -119,10 +129,10 @@ jobs:
       - check-changed-files-or-halt
       - run:
           name: "Install golangci-lint"
-          command: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.0
+          command: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.0
       - run:
-          name: "Windows"
-          command: GOGC=20 GOOS=windows /go/bin/golangci-lint run --verbose --timeout=30m
+          name: "golangci-lint/Windows"
+          command: GOGC=80 GOMEMLIMIT=6656MiB GOOS=windows /go/bin/golangci-lint run --verbose --timeout=30m
           no_output_timeout: 30m
   test-go-linux:
     executor: telegraf-ci
@@ -170,7 +180,8 @@ jobs:
       - run: git config --system core.longpaths true
       - run: choco feature enable -n allowGlobalConfirmation
       - run: 'sh ./scripts/installgo_windows.sh'
-      - run: choco install mingw --version=12.2.0.03042023
+      - run: choco install mingw
+      - run: echo 'export PATH="$PATH:/c/ProgramData/mingw64/mingw64/bin"' >> $BASH_ENV
       - test-go:
           os: windows
           gotestsum: "gotestsum.exe"
@@ -240,6 +251,16 @@ jobs:
     steps:
       - package-build:
           type: riscv64
+          nightly: << parameters.nightly >>
+  loong64-package:
+    parameters:
+      nightly:
+        type: boolean
+        default: false
+    executor: telegraf-ci
+    steps:
+      - package-build:
+          type: loong64
           nightly: << parameters.nightly >>
   s390x-package:
     parameters:
@@ -345,7 +366,7 @@ jobs:
               --acl public-read
   docker-nightly:
     machine:
-      image: ubuntu-2004:current
+      image: ubuntu-2204:current
     steps:
       - run:
           name: login to quay.io
@@ -371,34 +392,30 @@ jobs:
             docker push quay.io/influxdb/telegraf-nightly:alpine
   amd64-package-test-nightly:
     machine:
-      image: ubuntu-2004:current
+      image: ubuntu-2204:current
     steps:
       - checkout
       - attach_workspace:
           at: '.'
-      - run: sudo apt update && sudo apt install -y snapd
-      - run: sudo snap install lxd
-      - run: sudo lxd init --auto
-      - run: sudo usermod -a -G lxd $(whoami)
-      - run: cd tools/package_lxd_test && go build
-      - run: ./tools/package_lxd_test/package_lxd_test --package $(find ./dist -name "*_amd64.deb")
-      - run: ./tools/package_lxd_test/package_lxd_test --package $(find ./dist -name "*.x86_64.rpm")
+      - run: sh ./scripts/installgo_linux.sh
+      - run: ./scripts/install_incus.sh
+      - run: cd tools/package_incus_test && go build
+      - run: sudo ./tools/package_incus_test/package_incus_test --package $(find ./dist -name "*_amd64.deb")
+      - run: sudo ./tools/package_incus_test/package_incus_test --package $(find ./dist -name "*.x86_64.rpm")
   package-sign-windows:
-    executor:
-        name: win/default
-        shell: powershell.exe
+    machine:
+      image: ubuntu-2204:current
+    resource_class: medium
     steps:
       - checkout
       - check-changed-files-or-halt
       - attach_workspace:
-          at: '/build'
+          at: '.'
       - run:
           name: "Sign Windows Executables"
-          shell: powershell.exe
-          command: |
-            ./scripts/windows-signing.ps1
+          command: ./scripts/sign-windows.sh
       - persist_to_workspace:
-          root: './build'
+          root: '.'
           paths:
             - 'dist'
   package-sign-mac:
@@ -540,7 +557,7 @@ workflows:
               only: /.*/
       - 'windows-package':
           requires:
-            - 'test-go-windows'
+            - 'test-go-linux'
           filters:
             tags:
               only: /.*/
@@ -584,6 +601,15 @@ workflows:
             branches:
               ignore:
                 - master
+            tags:
+              only: /.*/
+      - 'loong64-package':
+          requires:
+            - 'test-go-linux'
+          filters:
+            branches:
+              ignore:
+                - /.*/
             tags:
               only: /.*/
       - 's390x-package':
@@ -656,6 +682,7 @@ workflows:
             - 'amd64-package'
             - 'mipsel-package'
             - 'mips-package'
+            - 'loong64-package'
             - 'darwin-amd64-package'
             - 'darwin-arm64-package'
             - 'windows-package'
@@ -695,6 +722,7 @@ workflows:
             - 'amd64-package'
             - 'mipsel-package'
             - 'mips-package'
+            - 'loong64-package'
             - 'arm64-package'
             - 'armhf-package'
             - 'package-sign-mac'
@@ -716,6 +744,7 @@ workflows:
             - 'arm64-package'
             - 'armhf-package'
             - 'riscv64-package'
+            - 'loong64-package'
             - 'package-sign-mac'
             - 'package-sign-windows'
             - 'package-sign'
@@ -774,6 +803,11 @@ workflows:
           nightly: true
           requires:
             - 'test-go-linux'
+      - 'loong64-package':
+          name: 'loong64-package-nightly'
+          nightly: true
+          requires:
+            - 'test-go-linux'
       - 's390x-package':
           name: 's390x-package-nightly'
           nightly: true
@@ -827,6 +861,7 @@ workflows:
             - 'i386-package-nightly'
             - 'mips-package-nightly'
             - 'mipsel-package-nightly'
+            - 'loong64-package-nightly'
             - 'ppc64le-package-nightly'
             - 'riscv64-package-nightly'
             - 's390x-package-nightly'

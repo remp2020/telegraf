@@ -11,12 +11,15 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
 //go:embed sample.conf
 var sampleConfig string
+
+var once sync.Once
 
 var (
 	defaultMaxUndeliveredMessages = 1000
@@ -37,26 +40,20 @@ func (e natsError) Error() string {
 }
 
 type natsConsumer struct {
-	QueueGroup  string   `toml:"queue_group"`
-	Subjects    []string `toml:"subjects"`
-	Servers     []string `toml:"servers"`
-	Secure      bool     `toml:"secure"`
-	Username    string   `toml:"username"`
-	Password    string   `toml:"password"`
-	Credentials string   `toml:"credentials"`
-	NkeySeed    string   `toml:"nkey_seed"`
-	JsSubjects  []string `toml:"jetstream_subjects"`
-
+	QueueGroup             string          `toml:"queue_group"`
+	Subjects               []string        `toml:"subjects"`
+	Servers                []string        `toml:"servers"`
+	Secure                 bool            `toml:"secure"`
+	Username               string          `toml:"username"`
+	Password               string          `toml:"password"`
+	Credentials            string          `toml:"credentials"`
+	NkeySeed               string          `toml:"nkey_seed"`
+	JsSubjects             []string        `toml:"jetstream_subjects"`
+	PendingMessageLimit    int             `toml:"pending_message_limit"`
+	PendingBytesLimit      int             `toml:"pending_bytes_limit"`
+	MaxUndeliveredMessages int             `toml:"max_undelivered_messages"`
+	Log                    telegraf.Logger `toml:"-"`
 	tls.ClientConfig
-
-	Log telegraf.Logger
-
-	// Client pending limits:
-	PendingMessageLimit int `toml:"pending_message_limit"`
-	PendingBytesLimit   int `toml:"pending_bytes_limit"`
-
-	MaxUndeliveredMessages int `toml:"max_undelivered_messages"`
-	MetricBuffer           int `toml:"metric_buffer" deprecated:"0.10.3;1.30.0;option is ignored"`
 
 	conn   *nats.Conn
 	jsConn nats.JetStreamContext
@@ -225,6 +222,11 @@ func (n *natsConsumer) receiver(ctx context.Context) {
 					n.Log.Errorf("Subject: %s, error: %s", msg.Subject, err.Error())
 					<-sem
 					continue
+				}
+				if len(metrics) == 0 {
+					once.Do(func() {
+						n.Log.Debug(internal.NoMetricsCreatedMsg)
+					})
 				}
 				for _, m := range metrics {
 					m.AddTag("subject", msg.Subject)

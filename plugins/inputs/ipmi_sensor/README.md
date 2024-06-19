@@ -23,13 +23,6 @@ command to collect remote host sensor stats:
 ipmitool -I lan -H SERVER -U USERID -P PASSW0RD sdr
 ```
 
-Any of the following parameters will be added to the aformentioned query if they're configured:
-```
--y hex_key -L privilege
-```
-
-### Configuration
-Any of the following parameters will be added to the aformentioned query if
 Any of the following parameters will be added to the aforementioned query if
 they're configured:
 

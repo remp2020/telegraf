@@ -26,9 +26,9 @@ type message struct {
 }
 
 type MQTT struct {
-	TopicPrefix     string          `toml:"topic_prefix" deprecated:"1.25.0;use 'topic' instead"`
+	TopicPrefix     string          `toml:"topic_prefix" deprecated:"1.25.0;1.35.0;use 'topic' instead"`
 	Topic           string          `toml:"topic"`
-	BatchMessage    bool            `toml:"batch" deprecated:"1.25.2;use 'layout = \"batch\"' instead"`
+	BatchMessage    bool            `toml:"batch" deprecated:"1.25.2;1.35.0;use 'layout = \"batch\"' instead"`
 	Layout          string          `toml:"layout"`
 	HomieDeviceName string          `toml:"homie_device_name"`
 	HomieNodeID     string          `toml:"homie_node_id"`
@@ -167,6 +167,11 @@ func (m *MQTT) Write(metrics []telegraf.Metric) error {
 
 	for _, msg := range topicMessages {
 		if err := m.client.Publish(msg.topic, msg.payload); err != nil {
+			// We do receive a timeout error if the remote broker is down,
+			// so let's retry the metrics in this case and drop them otherwise.
+			if errors.Is(err, internal.ErrTimeout) {
+				return fmt.Errorf("could not publish message to MQTT server: %w", err)
+			}
 			m.Log.Warnf("Could not publish message to MQTT server: %v", err)
 		}
 	}

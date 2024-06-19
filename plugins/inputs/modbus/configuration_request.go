@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"hash/maphash"
+	"math"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/models"
+	"github.com/influxdata/telegraf/config"
 )
 
 //go:embed sample_request.conf
@@ -46,6 +47,13 @@ func (c *ConfigurationPerRequest) SampleConfigPart() string {
 }
 
 func (c *ConfigurationPerRequest) Check() error {
+	switch c.workarounds.StringRegisterLocation {
+	case "", "both", "lower", "upper":
+		// Do nothing as those are valid
+	default:
+		return fmt.Errorf("invalid 'string_register_location' %q", c.workarounds.StringRegisterLocation)
+	}
+
 	seed := maphash.MakeSeed()
 	seenFields := make(map[uint64]bool)
 
@@ -71,8 +79,7 @@ func (c *ConfigurationPerRequest) Check() error {
 		switch def.Optimization {
 		case "", "none", "shrink", "rearrange":
 		case "aggressive":
-			models.PrintOptionValueDeprecationNotice(
-				telegraf.Warn,
+			config.PrintOptionValueDeprecationNotice(
 				"inputs.modbus",
 				"optimization",
 				"aggressive",
@@ -288,6 +295,11 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 		}
 	}
 
+	// Check for address overflow
+	if def.Address > math.MaxUint16-fieldLength {
+		return field{}, fmt.Errorf("%w for field %q", errAddressOverflow, def.Name)
+	}
+
 	// Initialize the field
 	f := field{
 		measurement: def.Measurement,
@@ -349,7 +361,7 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 		return field{}, err
 	}
 
-	f.converter, err = determineConverter(inType, order, outType, def.Scale)
+	f.converter, err = determineConverter(inType, order, outType, def.Scale, c.workarounds.StringRegisterLocation)
 	if err != nil {
 		return field{}, err
 	}

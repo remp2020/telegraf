@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -44,11 +45,11 @@ func (n *Vault) Init() error {
 	}
 
 	if n.TokenFile == "" && n.Token == "" {
-		return fmt.Errorf("token missing")
+		return errors.New("token missing")
 	}
 
 	if n.TokenFile != "" && n.Token != "" {
-		return fmt.Errorf("both token_file and token are set")
+		return errors.New("both token_file and token are set")
 	}
 
 	if n.TokenFile != "" {
@@ -69,6 +70,10 @@ func (n *Vault) Init() error {
 	return nil
 }
 
+func (n *Vault) Start(_ telegraf.Accumulator) error {
+	return nil
+}
+
 // Gather, collects metrics from Vault endpoint
 func (n *Vault) Gather(acc telegraf.Accumulator) error {
 	sysMetrics, err := n.loadJSON(n.URL + "/v1/sys/metrics")
@@ -77,6 +82,12 @@ func (n *Vault) Gather(acc telegraf.Accumulator) error {
 	}
 
 	return buildVaultMetrics(acc, sysMetrics)
+}
+
+func (n *Vault) Stop() {
+	if n.client != nil {
+		n.client.CloseIdleConnections()
+	}
 }
 
 func (n *Vault) loadJSON(url string) (*SysMetrics, error) {

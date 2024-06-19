@@ -20,7 +20,6 @@ import (
 type Elasticsearch struct {
 	FieldWhitelist      []string `toml:"field_whitelist"`
 	IndexName           string
-	TypeName            string   `toml:"type_name"`
 	IDField             string   `toml:"id_field"`
 	UpdateQueryField    string   `toml:"update_query_field"`
 	UpdatedFields       []string `toml:"updated_fields"`
@@ -214,13 +213,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 		// to send the metric to the correct time-based index
 		indexName := a.GetIndexName(indexBase, metric.Time(), a.TagKeys, metric.Tags())
 
-		var typeName string
-		if a.TypeName != "" {
-			typeName = a.TypeName
-		} else {
-			typeName = "_doc"
-		}
-
 		m := make(map[string]interface{})
 
 		m["time"] = metric.Time().Format(time.RFC3339)
@@ -280,7 +272,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			updateRequest := elastic.
 				NewBulkUpdateRequest().
 				Index(indexName).
-				Type(typeName).
 				Id(idValue).
 				Script(elastic.NewScript(scriptSource).Lang("painless").Params(scriptParams)).
 				Upsert(m)
@@ -308,7 +299,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 		} else {
 			indexRequest := elastic.NewBulkIndexRequest().
 				Index(indexName).
-				Type(typeName).
 				Doc(m)
 
 			if a.IDField != "" {
@@ -443,7 +433,7 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	return nil
 }
 
-//GetTagKeys returns list of tag keys.
+// GetTagKeys returns list of tag keys.
 func (a *Elasticsearch) GetTagKeys(indexName string) (string, []string) {
 
 	tagKeys := []string{}

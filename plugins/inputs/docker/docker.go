@@ -17,6 +17,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/docker/docker/api/types"
+	typeContainer "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
 
@@ -35,14 +36,14 @@ var sampleConfig string
 // Docker object
 type Docker struct {
 	Endpoint       string
-	ContainerNames []string `toml:"container_names" deprecated:"1.4.0;use 'container_name_include' instead"`
+	ContainerNames []string `toml:"container_names" deprecated:"1.4.0;1.35.0;use 'container_name_include' instead"`
 
 	GatherServices bool `toml:"gather_services"`
 
 	Timeout          config.Duration
-	PerDevice        bool     `toml:"perdevice" deprecated:"1.18.0;use 'perdevice_include' instead"`
+	PerDevice        bool     `toml:"perdevice" deprecated:"1.18.0;1.35.0;use 'perdevice_include' instead"`
 	PerDeviceInclude []string `toml:"perdevice_include"`
-	Total            bool     `toml:"total" deprecated:"1.18.0;use 'total_include' instead"`
+	Total            bool     `toml:"total" deprecated:"1.18.0;1.35.0;use 'total_include' instead"`
 	TotalInclude     []string `toml:"total_include"`
 	TagEnvironment   []string `toml:"tag_env"`
 	LabelInclude     []string `toml:"docker_label_include"`
@@ -217,7 +218,7 @@ func (d *Docker) Gather(acc telegraf.Accumulator) error {
 	}
 
 	// List containers
-	opts := types.ContainerListOptions{
+	opts := typeContainer.ListOptions{
 		Filters: filterArgs,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(d.Timeout))
@@ -791,7 +792,7 @@ func getDeviceStatMap(blkioStats types.BlkioStats) map[string]map[string]interfa
 			deviceStatMap[device] = make(map[string]interface{})
 		}
 
-		field := fmt.Sprintf("io_service_bytes_recursive_%s", strings.ToLower(metric.Op))
+		field := "io_service_bytes_recursive_" + strings.ToLower(metric.Op)
 		deviceStatMap[device][field] = metric.Value
 	}
 
@@ -802,31 +803,31 @@ func getDeviceStatMap(blkioStats types.BlkioStats) map[string]map[string]interfa
 			deviceStatMap[device] = make(map[string]interface{})
 		}
 
-		field := fmt.Sprintf("io_serviced_recursive_%s", strings.ToLower(metric.Op))
+		field := "io_serviced_recursive_" + strings.ToLower(metric.Op)
 		deviceStatMap[device][field] = metric.Value
 	}
 
 	for _, metric := range blkioStats.IoQueuedRecursive {
 		device := fmt.Sprintf("%d:%d", metric.Major, metric.Minor)
-		field := fmt.Sprintf("io_queue_recursive_%s", strings.ToLower(metric.Op))
+		field := "io_queue_recursive_" + strings.ToLower(metric.Op)
 		deviceStatMap[device][field] = metric.Value
 	}
 
 	for _, metric := range blkioStats.IoServiceTimeRecursive {
 		device := fmt.Sprintf("%d:%d", metric.Major, metric.Minor)
-		field := fmt.Sprintf("io_service_time_recursive_%s", strings.ToLower(metric.Op))
+		field := "io_service_time_recursive_" + strings.ToLower(metric.Op)
 		deviceStatMap[device][field] = metric.Value
 	}
 
 	for _, metric := range blkioStats.IoWaitTimeRecursive {
 		device := fmt.Sprintf("%d:%d", metric.Major, metric.Minor)
-		field := fmt.Sprintf("io_wait_time_%s", strings.ToLower(metric.Op))
+		field := "io_wait_time_" + strings.ToLower(metric.Op)
 		deviceStatMap[device][field] = metric.Value
 	}
 
 	for _, metric := range blkioStats.IoMergedRecursive {
 		device := fmt.Sprintf("%d:%d", metric.Major, metric.Minor)
-		field := fmt.Sprintf("io_merged_recursive_%s", strings.ToLower(metric.Op))
+		field := "io_merged_recursive_" + strings.ToLower(metric.Op)
 		deviceStatMap[device][field] = metric.Value
 	}
 

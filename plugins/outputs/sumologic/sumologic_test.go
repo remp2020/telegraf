@@ -67,7 +67,7 @@ func TestMethod(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -118,7 +118,7 @@ func TestStatusCode(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	pluginFn := func() *SumoLogic {
@@ -169,7 +169,7 @@ func TestStatusCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.statusCode)
 			})
 
@@ -271,7 +271,7 @@ func TestContentType(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+			u, err := url.Parse("http://" + ts.Listener.Addr().String())
 			require.NoError(t, err)
 
 			plugin := tt.plugin()
@@ -293,7 +293,7 @@ func TestContentEncodingGzip(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -347,7 +347,7 @@ func TestDefaultUserAgent(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	t.Run("default-user-agent", func(t *testing.T) {
@@ -357,8 +357,8 @@ func TestDefaultUserAgent(t *testing.T) {
 		})
 
 		plugin := &SumoLogic{
-			URL:               u.String(),
-			MaxRequstBodySize: Default().MaxRequstBodySize,
+			URL:                u.String(),
+			MaxRequestBodySize: Default().MaxRequestBodySize,
 		}
 
 		serializer := &carbon2.Serializer{
@@ -466,7 +466,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	testcases := []struct {
@@ -508,7 +508,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 				s.URL = u.String()
 				// getMetrics returns metrics that serialized (using carbon2),
 				// uncompressed size is 43750B
-				s.MaxRequstBodySize = 43_749
+				s.MaxRequestBodySize = 43_749
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -521,7 +521,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 			plugin: func() *SumoLogic {
 				s := Default()
 				s.URL = u.String()
-				s.MaxRequstBodySize = 10_000
+				s.MaxRequestBodySize = 10_000
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -534,7 +534,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 			plugin: func() *SumoLogic {
 				s := Default()
 				s.URL = u.String()
-				s.MaxRequstBodySize = 5_000
+				s.MaxRequestBodySize = 5_000
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -547,7 +547,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 			plugin: func() *SumoLogic {
 				s := Default()
 				s.URL = u.String()
-				s.MaxRequstBodySize = 2_500
+				s.MaxRequestBodySize = 2_500
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -560,7 +560,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 			plugin: func() *SumoLogic {
 				s := Default()
 				s.URL = u.String()
-				s.MaxRequstBodySize = 1_000
+				s.MaxRequestBodySize = 1_000
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -573,7 +573,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 			plugin: func() *SumoLogic {
 				s := Default()
 				s.URL = u.String()
-				s.MaxRequstBodySize = 500
+				s.MaxRequestBodySize = 500
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -586,7 +586,7 @@ func TestMaxRequestBodySize(t *testing.T) {
 			plugin: func() *SumoLogic {
 				s := Default()
 				s.URL = u.String()
-				s.MaxRequstBodySize = 300
+				s.MaxRequestBodySize = 300
 				return s
 			},
 			metrics:                  getMetrics(),
@@ -640,7 +640,7 @@ func TestTryingToSendEmptyMetricsDoesntFail(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	metrics := make([]telegraf.Metric, 0)

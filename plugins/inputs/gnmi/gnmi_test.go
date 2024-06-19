@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -74,8 +73,8 @@ func TestWaitError(t *testing.T) {
 
 	grpcServer := grpc.NewServer()
 	gnmiServer := &MockServer{
-		SubscribeF: func(server gnmiLib.GNMI_SubscribeServer) error {
-			return fmt.Errorf("testerror")
+		SubscribeF: func(gnmiLib.GNMI_SubscribeServer) error {
+			return errors.New("testerror")
 		},
 		GRPCServer: grpcServer,
 	}
@@ -141,8 +140,8 @@ func TestUsernamePassword(t *testing.T) {
 	plugin := &GNMI{
 		Log:       testutil.Logger{},
 		Addresses: []string{listener.Addr().String()},
-		Username:  "theusername",
-		Password:  "thepassword",
+		Username:  config.NewSecret([]byte("theusername")),
+		Password:  config.NewSecret([]byte("thepassword")),
 		Encoding:  "proto",
 		Redial:    config.Duration(1 * time.Second),
 	}
@@ -1211,7 +1210,7 @@ func TestCases(t *testing.T) {
 			require.Eventually(t,
 				func() bool {
 					return acc.NMetrics() >= uint64(len(expected))
-				}, 1*time.Second, 100*time.Millisecond)
+				}, 15*time.Second, 100*time.Millisecond)
 			plugin.Stop()
 			grpcServer.Stop()
 			wg.Wait()

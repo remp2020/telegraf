@@ -7,6 +7,7 @@ import (
 	"compress/zlib"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -20,12 +21,15 @@ import (
 	"github.com/harlow/kinesis-consumer/store/ddb"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal"
 	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
 //go:embed sample.conf
 var sampleConfig string
+
+var once sync.Once
 
 type (
 	DynamoDB struct {
@@ -179,6 +183,12 @@ func (k *KinesisConsumer) onMessage(acc telegraf.TrackingAccumulator, r *consume
 		return err
 	}
 
+	if len(metrics) == 0 {
+		once.Do(func() {
+			k.Log.Debug(internal.NoMetricsCreatedMsg)
+		})
+	}
+
 	k.recordsTex.Lock()
 	id := acc.AddTrackingMetricGroup(metrics)
 	k.records[id] = *r.SequenceNumber
@@ -261,7 +271,7 @@ func (k *KinesisConsumer) GetCheckpoint(streamName, shardID string) (string, err
 // Set wraps the checkpoint's SetCheckpoint function (called by consumer library)
 func (k *KinesisConsumer) SetCheckpoint(streamName, shardID, sequenceNumber string) error {
 	if sequenceNumber == "" {
-		return fmt.Errorf("sequence number should not be empty")
+		return errors.New("sequence number should not be empty")
 	}
 
 	k.checkpointTex.Lock()

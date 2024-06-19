@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -21,6 +22,8 @@ import (
 
 //go:embed sample.conf
 var sampleConfig string
+
+var once sync.Once
 
 type empty struct{}
 type semaphore chan empty
@@ -189,6 +192,11 @@ func (ps *PubSub) onMessage(ctx context.Context, msg message) error {
 
 	if len(metrics) == 0 {
 		msg.Ack()
+
+		once.Do(func() {
+			ps.Log.Debug(internal.NoMetricsCreatedMsg)
+		})
+
 		return nil
 	}
 
@@ -309,11 +317,11 @@ func (ps *PubSub) getGCPSubscription(subID string) (subscription, error) {
 
 func (ps *PubSub) Init() error {
 	if ps.Subscription == "" {
-		return fmt.Errorf(`"subscription" is required`)
+		return errors.New(`"subscription" is required`)
 	}
 
 	if ps.Project == "" {
-		return fmt.Errorf(`"project" is required`)
+		return errors.New(`"project" is required`)
 	}
 
 	switch ps.ContentEncoding {

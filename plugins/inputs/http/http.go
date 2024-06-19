@@ -5,6 +5,7 @@ package http
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
+var once sync.Once
+
 type HTTP struct {
 	URLs            []string `toml:"urls"`
 	Method          string   `toml:"method"`
@@ -33,13 +36,13 @@ type HTTP struct {
 	Password config.Secret `toml:"password"`
 
 	// Bearer authentication
-	BearerToken string        `toml:"bearer_token" deprecated:"1.28.0;use 'token_file' instead"`
+	BearerToken string        `toml:"bearer_token" deprecated:"1.28.0;1.35.0;use 'token_file' instead"`
 	Token       config.Secret `toml:"token"`
 	TokenFile   string        `toml:"token_file"`
 
-	Headers            map[string]string `toml:"headers"`
-	SuccessStatusCodes []int             `toml:"success_status_codes"`
-	Log                telegraf.Logger   `toml:"-"`
+	Headers            map[string]*config.Secret `toml:"headers"`
+	SuccessStatusCodes []int                     `toml:"success_status_codes"`
+	Log                telegraf.Logger           `toml:"-"`
 
 	httpconfig.HTTPClientConfig
 
@@ -54,14 +57,14 @@ func (*HTTP) SampleConfig() string {
 func (h *HTTP) Init() error {
 	// For backward compatibility
 	if h.TokenFile != "" && h.BearerToken != "" && h.TokenFile != h.BearerToken {
-		return fmt.Errorf("conflicting settings for 'bearer_token' and 'token_file'")
+		return errors.New("conflicting settings for 'bearer_token' and 'token_file'")
 	} else if h.TokenFile == "" && h.BearerToken != "" {
 		h.TokenFile = h.BearerToken
 	}
 
 	// We cannot use multiple sources for tokens
 	if h.TokenFile != "" && !h.Token.Empty() {
-		return fmt.Errorf("either use 'token_file' or 'token' not both")
+		return errors.New("either use 'token_file' or 'token' not both")
 	}
 
 	// Create the client
@@ -76,6 +79,10 @@ func (h *HTTP) Init() error {
 	if len(h.SuccessStatusCodes) == 0 {
 		h.SuccessStatusCodes = []int{200}
 	}
+	return nil
+}
+
+func (h *HTTP) Start(_ telegraf.Accumulator) error {
 	return nil
 }
 
@@ -96,6 +103,12 @@ func (h *HTTP) Gather(acc telegraf.Accumulator) error {
 	wg.Wait()
 
 	return nil
+}
+
+func (h *HTTP) Stop() {
+	if h.client != nil {
+		h.client.CloseIdleConnections()
+	}
 }
 
 // SetParserFunc takes the data_format from the config and finds the right parser for that format
@@ -141,11 +154,19 @@ func (h *HTTP) gatherURL(acc telegraf.Accumulator, url string) error {
 	}
 
 	for k, v := range h.Headers {
-		if strings.EqualFold(k, "host") {
-			request.Host = v
-		} else {
-			request.Header.Add(k, v)
+		secret, err := v.Get()
+		if err != nil {
+			return err
 		}
+
+		headerVal := secret.String()
+		if strings.EqualFold(k, "host") {
+			request.Host = headerVal
+		} else {
+			request.Header.Add(k, headerVal)
+		}
+
+		secret.Destroy()
 	}
 
 	if err := h.setRequestAuth(request); err != nil {
@@ -186,6 +207,12 @@ func (h *HTTP) gatherURL(acc telegraf.Accumulator, url string) error {
 	metrics, err := parser.Parse(b)
 	if err != nil {
 		return fmt.Errorf("parsing metrics failed: %w", err)
+	}
+
+	if len(metrics) == 0 {
+		once.Do(func() {
+			h.Log.Debug(internal.NoMetricsCreatedMsg)
+		})
 	}
 
 	for _, metric := range metrics {

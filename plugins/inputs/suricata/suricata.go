@@ -305,7 +305,7 @@ func (s *Suricata) parseGeneric(acc telegraf.Accumulator, result map[string]inte
 	}
 	for _, key := range []string{"src_port", "dest_port"} {
 		if val, ok := result[key]; ok {
-			if convertedVal, err := internal.ToInt64(val); err == nil {
+			if convertedVal, err := internal.ToInt64(val); err == nil || errors.Is(err, internal.ErrOutOfRange) {
 				fields[key] = convertedVal
 			}
 		}
@@ -336,7 +336,7 @@ func (s *Suricata) parse(acc telegraf.Accumulator, sjson []byte) error {
 		}
 	} else {
 		s.Log.Debugf("Invalid input without 'stats' or 'alert' object: %v", result)
-		return fmt.Errorf("input does not contain 'stats' or 'alert' object")
+		return errors.New("input does not contain 'stats' or 'alert' object")
 	}
 
 	return nil

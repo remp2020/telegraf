@@ -1,10 +1,5 @@
 # InfluxDB Input Plugin
 
-The InfluxDB plugin will collect metrics on the given InfluxDB servers. Read our 
-[documentation](https://docs.influxdata.com/platform/monitoring/influxdata-platform/tools/measurements-internal/) 
-for detailed information about `influxdb` metrics. 
-The InfluxDB plugin will collect metrics on the given InfluxDB servers. Read our
-[documentation][1] for detailed information about `influxdb` metrics.
 The InfluxDB plugin will collect metrics on the given InfluxDB v1 servers from
 the `/debug/vars` endpoint. Read the [documentation][1] for detailed
 information about `influxdb` metrics. For InfluxDB v2 and the `metrics`

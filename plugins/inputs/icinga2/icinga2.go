@@ -25,7 +25,7 @@ type Icinga2 struct {
 	Server          string
 	Objects         []string
 	Status          []string
-	ObjectType      string `toml:"object_type" deprecated:"1.26.0;2.0.0;use 'objects' instead"`
+	ObjectType      string `toml:"object_type" deprecated:"1.26.0;1.35.0;use 'objects' instead"`
 	Username        string
 	Password        string
 	ResponseTimeout config.Duration
@@ -133,7 +133,7 @@ func (i *Icinga2) gatherObjects(acc telegraf.Accumulator, checks ResultObject, o
 			"port":          serverURL.Port(),
 		}
 
-		acc.AddFields(fmt.Sprintf("icinga2_%s", objectType), fields, tags)
+		acc.AddFields("icinga2_"+objectType, fields, tags)
 	}
 }
 
