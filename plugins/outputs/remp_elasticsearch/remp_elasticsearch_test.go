@@ -26,6 +26,7 @@ func TestConnectAndWrite(t *testing.T) {
 		TemplateName:        "telegraf",
 		OverwriteTemplate:   false,
 		HealthCheckInterval: config.Duration(time.Second * 10),
+		Log:                 testutil.Logger{},
 	}
 
 	// Verify that we can connect to Elasticsearch

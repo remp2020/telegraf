@@ -385,51 +385,48 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 					}
 				},
 				"mappings" : {
-					"_default_" : {
-						"_all": { "enabled": false	  },
-						"properties" : {
-							"@timestamp" : { "type" : "date" },
-							"measurement_name" : { "type" : "keyword" }
-						},
-						"dynamic_templates": [
-							{
-								"tags": {
-									"match_mapping_type": "string",
-									"path_match": "tag.*",
-									"mapping": {
-										"ignore_above": 512,
-										"type": "keyword"
-									}
-								}
-							},
-							{
-								"metrics_long": {
-									"match_mapping_type": "long",
-									"mapping": {
-										"type": "float",
-										"index": false
-									}
-								}
-							},
-							{
-								"metrics_double": {
-									"match_mapping_type": "double",
-									"mapping": {
-										"type": "float",
-										"index": false
-									}
-								}
-							},
-							{
-								"text_fields": {
-									"match": "*",
-									"mapping": {
-										"norms": false
-									}
+					"properties" : {
+						"@timestamp" : { "type" : "date" },
+						"measurement_name" : { "type" : "keyword" }
+					},
+					"dynamic_templates": [
+						{
+							"tags": {
+								"match_mapping_type": "string",
+								"path_match": "tag.*",
+								"mapping": {
+									"ignore_above": 512,
+									"type": "keyword"
 								}
 							}
-						]
-					}
+						},
+						{
+							"metrics_long": {
+								"match_mapping_type": "long",
+								"mapping": {
+									"type": "float",
+									"index": false
+								}
+							}
+						},
+						{
+							"metrics_double": {
+								"match_mapping_type": "double",
+								"mapping": {
+									"type": "float",
+									"index": false
+								}
+							}
+						},
+						{
+							"text_fields": {
+								"match": "*",
+								"mapping": {
+									"norms": false
+								}
+							}
+						}
+					]
 				}
 			}`, templatePattern+"*")
 		_, errCreateTemplate := a.Client.IndexPutTemplate(a.TemplateName).BodyString(tmpl).Do(ctx)
