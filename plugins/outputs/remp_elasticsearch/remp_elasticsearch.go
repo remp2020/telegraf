@@ -24,6 +24,7 @@ type Elasticsearch struct {
 	UpdateQueryField    string   `toml:"update_query_field"`
 	UpdatedFields       []string `toml:"updated_fields"`
 	IncrementedFields   []string `toml:"incremented_fields"`
+	AddedFields         []string `toml:"added_fields"`
 	DefaultTagValue     string
 	TagKeys             []string
 	Username            string
@@ -106,6 +107,10 @@ var sampleConfig = `
   # updated_fields = ["timespent"]
   ## List of fields to be incremented (implicitly triggers update call instead index)
   # incremented_fields = ["clicks"]
+  ## List of fields to be added to an array (implicitly triggers update call instead index)
+  ## The field name can be a nested path, e.g., "data.main_block.ids".
+  ## The script will ensure the path and array exist before adding the value.
+  # added_fields = ["data.main_block.ids"]
   ## List of fields to be included in index - mimics taginclude which doesn't work
   ## in remp_elastic as REMP tracks JSON-encoded string to preserve types.
   ## These fields are protected and don't need to be whitelisted:
@@ -296,6 +301,14 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			if !ok {
 				continue
 			}
+		} else if len(a.AddedFields) > 0 {
+			ok, err := a.handleAddedFields(bulkRequest, indexName, m)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
 		} else {
 			indexRequest := elastic.NewBulkIndexRequest().
 				Index(indexName).
@@ -333,7 +346,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 	}
 
 	return nil
-
 }
 
 func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
@@ -544,6 +556,74 @@ func (a *Elasticsearch) filterMetric(metric map[string]interface{}) map[string]i
 	}
 
 	return metric
+}
+
+func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, indexName string, m map[string]interface{}) (bool, error) {
+	if a.IDField == "" {
+		return false, fmt.Errorf("unable to update Elasticsearch records, no explicit ID field provided")
+	}
+	idValue, ok := m[a.IDField].(string)
+	if !ok {
+		a.Log.Errorf("Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+		a.Log.Infof("Metric content: %#v", m)
+		return false, nil // Skip this metric
+	}
+
+	// Define the reusable Painless script source
+	painlessScriptSource := `
+      def parts = params.field_path.splitOnToken('.'); 
+      def current = ctx._source; 
+      // Ensure parent objects exist
+      for (int i = 0; i < parts.length - 1; i++) { 
+        if (current[parts[i]] == null) { 
+          current[parts[i]] = [:]; 
+        } 
+        // Check if the path element is actually a map, handle error if not
+        if (!(current[parts[i]] instanceof Map)) {
+             // Log or throw error - cannot create nested field in a non-map object
+             // For now, we stop processing this field path
+             return; // Or handle appropriately
+        }
+        current = current[parts[i]]; 
+      } 
+      def leaf_key = parts[parts.length - 1]; 
+      // Ensure target array exists
+      if (current[leaf_key] == null) { 
+        current[leaf_key] = []; 
+      } 
+
+      current[leaf_key].add(params.value_to_add); 
+    `
+
+	for _, fieldPath := range a.AddedFields {
+		fieldValue, valueExists := m[fieldPath]
+		// Handle cases where the field might be nested (e.g., "data.main_block.ids")
+		// The current logic assumes the field name in AddedFields directly maps to a top-level key in 'm'.
+		// If nested values need to be extracted from 'm', more complex logic is needed here.
+		// For now, we assume 'fieldPath' corresponds to a key in 'm' whose value needs to be added.
+		if !valueExists {
+			a.Log.Debugf("Field '%s' not found in metric data, skipping add operation.", fieldPath)
+			continue // Skip if the field to add doesn't exist in the current metric
+		}
+
+		scriptParams := map[string]interface{}{
+			"field_path":   fieldPath,
+			"value_to_add": fieldValue,
+		}
+
+		// Use the correct indexName passed from Write, which might be time/tag-based
+		updateRequest := elastic.
+			NewBulkUpdateRequest().
+			Index(indexName).
+			Id(idValue).
+			Script(elastic.NewScript(painlessScriptSource).Lang("painless").Params(scriptParams)).
+			Upsert(m) // Provide the full document for initial creation if the doc doesn't exist
+
+		bulkRequest.Add(updateRequest)
+	}
+
+	// The actual bulkRequest.Do(ctx) happens outside this function in Write()
+	return true, nil
 }
 
 func init() {
