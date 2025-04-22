@@ -76,6 +76,7 @@ func TestTemplateManagement(t *testing.T) {
 		ManageTemplate:    true,
 		TemplateName:      "telegraf",
 		OverwriteTemplate: true,
+		Log:               testutil.Logger{},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.Timeout))
