@@ -102,6 +102,7 @@ func TestTemplateInvalidIndexPattern(t *testing.T) {
 		ManageTemplate:    true,
 		TemplateName:      "telegraf",
 		OverwriteTemplate: true,
+		Log:               testutil.Logger{},
 	}
 
 	err := e.Connect()
@@ -171,6 +172,7 @@ func TestGetTagKeys(t *testing.T) {
 func TestGetIndexName(t *testing.T) {
 	e := &Elasticsearch{
 		DefaultTagValue: "none",
+		Log:             testutil.Logger{},
 	}
 
 	var tests = []struct {
