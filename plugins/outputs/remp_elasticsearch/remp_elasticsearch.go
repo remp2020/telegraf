@@ -566,46 +566,24 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
 		return false, nil // Skip this metric
 	}
 
-	// Define the reusable Painless script source
+	// Define the reusable Painless script source for simple array adds
 	painlessScriptSource := `
-      def parts = params.field_path.splitOnToken('.'); 
-      def current = ctx._source; 
-      // Ensure parent objects exist
-      for (int i = 0; i < parts.length - 1; i++) { 
-        if (current[parts[i]] == null) { 
-          current[parts[i]] = [:]; 
-        } 
-        // Check if the path element is actually a map, handle error if not
-        if (!(current[parts[i]] instanceof Map)) {
-             // Log or throw error - cannot create nested field in a non-map object
-             // For now, we stop processing this field path
-             return; // Or handle appropriately
-        }
-        current = current[parts[i]]; 
-      } 
-      def leaf_key = parts[parts.length - 1]; 
-      // Ensure target array exists
-      if (current[leaf_key] == null) { 
-        current[leaf_key] = []; 
-      } 
-
-      current[leaf_key].add(params.value_to_add); 
+      if (ctx._source[params.field_to_update] == null) {
+        ctx._source[params.field_to_update] = [];
+      }
+      ctx._source[params.field_to_update].add(params.value_to_add);
     `
 
-	for _, fieldPath := range a.AddedFields {
-		fieldValue, valueExists := m[fieldPath]
-		// Handle cases where the field might be nested (e.g., "data.main_block.ids")
-		// The current logic assumes the field name in AddedFields directly maps to a top-level key in 'm'.
-		// If nested values need to be extracted from 'm', more complex logic is needed here.
-		// For now, we assume 'fieldPath' corresponds to a key in 'm' whose value needs to be added.
+	for _, fieldName := range a.AddedFields {
+		fieldValue, valueExists := m[fieldName]
 		if !valueExists {
-			a.Log.Debugf("Field '%s' not found in metric data, skipping add operation.", fieldPath)
+			a.Log.Debugf("Field '%s' not found in metric data, skipping add operation.", fieldName)
 			continue // Skip if the field to add doesn't exist in the current metric
 		}
 
 		scriptParams := map[string]interface{}{
-			"field_path":   fieldPath,
-			"value_to_add": fieldValue,
+			"field_to_update": fieldName,
+			"value_to_add":    fieldValue,
 		}
 
 		// Use the correct indexName passed from Write, which might be time/tag-based
