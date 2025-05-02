@@ -566,12 +566,11 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
 		return false, nil // Skip this metric
 	}
 
-	// Define the reusable Painless script source for simple array adds
 	painlessScriptSource := `
       if (ctx._source[params.field_to_update] == null) {
         ctx._source[params.field_to_update] = [];
       }
-      ctx._source[params.field_to_update].add(params.value_to_add);
+      ctx._source[params.field_to_update].addAll(params.value_to_add);
     `
 
 	for _, fieldName := range a.AddedFields {
