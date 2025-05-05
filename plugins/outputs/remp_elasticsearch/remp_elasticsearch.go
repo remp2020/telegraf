@@ -107,10 +107,8 @@ var sampleConfig = `
   # updated_fields = ["timespent"]
   ## List of fields to be incremented (implicitly triggers update call instead index)
   # incremented_fields = ["clicks"]
-  ## List of fields to be added to an array (implicitly triggers update call instead index)
-  ## The field name can be a nested path, e.g., "data.main_block.ids".
-  ## The script will ensure the path and array exist before adding the value.
-  # added_fields = ["data.main_block.ids"]
+  ## List of array fields to which values will be appended (implicitly triggers update). Nested paths not supported.
+  # added_fields = ["items_viewed"]
   ## List of fields to be included in index - mimics taginclude which doesn't work
   ## in remp_elastic as REMP tracks JSON-encoded string to preserve types.
   ## These fields are protected and don't need to be whitelisted:
