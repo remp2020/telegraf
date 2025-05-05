@@ -107,7 +107,7 @@ var sampleConfig = `
   # updated_fields = ["timespent"]
   ## List of fields to be incremented (implicitly triggers update call instead index)
   # incremented_fields = ["clicks"]
-  ## List of array fields to which values will be appended (implicitly triggers update). Nested paths not supported.
+  ## List of array fields to which values will be appended (implicitly triggers update).
   # added_fields = ["items_viewed"]
   ## List of fields to be included in index - mimics taginclude which doesn't work
   ## in remp_elastic as REMP tracks JSON-encoded string to preserve types.
@@ -561,7 +561,7 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
 	if !ok {
 		a.Log.Errorf("Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
 		a.Log.Infof("Metric content: %#v", m)
-		return false, nil // Skip this metric
+		return false, nil
 	}
 
 	painlessScriptSource := `
@@ -575,7 +575,7 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
 		fieldValue, valueExists := m[fieldName]
 		if !valueExists {
 			a.Log.Debugf("Field '%s' not found in metric data, skipping add operation.", fieldName)
-			continue // Skip if the field to add doesn't exist in the current metric
+			continue
 		}
 
 		scriptParams := map[string]interface{}{
@@ -583,18 +583,16 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
 			"value_to_add":    fieldValue,
 		}
 
-		// Use the correct indexName passed from Write, which might be time/tag-based
 		updateRequest := elastic.
 			NewBulkUpdateRequest().
 			Index(indexName).
 			Id(idValue).
 			Script(elastic.NewScript(painlessScriptSource).Lang("painless").Params(scriptParams)).
-			Upsert(m) // Provide the full document for initial creation if the doc doesn't exist
+			Upsert(m)
 
 		bulkRequest.Add(updateRequest)
 	}
 
-	// The actual bulkRequest.Do(ctx) happens outside this function in Write()
 	return true, nil
 }
 
