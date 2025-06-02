@@ -560,7 +560,6 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
 	idValue, ok := m[a.IDField].(string)
 	if !ok {
 		a.Log.Errorf("Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
-		a.Log.Infof("Metric content: %#v", m)
 		return false, nil
 	}
 
@@ -568,13 +567,14 @@ func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, inde
       if (ctx._source[params.field_to_update] == null) {
         ctx._source[params.field_to_update] = [];
       }
-      ctx._source[params.field_to_update].addAll(params.value_to_add);
+      HashSet uniqueValues = new HashSet(ctx._source[params.field_to_update]);
+      uniqueValues.addAll(params.value_to_add);
+      ctx._source[params.field_to_update] = new ArrayList(uniqueValues);
     `
 
 	for _, fieldName := range a.AddedFields {
 		fieldValue, valueExists := m[fieldName]
 		if !valueExists {
-			a.Log.Debugf("Field '%s' not found in metric data, skipping add operation.", fieldName)
 			continue
 		}
 
