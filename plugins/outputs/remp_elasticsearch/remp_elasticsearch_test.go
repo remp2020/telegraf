@@ -26,6 +26,7 @@ func TestConnectAndWrite(t *testing.T) {
 		TemplateName:        "telegraf",
 		OverwriteTemplate:   false,
 		HealthCheckInterval: config.Duration(time.Second * 10),
+		Log:                 testutil.Logger{},
 	}
 
 	// Verify that we can connect to Elasticsearch
@@ -75,6 +76,7 @@ func TestTemplateManagement(t *testing.T) {
 		ManageTemplate:    true,
 		TemplateName:      "telegraf",
 		OverwriteTemplate: true,
+		Log:               testutil.Logger{},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.Timeout))
@@ -101,6 +103,7 @@ func TestTemplateInvalidIndexPattern(t *testing.T) {
 		ManageTemplate:    true,
 		TemplateName:      "telegraf",
 		OverwriteTemplate: true,
+		Log:               testutil.Logger{},
 	}
 
 	err := e.Connect()
@@ -170,6 +173,7 @@ func TestGetTagKeys(t *testing.T) {
 func TestGetIndexName(t *testing.T) {
 	e := &Elasticsearch{
 		DefaultTagValue: "none",
+		Log:             testutil.Logger{},
 	}
 
 	var tests = []struct {

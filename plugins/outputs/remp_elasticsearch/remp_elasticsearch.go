@@ -24,6 +24,7 @@ type Elasticsearch struct {
 	UpdateQueryField    string   `toml:"update_query_field"`
 	UpdatedFields       []string `toml:"updated_fields"`
 	IncrementedFields   []string `toml:"incremented_fields"`
+	AddedFields         []string `toml:"added_fields"`
 	DefaultTagValue     string
 	TagKeys             []string
 	Username            string
@@ -106,6 +107,8 @@ var sampleConfig = `
   # updated_fields = ["timespent"]
   ## List of fields to be incremented (implicitly triggers update call instead index)
   # incremented_fields = ["clicks"]
+  ## List of array fields to which values will be appended (implicitly triggers update).
+  # added_fields = ["items_viewed"]
   ## List of fields to be included in index - mimics taginclude which doesn't work
   ## in remp_elastic as REMP tracks JSON-encoded string to preserve types.
   ## These fields are protected and don't need to be whitelisted:
@@ -296,6 +299,14 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 			if !ok {
 				continue
 			}
+		} else if len(a.AddedFields) > 0 {
+			ok, err := a.handleAddedFields(bulkRequest, indexName, m)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
 		} else {
 			indexRequest := elastic.NewBulkIndexRequest().
 				Index(indexName).
@@ -333,7 +344,6 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 	}
 
 	return nil
-
 }
 
 func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
@@ -373,51 +383,48 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 					}
 				},
 				"mappings" : {
-					"_default_" : {
-						"_all": { "enabled": false	  },
-						"properties" : {
-							"@timestamp" : { "type" : "date" },
-							"measurement_name" : { "type" : "keyword" }
-						},
-						"dynamic_templates": [
-							{
-								"tags": {
-									"match_mapping_type": "string",
-									"path_match": "tag.*",
-									"mapping": {
-										"ignore_above": 512,
-										"type": "keyword"
-									}
-								}
-							},
-							{
-								"metrics_long": {
-									"match_mapping_type": "long",
-									"mapping": {
-										"type": "float",
-										"index": false
-									}
-								}
-							},
-							{
-								"metrics_double": {
-									"match_mapping_type": "double",
-									"mapping": {
-										"type": "float",
-										"index": false
-									}
-								}
-							},
-							{
-								"text_fields": {
-									"match": "*",
-									"mapping": {
-										"norms": false
-									}
+					"properties" : {
+						"@timestamp" : { "type" : "date" },
+						"measurement_name" : { "type" : "keyword" }
+					},
+					"dynamic_templates": [
+						{
+							"tags": {
+								"match_mapping_type": "string",
+								"path_match": "tag.*",
+								"mapping": {
+									"ignore_above": 512,
+									"type": "keyword"
 								}
 							}
-						]
-					}
+						},
+						{
+							"metrics_long": {
+								"match_mapping_type": "long",
+								"mapping": {
+									"type": "float",
+									"index": false
+								}
+							}
+						},
+						{
+							"metrics_double": {
+								"match_mapping_type": "double",
+								"mapping": {
+									"type": "float",
+									"index": false
+								}
+							}
+						},
+						{
+							"text_fields": {
+								"match": "*",
+								"mapping": {
+									"norms": false
+								}
+							}
+						}
+					]
 				}
 			}`, templatePattern+"*")
 		_, errCreateTemplate := a.Client.IndexPutTemplate(a.TemplateName).BodyString(tmpl).Do(ctx)
@@ -544,6 +551,49 @@ func (a *Elasticsearch) filterMetric(metric map[string]interface{}) map[string]i
 	}
 
 	return metric
+}
+
+func (a *Elasticsearch) handleAddedFields(bulkRequest *elastic.BulkService, indexName string, m map[string]interface{}) (bool, error) {
+	if a.IDField == "" {
+		return false, fmt.Errorf("unable to update Elasticsearch records, no explicit ID field provided")
+	}
+	idValue, ok := m[a.IDField].(string)
+	if !ok {
+		a.Log.Errorf("Unable to use value of %s as ID, non-string value received: %T", a.IDField, m[a.IDField])
+		return false, nil
+	}
+
+	painlessScriptSource := `
+      if (ctx._source[params.field_to_update] == null) {
+        ctx._source[params.field_to_update] = [];
+      }
+      HashSet uniqueValues = new HashSet(ctx._source[params.field_to_update]);
+      uniqueValues.addAll(params.value_to_add);
+      ctx._source[params.field_to_update] = new ArrayList(uniqueValues);
+    `
+
+	for _, fieldName := range a.AddedFields {
+		fieldValue, valueExists := m[fieldName]
+		if !valueExists {
+			continue
+		}
+
+		scriptParams := map[string]interface{}{
+			"field_to_update": fieldName,
+			"value_to_add":    fieldValue,
+		}
+
+		updateRequest := elastic.
+			NewBulkUpdateRequest().
+			Index(indexName).
+			Id(idValue).
+			Script(elastic.NewScript(painlessScriptSource).Lang("painless").Params(scriptParams)).
+			Upsert(m)
+
+		bulkRequest.Add(updateRequest)
+	}
+
+	return true, nil
 }
 
 func init() {
