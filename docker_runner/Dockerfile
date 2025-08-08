@@ -1,4 +1,4 @@
-FROM telegraf:1.29.2-alpine
+FROM telegraf:1.35-alpine
 
 WORKDIR /usr/bin
 
