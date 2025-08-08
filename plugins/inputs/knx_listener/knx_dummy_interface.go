@@ -4,25 +4,28 @@ import (
 	"github.com/vapourismo/knx-go/knx"
 )
 
-type KNXDummyInterface struct {
+type knxDummyInterface struct {
 	inbound chan knx.GroupEvent
 }
 
-func NewDummyInterface() KNXDummyInterface {
-	di := KNXDummyInterface{}
+func newDummyInterface() knxDummyInterface {
+	di := knxDummyInterface{}
 	di.inbound = make(chan knx.GroupEvent)
 
 	return di
 }
 
-func (di *KNXDummyInterface) Send(event knx.GroupEvent) {
+// Send simulates sending a GroupEvent over the KNX interface.
+func (di *knxDummyInterface) Send(event knx.GroupEvent) {
 	di.inbound <- event
 }
 
-func (di *KNXDummyInterface) Inbound() <-chan knx.GroupEvent {
+// Inbound returns a read-only channel for receiving GroupEvents.
+func (di *knxDummyInterface) Inbound() <-chan knx.GroupEvent {
 	return di.inbound
 }
 
-func (di *KNXDummyInterface) Close() {
+// Close closes the inbound channel to simulate shutting down the interface.
+func (di *knxDummyInterface) Close() {
 	close(di.inbound)
 }

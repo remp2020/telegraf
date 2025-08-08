@@ -6,22 +6,22 @@ import (
 	"fmt"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-type SwapStats struct {
-	ps system.PS
+type Swap struct {
+	ps psutil.PS
 }
 
-func (*SwapStats) SampleConfig() string {
+func (*Swap) SampleConfig() string {
 	return sampleConfig
 }
 
-func (ss *SwapStats) Gather(acc telegraf.Accumulator) error {
+func (ss *Swap) Gather(acc telegraf.Accumulator) error {
 	swap, err := ss.ps.SwapStat()
 	if err != nil {
 		return fmt.Errorf("error getting swap memory info: %w", err)
@@ -44,8 +44,8 @@ func (ss *SwapStats) Gather(acc telegraf.Accumulator) error {
 }
 
 func init() {
-	ps := system.NewSystemPS()
+	ps := psutil.NewSystemPS()
 	inputs.Add("swap", func() telegraf.Input {
-		return &SwapStats{ps: ps}
+		return &Swap{ps: ps}
 	})
 }

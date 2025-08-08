@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gofrs/uuid/v5"
@@ -35,7 +36,7 @@ func TestCases(t *testing.T) {
 
 	// Set up for file inputs
 	outputs.Add("dummy", func() telegraf.Output {
-		return &OutputDummy{}
+		return &outputDummy{}
 	})
 
 	for _, f := range folders {
@@ -67,7 +68,7 @@ func TestCases(t *testing.T) {
 			cfg := config.NewConfig()
 			require.NoError(t, cfg.LoadConfig(configFilename))
 			require.Len(t, cfg.Outputs, 1, "wrong number of outputs")
-			plugin, ok := cfg.Outputs[0].Output.(*OutputDummy)
+			plugin, ok := cfg.Outputs[0].Output.(*outputDummy)
 			require.True(t, ok)
 			serializer, ok := plugin.serializer.(*models.RunningSerializer).Serializer.(*Serializer)
 			require.True(t, ok)
@@ -158,26 +159,26 @@ func checkEvents(messages [][]byte) error {
 }
 
 /* Dummy output to allow full config parsing loop */
-type OutputDummy struct {
+type outputDummy struct {
 	Batch      bool `toml:"batch"`
 	serializer telegraf.Serializer
 	output     [][]byte
 }
 
-func (*OutputDummy) SampleConfig() string {
+func (*outputDummy) SampleConfig() string {
 	return "dummy"
 }
 
-func (o *OutputDummy) Connect() error {
+func (o *outputDummy) Connect() error {
 	o.output = make([][]byte, 0)
 	return nil
 }
 
-func (*OutputDummy) Close() error {
+func (*outputDummy) Close() error {
 	return nil
 }
 
-func (o *OutputDummy) Write(metrics []telegraf.Metric) error {
+func (o *outputDummy) Write(metrics []telegraf.Metric) error {
 	if o.Batch {
 		buf, err := o.serializer.SerializeBatch(metrics)
 		if err != nil {
@@ -197,7 +198,7 @@ func (o *OutputDummy) Write(metrics []telegraf.Metric) error {
 	return nil
 }
 
-func (o *OutputDummy) SetSerializer(s telegraf.Serializer) {
+func (o *outputDummy) SetSerializer(s telegraf.Serializer) {
 	o.serializer = s
 }
 
@@ -231,6 +232,18 @@ func (*dummygen) NewV6() (uuid.UUID, error) {
 }
 
 func (*dummygen) NewV7() (uuid.UUID, error) {
+	return uuid.UUID([16]byte{}), errors.New("wrong type")
+}
+
+func (*dummygen) NewV1AtTime(_ time.Time) (uuid.UUID, error) {
+	return uuid.UUID([16]byte{}), errors.New("wrong type")
+}
+
+func (*dummygen) NewV6AtTime(_ time.Time) (uuid.UUID, error) {
+	return uuid.UUID([16]byte{}), errors.New("wrong type")
+}
+
+func (*dummygen) NewV7AtTime(_ time.Time) (uuid.UUID, error) {
 	return uuid.UUID([16]byte{}), errors.New("wrong type")
 }
 

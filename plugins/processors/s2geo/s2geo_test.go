@@ -5,21 +5,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGeo(t *testing.T) {
-	plugin := &Geo{
+	plugin := &S2Geo{
 		LatField:  "lat",
 		LonField:  "lon",
 		TagKey:    "s2_cell_id",
 		CellLevel: 11,
 	}
 
-	pluginMostlyDefault := &Geo{
+	pluginMostlyDefault := &S2Geo{
 		CellLevel: 11,
 	}
 
@@ -98,7 +99,7 @@ func TestTracking(t *testing.T) {
 		),
 	}
 
-	plugin := &Geo{
+	plugin := &S2Geo{
 		LatField: "lat",
 		LonField: "lon",
 		TagKey:   "s2_cell_id",

@@ -1,7 +1,12 @@
 # Kafka Output Plugin
 
-This plugin writes to a [Kafka
-Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
+This plugin writes metrics to a [Kafka Broker][kafka] acting a Kafka Producer.
+
+⭐ Telegraf v0.1.7
+🏷️ messaging
+💻 all
+
+[kafka]: http://kafka.apache.org
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -25,6 +30,9 @@ using the `startup_error_behavior` setting. Available values are:
 - `retry`:  Telegraf will try to startup the plugin in every gather or write
             cycle in case of startup errors. The plugin is disabled until
             the startup succeeds.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
+            in case probing fails. If the plugin does not support probing, Telegraf will
+            behave as if `ignore` was set instead.
 
 ## Secret-store support
 
@@ -121,6 +129,15 @@ to use them.
   ## smaller than the broker's 'message.max.bytes'.
   # max_message_bytes = 1000000
 
+  ## Producer timestamp
+  ## This option sets the timestamp of the kafka producer message, choose from:
+  ##   * metric: Uses the metric's timestamp
+  ##   * now: Uses the time of write
+  # producer_timestamp = metric
+
+  ## Add metric name as specified kafka header if not empty
+  # metric_name_header = ""
+
   ## Optional TLS Config
   # enable_tls = false
   # tls_ca = "/etc/telegraf/ca.pem"
@@ -140,12 +157,11 @@ to use them.
   # socks5_password = "pass123"
 
   ## Optional SASL Config
-  # sasl_username = "kafka"
-  # sasl_password = "secret"
+  # sasl_username = ""
+  # sasl_password = ""
 
-  ## Optional SASL:
-  ## one of: OAUTHBEARER, PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, GSSAPI
-  ## (defaults to PLAIN)
+  ## Optional SASL, one of:
+  ##   OAUTHBEARER, PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, GSSAPI, AWS-MSK-IAM
   # sasl_mechanism = ""
 
   ## used if sasl_mechanism is GSSAPI
@@ -160,8 +176,16 @@ to use them.
   ## Access token used if sasl_mechanism is OAUTHBEARER
   # sasl_access_token = ""
 
+  ## used if sasl_mechanism is AWS-MSK-IAM
+  # sasl_aws_msk_iam_region = ""
+  ## for profile based auth
+  ## sasl_aws_msk_iam_profile = ""
+  ## for role based auth
+  ## sasl_aws_msk_iam_role = ""
+  ## sasl_aws_msk_iam_session = ""
+
   ## Arbitrary key value string pairs to pass as a TOML table. For example:
-  # {logicalCluster = "cluster-042", poolId = "pool-027"}
+  ## {logicalCluster = "cluster-042", poolId = "pool-027"}
   # sasl_extensions = {}
 
   ## SASL protocol version.  When connecting to Azure EventHub set to 0.

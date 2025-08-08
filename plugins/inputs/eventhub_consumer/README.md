@@ -1,6 +1,14 @@
-# Event Hub Consumer Input Plugin
+# Azure Event Hub Consumer Input Plugin
 
-This plugin provides a consumer for use with Azure Event Hubs and Azure IoT Hub.
+This plugin allows consuming messages from [Azure Event Hubs][eventhub] and
+[Azure IoT Hub][iothub] instances.
+
+⭐ Telegraf v1.14.0
+🏷️ iot, messaging
+💻 all
+
+[eventhub]: https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-about
+[iothub]: https://azure.microsoft.com/en-us/products/iot-hub
 
 ## IoT Hub Setup
 
@@ -16,7 +24,7 @@ The main focus for development of this plugin is Azure IoT hub:
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
-interval setting. Service plugins start a service to listens and waits for
+interval setting. Service plugins start a service to listen and wait for
 metrics or events to occur. Service plugins have two key differences from
 normal plugins:
 

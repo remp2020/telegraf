@@ -17,12 +17,11 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-// PuppetAgent is a PuppetAgent plugin
 type PuppetAgent struct {
-	Location string
+	Location string `toml:"location"`
 }
 
-type State struct {
+type state struct {
 	Events    event
 	Resources resource
 	Changes   change
@@ -86,7 +85,6 @@ func (*PuppetAgent) SampleConfig() string {
 	return sampleConfig
 }
 
-// Gather reads stats from all configured servers accumulates stats
 func (pa *PuppetAgent) Gather(acc telegraf.Accumulator) error {
 	if len(pa.Location) == 0 {
 		pa.Location = "/var/lib/puppet/state/last_run_summary.yaml"
@@ -101,7 +99,7 @@ func (pa *PuppetAgent) Gather(acc telegraf.Accumulator) error {
 		return err
 	}
 
-	var puppetState State
+	var puppetState state
 
 	err = yaml.Unmarshal(fh, &puppetState)
 	if err != nil {
@@ -114,7 +112,7 @@ func (pa *PuppetAgent) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-func structPrinter(s *State, acc telegraf.Accumulator, tags map[string]string) {
+func structPrinter(s *state, acc telegraf.Accumulator, tags map[string]string) {
 	e := reflect.ValueOf(s).Elem()
 
 	fields := make(map[string]interface{})

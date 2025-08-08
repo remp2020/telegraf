@@ -52,9 +52,11 @@ func TestConnect(t *testing.T) {
 				ExchangeType:       DefaultExchangeType,
 				ExchangeDurability: "durable",
 				AuthMethod:         DefaultAuthMethod,
-				Database:           DefaultDatabase,
-				RetentionPolicy:    DefaultRetentionPolicy,
-				Timeout:            config.Duration(time.Second * 5),
+				Headers: map[string]string{
+					"database":         DefaultDatabase,
+					"retention_policy": DefaultRetentionPolicy,
+				},
+				Timeout: config.Duration(time.Second * 5),
 				connect: func(_ *ClientConfig) (Client, error) {
 					return NewMockClient(), nil
 				},
@@ -62,7 +64,7 @@ func TestConnect(t *testing.T) {
 			errFunc: func(t *testing.T, output *AMQP, err error) {
 				cfg := output.config
 				require.Equal(t, []string{DefaultURL}, cfg.brokers)
-				require.Equal(t, "", cfg.exchange)
+				require.Empty(t, cfg.exchange)
 				require.Equal(t, "topic", cfg.exchangeType)
 				require.False(t, cfg.exchangePassive)
 				require.True(t, cfg.exchangeDurable)
@@ -114,7 +116,7 @@ func TestConnect(t *testing.T) {
 		{
 			name: "username password",
 			output: &AMQP{
-				URL:      "amqp://foo:bar@localhost",
+				Brokers:  []string{"amqp://foo:bar@localhost"},
 				Username: config.NewSecret([]byte("telegraf")),
 				Password: config.NewSecret([]byte("pa$$word")),
 				connect: func(_ *ClientConfig) (Client, error) {
@@ -136,7 +138,7 @@ func TestConnect(t *testing.T) {
 		{
 			name: "url support",
 			output: &AMQP{
-				URL: DefaultURL,
+				Brokers: []string{DefaultURL},
 				connect: func(_ *ClientConfig) (Client, error) {
 					return NewMockClient(), nil
 				},
@@ -150,6 +152,7 @@ func TestConnect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.output.Init())
 			err := tt.output.Connect()
 			tt.errFunc(t, tt.output, err)
 		})

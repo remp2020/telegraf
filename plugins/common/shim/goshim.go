@@ -39,6 +39,9 @@ type Shim struct {
 	Processor telegraf.StreamingProcessor
 	Output    telegraf.Output
 
+	BatchSize    int
+	BatchTimeout time.Duration
+
 	log telegraf.Logger
 
 	// streams
@@ -56,15 +59,17 @@ type Shim struct {
 // New creates a new shim interface
 func New() *Shim {
 	return &Shim{
-		metricCh: make(chan telegraf.Metric, 1),
-		stdin:    os.Stdin,
-		stdout:   os.Stdout,
-		stderr:   os.Stderr,
-		log:      logger.NewLogger("", "", ""),
+		BatchSize:    1,
+		BatchTimeout: 10 * time.Second,
+		metricCh:     make(chan telegraf.Metric, 1),
+		stdin:        os.Stdin,
+		stdout:       os.Stdout,
+		stderr:       os.Stderr,
+		log:          logger.New("", "", ""),
 	}
 }
 
-func (s *Shim) watchForShutdown(cancel context.CancelFunc) {
+func (*Shim) watchForShutdown(cancel context.CancelFunc) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -79,17 +84,17 @@ func (s *Shim) Run(pollInterval time.Duration) error {
 	if s.Input != nil {
 		err := s.RunInput(pollInterval)
 		if err != nil {
-			return fmt.Errorf("RunInput error: %w", err)
+			return fmt.Errorf("running input failed: %w", err)
 		}
 	} else if s.Processor != nil {
 		err := s.RunProcessor()
 		if err != nil {
-			return fmt.Errorf("RunProcessor error: %w", err)
+			return fmt.Errorf("running processor failed: %w", err)
 		}
 	} else if s.Output != nil {
 		err := s.RunOutput()
 		if err != nil {
-			return fmt.Errorf("RunOutput error: %w", err)
+			return fmt.Errorf("running output failed: %w", err)
 		}
 	} else {
 		return errors.New("nothing to run")
@@ -107,7 +112,7 @@ func (s *Shim) writeProcessedMetrics() error {
 	if err := serializer.Init(); err != nil {
 		return fmt.Errorf("creating serializer failed: %w", err)
 	}
-	for { //nolint:gosimple // for-select used on purpose
+	for { //nolint:staticcheck // for-select used on purpose
 		select {
 		case m, open := <-s.metricCh:
 			if !open {
@@ -115,24 +120,27 @@ func (s *Shim) writeProcessedMetrics() error {
 			}
 			b, err := serializer.Serialize(m)
 			if err != nil {
+				m.Reject()
 				return fmt.Errorf("failed to serialize metric: %w", err)
 			}
 			// Write this to stdout
 			_, err = fmt.Fprint(s.stdout, string(b))
 			if err != nil {
+				m.Drop()
 				return fmt.Errorf("failed to write metric: %w", err)
 			}
+			m.Accept()
 		}
 	}
 }
 
 // LogName satisfies the MetricMaker interface
-func (s *Shim) LogName() string {
+func (*Shim) LogName() string {
 	return ""
 }
 
 // MakeMetric satisfies the MetricMaker interface
-func (s *Shim) MakeMetric(m telegraf.Metric) telegraf.Metric {
+func (*Shim) MakeMetric(m telegraf.Metric) telegraf.Metric {
 	return m // don't need to do anything to it.
 }
 

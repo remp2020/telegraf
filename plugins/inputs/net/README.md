@@ -1,7 +1,10 @@
-# Net Input Plugin
+# Network Input Plugin
 
-This plugin gathers metrics about network interface and protocol usage (Linux
-only).
+This plugin gathers metrics about network interface and protocol usage.
+
+⭐ Telegraf v0.1.1
+🏷️ network
+💻 all
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -21,9 +24,8 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## Setting interfaces will tell it to gather these explicit interfaces,
   ## regardless of status. When specifying an interface, glob-style
   ## patterns are also supported.
-  ##
   # interfaces = ["eth*", "enp0s[0-1]", "lo"]
-  ##
+
   ## On linux systems telegraf also collects protocol stats.
   ## Setting ignore_protocol_stats to true will skip reporting of protocol metrics.
   ##
@@ -64,35 +66,22 @@ silently.
 
 [source]: https://elixir.bootlin.com/linux/latest/source/net/ipv4/proc.c
 
-## Tags
+Tags:
 
 * Net measurements have the following tags:
   * interface (the interface from which metrics are gathered)
 
 Under Linux the system wide protocol metrics have the interface=all tag.
 
-## Sample Queries
-
-You can use the following query to get the upload/download traffic rate per
-second for all interfaces in the last hour. The query uses the [derivative
-function][deriv] which calculates the rate of change between subsequent field
-values.
-
-[deriv]: https://docs.influxdata.com/influxdb/v1.2/query_language/functions#derivative
-
-```sql
-SELECT derivative(first(bytes_recv), 1s) as "download bytes/sec", derivative(first(bytes_sent), 1s) as "upload bytes/sec" FROM net WHERE time > now() - 1h AND interface != 'all' GROUP BY time(10s), interface fill(0);
-```
-
 ## Example Output
 
-### All platforms
+All platforms provide metrics like the following:
 
 ```text
 net,interface=eth0,host=HOST bytes_sent=451838509i,bytes_recv=3284081640i,packets_sent=2663590i,packets_recv=3585442i,err_in=0i,err_out=0i,drop_in=4i,drop_out=0i 1492834180000000000
 ```
 
-### Linux
+On Linux additional metrics might be provided:
 
 ```text
 net,interface=eth0,host=HOST bytes_sent=451838509i,bytes_recv=3284081640i,packets_sent=2663590i,packets_recv=3585442i,err_in=0i,err_out=0i,drop_in=4i,drop_out=0i 1492834180000000000

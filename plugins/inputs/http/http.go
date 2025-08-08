@@ -16,7 +16,7 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
-	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -36,15 +36,14 @@ type HTTP struct {
 	Password config.Secret `toml:"password"`
 
 	// Bearer authentication
-	BearerToken string        `toml:"bearer_token" deprecated:"1.28.0;1.35.0;use 'token_file' instead"`
-	Token       config.Secret `toml:"token"`
-	TokenFile   string        `toml:"token_file"`
+	Token     config.Secret `toml:"token"`
+	TokenFile string        `toml:"token_file"`
 
 	Headers            map[string]*config.Secret `toml:"headers"`
 	SuccessStatusCodes []int                     `toml:"success_status_codes"`
 	Log                telegraf.Logger           `toml:"-"`
 
-	httpconfig.HTTPClientConfig
+	common_http.HTTPClientConfig
 
 	client     *http.Client
 	parserFunc telegraf.ParserFunc
@@ -55,13 +54,6 @@ func (*HTTP) SampleConfig() string {
 }
 
 func (h *HTTP) Init() error {
-	// For backward compatibility
-	if h.TokenFile != "" && h.BearerToken != "" && h.TokenFile != h.BearerToken {
-		return errors.New("conflicting settings for 'bearer_token' and 'token_file'")
-	} else if h.TokenFile == "" && h.BearerToken != "" {
-		h.TokenFile = h.BearerToken
-	}
-
 	// We cannot use multiple sources for tokens
 	if h.TokenFile != "" && !h.Token.Empty() {
 		return errors.New("either use 'token_file' or 'token' not both")
@@ -82,12 +74,14 @@ func (h *HTTP) Init() error {
 	return nil
 }
 
-func (h *HTTP) Start(_ telegraf.Accumulator) error {
+func (h *HTTP) SetParserFunc(fn telegraf.ParserFunc) {
+	h.parserFunc = fn
+}
+
+func (*HTTP) Start(telegraf.Accumulator) error {
 	return nil
 }
 
-// Gather takes in an accumulator and adds the metrics that the Input
-// gathers. This is called every "interval"
 func (h *HTTP) Gather(acc telegraf.Accumulator) error {
 	var wg sync.WaitGroup
 	for _, u := range h.URLs {
@@ -109,11 +103,6 @@ func (h *HTTP) Stop() {
 	if h.client != nil {
 		h.client.CloseIdleConnections()
 	}
-}
-
-// SetParserFunc takes the data_format from the config and finds the right parser for that format
-func (h *HTTP) SetParserFunc(fn telegraf.ParserFunc) {
-	h.parserFunc = fn
 }
 
 // Gathers data from a particular URL

@@ -6,37 +6,38 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/shirou/gopsutil/v4/disk"
+
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
-	"github.com/shirou/gopsutil/v3/disk"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-type DiskStats struct {
+type Disk struct {
 	MountPoints     []string        `toml:"mount_points"`
 	IgnoreFS        []string        `toml:"ignore_fs"`
 	IgnoreMountOpts []string        `toml:"ignore_mount_opts"`
 	Log             telegraf.Logger `toml:"-"`
 
-	ps system.PS
+	ps psutil.PS
 }
 
-func (*DiskStats) SampleConfig() string {
+func (*Disk) SampleConfig() string {
 	return sampleConfig
 }
 
-func (ds *DiskStats) Init() error {
-	ps := system.NewSystemPS()
+func (ds *Disk) Init() error {
+	ps := psutil.NewSystemPS()
 	ps.Log = ds.Log
 	ds.ps = ps
 
 	return nil
 }
 
-func (ds *DiskStats) Gather(acc telegraf.Accumulator) error {
+func (ds *Disk) Gather(acc telegraf.Accumulator) error {
 	disks, partitions, err := ds.ps.DiskUsage(ds.MountPoints, ds.IgnoreMountOpts, ds.IgnoreFS)
 	if err != nil {
 		return fmt.Errorf("error getting disk usage info: %w", err)
@@ -48,12 +49,12 @@ func (ds *DiskStats) Gather(acc telegraf.Accumulator) error {
 		}
 
 		device := partitions[i].Device
-		mountOpts := MountOptions(partitions[i].Opts)
+		mountOpts := mountOptions(partitions[i].Opts)
 		tags := map[string]string{
 			"path":   du.Path,
 			"device": strings.ReplaceAll(device, "/dev/", ""),
 			"fstype": du.Fstype,
-			"mode":   mountOpts.Mode(),
+			"mode":   mountOpts.mode(),
 		}
 
 		label, err := disk.Label(strings.TrimPrefix(device, "/dev/"))
@@ -89,9 +90,9 @@ func (ds *DiskStats) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-type MountOptions []string
+type mountOptions []string
 
-func (opts MountOptions) Mode() string {
+func (opts mountOptions) mode() string {
 	if opts.exists("rw") {
 		return "rw"
 	} else if opts.exists("ro") {
@@ -100,7 +101,7 @@ func (opts MountOptions) Mode() string {
 	return "unknown"
 }
 
-func (opts MountOptions) exists(opt string) bool {
+func (opts mountOptions) exists(opt string) bool {
 	for _, o := range opts {
 		if o == opt {
 			return true
@@ -111,6 +112,6 @@ func (opts MountOptions) exists(opt string) bool {
 
 func init() {
 	inputs.Add("disk", func() telegraf.Input {
-		return &DiskStats{}
+		return &Disk{}
 	})
 }

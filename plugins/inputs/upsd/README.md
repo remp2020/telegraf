@@ -1,11 +1,13 @@
 # UPSD Input Plugin
 
-This plugin reads data of one or more Uninterruptible Power Supplies
-from an `upsd` daemon using its NUT network protocol.
+This plugin reads data of one or more Uninterruptible Power Supplies from a
+[Network UPS Tools][upsd] daemon using its NUT network protocol.
 
-## Requirements
+⭐ Telegraf v1.24.0
+🏷️ hardware, server
+💻 all
 
-`upsd` should be installed and it's daemon should be running.
+[upsd]: https://networkupstools.org/
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -42,13 +44,12 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
   ## Dump information for debugging
   ## Allows to print the raw variables (and corresponding types) as received
-  ## from the NUT server ONCE for each UPS. The output is only available when
-  ## running Telegraf in debug-mode.
+  ## from the NUT server ONCE for each UPS.
   ## Please attach this information when reporting issues!
-  # dump_raw_variables = false
+  # log_level = "trace"
 ```
 
-## Pitfalls
+### Pitfalls
 
 Please note that field types are automatically determined based on the values.
 Especially the strings `enabled` and `disabled` are automatically converted to
@@ -69,7 +70,7 @@ the [enum processor][enum_processor] with
 
 Alternatively, you can also map the non-binary value to a `boolean`.
 
-[enum_processor]: ../../processors/enum/README.md
+[enum_processor]: /plugins/processors/enum/README.md
 
 ## Metrics
 

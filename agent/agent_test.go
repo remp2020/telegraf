@@ -83,7 +83,6 @@ func TestAgent_LoadOutput(t *testing.T) {
 	require.Len(t, a.Config.Outputs, 1)
 
 	c = config.NewConfig()
-	c.OutputFilters = []string{}
 	err = c.LoadConfig("../config/testdata/telegraf-agent.toml")
 	require.NoError(t, err)
 	a = NewAgent(c)
@@ -214,7 +213,7 @@ func TestCases(t *testing.T) {
 
 			// Setup the agent and run the agent in "once" mode
 			agent := NewAgent(cfg)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			actual, err := collect(ctx, agent, 0)
 			require.NoError(t, err)

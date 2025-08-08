@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/checker/decls"
+	"github.com/google/cel-go/common/decls"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/ext"
@@ -206,7 +206,7 @@ func (f *Filter) shouldTagsPass(tags []*telegraf.Tag) bool {
 
 // filterFields removes fields according to fieldinclude/fieldexclude.
 func (f *Filter) filterFields(metric telegraf.Metric) {
-	filterKeys := []string{}
+	filterKeys := make([]string, 0, len(metric.FieldList()))
 	for _, field := range metric.FieldList() {
 		if !ShouldPassFilters(f.fieldIncludeFilter, f.fieldExcludeFilter, field.Key) {
 			filterKeys = append(filterKeys, field.Key)
@@ -220,7 +220,7 @@ func (f *Filter) filterFields(metric telegraf.Metric) {
 
 // filterTags removes tags according to taginclude/tagexclude.
 func (f *Filter) filterTags(metric telegraf.Metric) {
-	filterKeys := []string{}
+	filterKeys := make([]string, 0, len(metric.TagList()))
 	for _, tag := range metric.TagList() {
 		if !ShouldPassFilters(f.tagIncludeFilter, f.tagExcludeFilter, tag.Key) {
 			filterKeys = append(filterKeys, tag.Key)
@@ -247,11 +247,11 @@ func (f *Filter) compileMetricFilter() error {
 
 	// Declare the computation environment for the filter including custom functions
 	env, err := cel.NewEnv(
-		cel.Declarations(
-			decls.NewVar("name", decls.String),
-			decls.NewVar("tags", decls.NewMapType(decls.String, decls.String)),
-			decls.NewVar("fields", decls.NewMapType(decls.String, decls.Dyn)),
-			decls.NewVar("time", decls.Timestamp),
+		cel.VariableDecls(
+			decls.NewVariable("name", types.StringType),
+			decls.NewVariable("tags", types.NewMapType(types.StringType, types.StringType)),
+			decls.NewVariable("fields", types.NewMapType(types.StringType, types.DynType)),
+			decls.NewVariable("time", types.TimestampType),
 		),
 		cel.Function(
 			"now",
@@ -284,7 +284,7 @@ func (f *Filter) compileMetricFilter() error {
 	return err
 }
 
-func ShouldPassFilters(include filter.Filter, exclude filter.Filter, key string) bool {
+func ShouldPassFilters(include, exclude filter.Filter, key string) bool {
 	if include != nil && exclude != nil {
 		return include.Match(key) && !exclude.Match(key)
 	} else if include != nil {
@@ -295,7 +295,7 @@ func ShouldPassFilters(include filter.Filter, exclude filter.Filter, key string)
 	return true
 }
 
-func ShouldTagsPass(passFilters []TagFilter, dropFilters []TagFilter, tags []*telegraf.Tag) bool {
+func ShouldTagsPass(passFilters, dropFilters []TagFilter, tags []*telegraf.Tag) bool {
 	pass := func(tpf []TagFilter) bool {
 		for _, pat := range tpf {
 			if pat.filter == nil {

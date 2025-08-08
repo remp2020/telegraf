@@ -22,8 +22,6 @@ func TestCreator(t *testing.T) {
 	require.True(t, found)
 
 	expected := &DirectoryMonitor{
-		FilesToMonitor:             defaultFilesToMonitor,
-		FilesToIgnore:              defaultFilesToIgnore,
 		MaxBufferedMetrics:         defaultMaxBufferedMetrics,
 		DirectoryDurationThreshold: defaultDirectoryDurationThreshold,
 		FileQueueSize:              defaultFileQueueSize,
@@ -517,9 +515,11 @@ func TestParseCompleteFile(t *testing.T) {
 	}`
 
 	// Write json file to process into the 'process' directory.
-	f, _ := os.CreateTemp(processDirectory, "test.json")
-	_, _ = f.WriteString(testJSON)
-	_ = f.Close()
+	f, err := os.CreateTemp(processDirectory, "test.json")
+	require.NoError(t, err)
+	_, err = f.WriteString(testJSON)
+	require.NoError(t, err)
+	f.Close()
 
 	err = r.Start(&acc)
 	require.NoError(t, err)

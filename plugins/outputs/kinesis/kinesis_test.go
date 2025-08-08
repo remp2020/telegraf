@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/plugins/serializers"
 	"github.com/influxdata/telegraf/plugins/serializers/influx"
 	"github.com/influxdata/telegraf/testutil"
 )
@@ -69,7 +68,7 @@ func TestPartitionKey(t *testing.T) {
 			Method: "not supported",
 		},
 	}
-	require.Equal(t, "", k.getPartitionKey(testPoint), "PartitionKey should be value of ''")
+	require.Empty(t, k.getPartitionKey(testPoint), "PartitionKey should be value of ''")
 
 	k = KinesisOutput{
 		Log: testutil.Logger{},
@@ -87,21 +86,6 @@ func TestPartitionKey(t *testing.T) {
 	}
 	partitionKey := k.getPartitionKey(testPoint)
 	u, err := uuid.FromString(partitionKey)
-	require.NoError(t, err, "Issue parsing UUID")
-	require.Equal(t, byte(4), u.Version(), "PartitionKey should be UUIDv4")
-
-	k = KinesisOutput{
-		Log:          testutil.Logger{},
-		PartitionKey: "-",
-	}
-	require.Equal(t, "-", k.getPartitionKey(testPoint), "PartitionKey should be '-'")
-
-	k = KinesisOutput{
-		Log:                testutil.Logger{},
-		RandomPartitionKey: true,
-	}
-	partitionKey = k.getPartitionKey(testPoint)
-	u, err = uuid.FromString(partitionKey)
 	require.NoError(t, err, "Issue parsing UUID")
 	require.Equal(t, byte(4), u.Version(), "PartitionKey should be UUIDv4")
 }
@@ -182,7 +166,6 @@ func TestWriteKinesis_WhenServiceError(t *testing.T) {
 	records := []types.PutRecordsRequestEntry{
 		{
 			PartitionKey: aws.String(testPartitionKey),
-			Data:         []byte{},
 		},
 	}
 
@@ -225,10 +208,10 @@ func TestWrite_NoMetrics(t *testing.T) {
 		svc:        svc,
 	}
 
-	err := k.Write([]telegraf.Metric{})
+	err := k.Write(nil)
 	require.NoError(t, err, "Should not return error")
 
-	svc.AssertRequests(t, []*kinesis.PutRecordsInput{})
+	svc.AssertRequests(t, make([]*kinesis.PutRecordsInput, 0))
 }
 
 func TestWrite_SingleMetric(t *testing.T) {
@@ -480,12 +463,8 @@ func (m *mockKinesisPutRecords) SetupResponse(
 	})
 }
 
-func (m *mockKinesisPutRecords) SetupGenericResponse(
-	successfulRecordCount uint32,
-	failedRecordCount int32,
-) {
-	records := []types.PutRecordsResultEntry{}
-
+func (m *mockKinesisPutRecords) SetupGenericResponse(successfulRecordCount uint32, failedRecordCount int32) {
+	records := make([]types.PutRecordsResultEntry, 0, int32(successfulRecordCount)+failedRecordCount)
 	for i := uint32(0); i < successfulRecordCount; i++ {
 		records = append(records, types.PutRecordsResultEntry{
 			SequenceNumber: aws.String(testSequenceNumber),
@@ -526,11 +505,7 @@ func (m *mockKinesisPutRecords) AssertRequests(
 	t *testing.T,
 	expected []*kinesis.PutRecordsInput,
 ) {
-	require.Equalf(t,
-		len(expected),
-		len(m.requests),
-		"Expected %v requests", len(expected),
-	)
+	require.Lenf(t, m.requests, len(expected), "Expected %v requests", len(expected))
 
 	for i, expectedInput := range expected {
 		actualInput := m.requests[i]
@@ -541,11 +516,7 @@ func (m *mockKinesisPutRecords) AssertRequests(
 			"Expected request %v to have correct StreamName", i,
 		)
 
-		require.Equalf(t,
-			len(expectedInput.Records),
-			len(actualInput.Records),
-			"Expected request %v to have %v Records", i, len(expectedInput.Records),
-		)
+		require.Lenf(t, actualInput.Records, len(expectedInput.Records), "Expected request %v to have %v Records", i, len(expectedInput.Records))
 
 		for r, expectedRecord := range expectedInput.Records {
 			actualRecord := actualInput.Records[r]
@@ -571,11 +542,7 @@ func (m *mockKinesisPutRecords) AssertRequests(
 	}
 }
 
-func createTestMetric(
-	t *testing.T,
-	name string,
-	serializer serializers.Serializer,
-) (telegraf.Metric, []byte) {
+func createTestMetric(t *testing.T, name string, serializer telegraf.Serializer) (telegraf.Metric, []byte) {
 	metric := testutil.TestMetric(1, name)
 
 	data, err := serializer.Serialize(metric)
@@ -584,11 +551,7 @@ func createTestMetric(
 	return metric, data
 }
 
-func createTestMetrics(
-	t *testing.T,
-	count uint32,
-	serializer serializers.Serializer,
-) ([]telegraf.Metric, [][]byte) {
+func createTestMetrics(t *testing.T, count uint32, serializer telegraf.Serializer) ([]telegraf.Metric, [][]byte) {
 	metrics := make([]telegraf.Metric, 0, count)
 	metricsData := make([][]byte, 0, count)
 

@@ -4,16 +4,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSimple(t *testing.T) {
 	acc := testutil.Accumulator{}
-	final := NewFinal()
+	final := newFinal()
 	require.NoError(t, final.Init())
 
 	tags := map[string]string{"foo": "bar"}
@@ -49,7 +50,7 @@ func TestSimple(t *testing.T) {
 
 func TestTwoTags(t *testing.T) {
 	acc := testutil.Accumulator{}
-	final := NewFinal()
+	final := newFinal()
 	require.NoError(t, final.Init())
 
 	tags1 := map[string]string{"foo": "bar"}
@@ -95,7 +96,7 @@ func TestTwoTags(t *testing.T) {
 
 func TestLongDifference(t *testing.T) {
 	acc := testutil.Accumulator{}
-	final := NewFinal()
+	final := newFinal()
 	final.SeriesTimeout = config.Duration(30 * time.Second)
 	require.NoError(t, final.Init())
 	tags := map[string]string{"foo": "bar"}

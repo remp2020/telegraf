@@ -14,45 +14,36 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal/choice"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-type Conntrack struct {
-	ps      system.PS
-	Path    string
-	Dirs    []string
-	Files   []string
-	Collect []string
-}
+var (
+	dfltDirs = []string{
+		"/proc/sys/net/ipv4/netfilter",
+		"/proc/sys/net/netfilter",
+	}
+
+	dfltFiles = []string{
+		"ip_conntrack_count",
+		"ip_conntrack_max",
+		"nf_conntrack_count",
+		"nf_conntrack_max",
+	}
+)
 
 const (
 	inputName = "conntrack"
 )
 
-var dfltDirs = []string{
-	"/proc/sys/net/ipv4/netfilter",
-	"/proc/sys/net/netfilter",
-}
-
-var dfltFiles = []string{
-	"ip_conntrack_count",
-	"ip_conntrack_max",
-	"nf_conntrack_count",
-	"nf_conntrack_max",
-}
-
-func (c *Conntrack) setDefaults() {
-	if len(c.Dirs) == 0 {
-		c.Dirs = dfltDirs
-	}
-
-	if len(c.Files) == 0 {
-		c.Files = dfltFiles
-	}
+type Conntrack struct {
+	Collect []string `toml:"collect"`
+	Dirs    []string `toml:"dirs"`
+	Files   []string `toml:"files"`
+	ps      psutil.PS
 }
 
 func (*Conntrack) SampleConfig() string {
@@ -154,10 +145,20 @@ func (c *Conntrack) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
+func (c *Conntrack) setDefaults() {
+	if len(c.Dirs) == 0 {
+		c.Dirs = dfltDirs
+	}
+
+	if len(c.Files) == 0 {
+		c.Files = dfltFiles
+	}
+}
+
 func init() {
 	inputs.Add(inputName, func() telegraf.Input {
 		return &Conntrack{
-			ps: system.NewSystemPS(),
+			ps: psutil.NewSystemPS(),
 		}
 	})
 }

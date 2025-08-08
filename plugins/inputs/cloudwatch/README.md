@@ -1,6 +1,12 @@
 # Amazon CloudWatch Statistics Input Plugin
 
-This plugin will pull Metric Statistics from Amazon CloudWatch.
+This plugin will gather metric statistics from [Amazon CloudWatch][cloudwatch].
+
+⭐ Telegraf v0.12.1
+🏷️ cloud
+💻 all
+
+[cloudwatch]: https://aws.amazon.com/cloudwatch
 
 ## Amazon Authentication
 
@@ -94,13 +100,13 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## Do not enable if "period" or "delay" is longer than 3 hours, as it will
   ## not return data more than 3 hours old.
   ## See https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_ListMetrics.html
-  #recently_active = "PT3H"
+  # recently_active = "PT3H"
 
   ## Configure the TTL for the internal cache of metrics.
   # cache_ttl = "1h"
 
-  ## Metric Statistic Namespaces (required)
-  namespaces = ["AWS/ELB"]
+  ## Metric Statistic Namespaces, wildcards are allowed
+  # namespaces = ["*"]
 
   ## Metric Format
   ## This determines the format of the produces metrics. 'sparse', the default

@@ -1,7 +1,14 @@
 # Prometheus Input Plugin
 
-The prometheus input plugin gathers metrics from HTTP servers exposing metrics
-in Prometheus format.
+This plugin gathers metrics from [Prometheus][prometheus] metric endpoints such
+as applications implementing such an endpoint or node-exporter instances. This
+plugin also supports various service-discovery methods.
+
+⭐ Telegraf v0.1.5
+🏷️ applications, server
+💻 all
+
+[prometheus]: https://prometheus.io/
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -11,6 +18,14 @@ modify metrics, tags, and field or create aliases and configure ordering, etc.
 See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username`, `password`
+and `bearer_token_string` option. See the
+[secret-store documentation][SECRETSTORE] for more details on how to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
 
 ## Configuration
 
@@ -119,19 +134,6 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # Default is 60 minutes.
   # cache_refresh_interval = 60
 
-  ## Scrape Services available in Consul Catalog
-  # [inputs.prometheus.consul]
-  #   enabled = true
-  #   agent = "http://localhost:8500"
-  #   query_interval = "5m"
-
-  #   [[inputs.prometheus.consul.query]]
-  #     name = "a service name"
-  #     tag = "a service tag"
-  #     url = 'http://{{if ne .ServiceAddress ""}}{{.ServiceAddress}}{{else}}{{.Address}}{{end}}:{{.ServicePort}}/{{with .ServiceMeta.metrics_path}}{{.}}{{else}}metrics{{end}}'
-  #     [inputs.prometheus.consul.query.tags]
-  #       host = "{{.Node}}"
-
   ## Use bearer token for authorization. ('bearer_token' takes priority)
   # bearer_token = "/path/to/bearer/token"
   ## OR
@@ -177,6 +179,25 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
   ## This option allows you to report the status of prometheus requests.
   # enable_request_metrics = false
+
+  ## Scrape Services available in Consul Catalog
+  # [inputs.prometheus.consul]
+  #   enabled = true
+  #   agent = "http://localhost:8500"
+  #   query_interval = "5m"
+
+  #   [[inputs.prometheus.consul.query]]
+  #     name = "a service name"
+  #     tag = "a service tag"
+  #     url = 'http://{{if ne .ServiceAddress ""}}{{.ServiceAddress}}{{else}}{{.Address}}{{end}}:{{.ServicePort}}/{{with .ServiceMeta.metrics_path}}{{.}}{{else}}metrics{{end}}'
+  #     [inputs.prometheus.consul.query.tags]
+  #       host = "{{.Node}}"
+
+  ## Scrape Hosts available with http service discovery
+  # [inputs.prometheus.http_service_discovery]
+  #   enabled = false
+  #   url = "http://localhost:9000/service-discovery"
+  #   query_interval = "5m"
 
   ## Control pod scraping based on pod namespace annotations
   ## Pass and drop here act like tagpass and tagdrop, but instead
@@ -334,6 +355,17 @@ The following example fields can be used in url or tag templates:
 
 For full list of available fields and their type see struct CatalogService in
 <https://github.com/hashicorp/consul/blob/master/api/catalog.go>
+
+### HTTP Service Discovery
+
+Enabling this option and configuring `url` will allow the plugin to
+query a given http service discovery endpoint for available hosts. Using
+`query_interval` the plugin will periodically query the endpoint for services
+and refresh the list of scraped urls.  It can use the information from the
+response to build the scraped url and additional tags.
+
+More information on the format of http service discovery is found
+[here](https://prometheus.io/docs/prometheus/latest/http_sd/).
 
 ### Bearer Token
 

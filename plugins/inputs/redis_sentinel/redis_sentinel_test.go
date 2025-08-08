@@ -3,7 +3,6 @@ package redis_sentinel
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -26,11 +25,10 @@ func TestRedisSentinelConnectIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	ctx := context.Background()
-	net, err := network.New(ctx, network.WithCheckDuplicate())
+	net, err := network.New(t.Context())
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, net.Remove(ctx), "terminating network failed")
+		require.NoError(t, net.Remove(t.Context()), "terminating network failed")
 	}()
 
 	redis := createRedisContainer(net.Name)
@@ -362,7 +360,7 @@ func createRedisContainer(networkName string) testutil.Container {
 	}
 }
 
-func createSentinelContainer(redisAddress string, networkName string, waitingFor wait.Strategy) testutil.Container {
+func createSentinelContainer(redisAddress, networkName string, waitingFor wait.Strategy) testutil.Container {
 	return testutil.Container{
 		Image:        "bitnami/redis-sentinel:7.0",
 		ExposedPorts: []string{sentinelServicePort},

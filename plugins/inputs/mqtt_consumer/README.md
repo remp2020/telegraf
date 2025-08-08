@@ -1,12 +1,19 @@
 # MQTT Consumer Input Plugin
 
-The [MQTT][mqtt] consumer plugin reads from the specified MQTT topics
-and creates metrics using one of the supported [input data formats][].
+This service plugin consumes messages from [MQTT][mqtt] brokers for the
+configured topics in one of the supported [data formats][data_formats].
+
+⭐ Telegraf v0.10.3
+🏷️ messaging
+💻 all
+
+[mqtt]: https://mqtt.org
+[data_formats]: /docs/DATA_FORMATS_INPUT.md
 
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
-interval setting. Service plugins start a service to listens and waits for
+interval setting. Service plugins start a service to listen and wait for
 metrics or events to occur. Service plugins have two key differences from
 normal plugins:
 
@@ -22,6 +29,23 @@ modify metrics, tags, and field or create aliases and configure ordering, etc.
 See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Startup error behavior options <!-- @/docs/includes/startup_error_behavior.md -->
+
+In addition to the plugin-specific and global configuration settings the plugin
+supports options for specifying the behavior when experiencing startup errors
+using the `startup_error_behavior` setting. Available values are:
+
+- `error`:  Telegraf with stop and exit in case of startup errors. This is the
+            default behavior.
+- `ignore`: Telegraf will ignore startup errors for this plugin and disables it
+            but continues processing for all other plugins.
+- `retry`:  Telegraf will try to startup the plugin in every gather or write
+            cycle in case of startup errors. The plugin is disabled until
+            the startup succeeds.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
+            in case probing fails. If the plugin does not support probing, Telegraf will
+            behave as if `ignore` was set instead.
 
 ## Secret-store support
 
@@ -66,6 +90,13 @@ to use them.
 
   ## Connection timeout for initial connection in seconds
   # connection_timeout = "30s"
+
+  ## Interval and ping timeout for keep-alive messages
+  ## The sum of those options defines when a connection loss is detected.
+  ## Note: The keep-alive interval needs to be greater or equal one second and
+  ## fractions of a second are not supported.
+  # keepalive = "60s"
+  # ping_timeout = "10s"
 
   ## Max undelivered messages
   ## This plugin uses tracking metrics, which ensure messages are read to
@@ -115,7 +146,8 @@ to use them.
   data_format = "influx"
 
   ## Enable extracting tag values from MQTT topics
-  ## _ denotes an ignored entry in the topic path
+  ## _ denotes an ignored entry in the topic path,
+  ## # denotes a variable length path element (can only be used once per setting)
   # [[inputs.mqtt_consumer.topic_parsing]]
   #   topic = ""
   #   measurement = ""
@@ -242,6 +274,3 @@ This will result in the following metric:
 ```text
 internal_mqtt_consumer host=pop-os version=1.24.0 messages_received=622i payload_size=37942i 1657282270000000000
 ```
-
-[mqtt]: https://mqtt.org
-[input data formats]: /docs/DATA_FORMATS_INPUT.md

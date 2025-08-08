@@ -18,7 +18,7 @@ func TestShimUSR1SignalingWorks(t *testing.T) {
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	metricProcessed, exited := runInputPlugin(t, 20*time.Minute, stdinReader, stdoutWriter, nil)
 
@@ -37,7 +37,11 @@ func TestShimUSR1SignalingWorks(t *testing.T) {
 				return // test is done
 			default:
 				// test isn't done, keep going.
-				require.NoError(t, process.Signal(syscall.SIGUSR1))
+				if err := process.Signal(syscall.SIGUSR1); err != nil {
+					t.Error(err)
+					metricProcessed <- false
+					return
+				}
 				time.Sleep(200 * time.Millisecond)
 			}
 		}

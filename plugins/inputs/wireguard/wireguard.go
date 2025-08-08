@@ -16,11 +16,6 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-const (
-	measurementDevice = "wireguard_device"
-	measurementPeer   = "wireguard_peer"
-)
-
 var (
 	deviceTypeNames = map[wgtypes.DeviceType]string{
 		wgtypes.Unknown:     "unknown",
@@ -29,8 +24,11 @@ var (
 	}
 )
 
-// Wireguard is an input that enumerates all Wireguard interfaces/devices on
-// the host, and reports gauge metrics for the device itself and its peers.
+const (
+	measurementDevice = "wireguard_device"
+	measurementPeer   = "wireguard_peer"
+)
+
 type Wireguard struct {
 	Devices []string        `toml:"devices"`
 	Log     telegraf.Logger `toml:"-"`
@@ -44,7 +42,6 @@ func (*Wireguard) SampleConfig() string {
 
 func (wg *Wireguard) Init() error {
 	var err error
-
 	wg.client, err = wgctrl.New()
 
 	return err
@@ -57,10 +54,10 @@ func (wg *Wireguard) Gather(acc telegraf.Accumulator) error {
 	}
 
 	for _, device := range devices {
-		wg.gatherDeviceMetrics(acc, device)
+		gatherDeviceMetrics(acc, device)
 
 		for _, peer := range device.Peers {
-			wg.gatherDevicePeerMetrics(acc, device, peer)
+			gatherDevicePeerMetrics(acc, device, peer)
 		}
 	}
 
@@ -89,7 +86,7 @@ func (wg *Wireguard) enumerateDevices() ([]*wgtypes.Device, error) {
 	return devices, nil
 }
 
-func (wg *Wireguard) gatherDeviceMetrics(acc telegraf.Accumulator, device *wgtypes.Device) {
+func gatherDeviceMetrics(acc telegraf.Accumulator, device *wgtypes.Device) {
 	fields := map[string]interface{}{
 		"listen_port":   device.ListenPort,
 		"firewall_mark": device.FirewallMark,
@@ -108,7 +105,7 @@ func (wg *Wireguard) gatherDeviceMetrics(acc telegraf.Accumulator, device *wgtyp
 	acc.AddGauge(measurementDevice, gauges, tags)
 }
 
-func (wg *Wireguard) gatherDevicePeerMetrics(acc telegraf.Accumulator, device *wgtypes.Device, peer wgtypes.Peer) {
+func gatherDevicePeerMetrics(acc telegraf.Accumulator, device *wgtypes.Device, peer wgtypes.Peer) {
 	fields := map[string]interface{}{
 		"persistent_keepalive_interval_ns": peer.PersistentKeepaliveInterval.Nanoseconds(),
 		"protocol_version":                 peer.ProtocolVersion,
@@ -116,7 +113,7 @@ func (wg *Wireguard) gatherDevicePeerMetrics(acc telegraf.Accumulator, device *w
 	}
 
 	if len(peer.AllowedIPs) > 0 {
-		cidrs := []string{}
+		cidrs := make([]string, 0, len(peer.AllowedIPs))
 		for _, ip := range peer.AllowedIPs {
 			cidrs = append(cidrs, ip.String())
 		}

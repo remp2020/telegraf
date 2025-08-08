@@ -1,20 +1,26 @@
 # HTTP Listener v2 Input Plugin
 
-HTTP Listener v2 is a service input plugin that listens for metrics sent via
-HTTP. Metrics may be sent in any supported [data format][data_format]. For
-metrics in [InfluxDB Line Protocol][line_protocol] it's recommended to use the
-[`influxdb_listener`][influxdb_listener] or
-[`influxdb_v2_listener`][influxdb_v2_listener] instead.
+This plugin listens for metrics sent via HTTP in any of the supported
+[data formats][data_formats].
 
-**Note:** The plugin previously known as `http_listener` has been renamed
-`influxdb_listener`.  If you would like Telegraf to act as a proxy/relay for
-InfluxDB it is recommended to use [`influxdb_listener`][influxdb_listener] or
-[`influxdb_v2_listener`][influxdb_v2_listener].
+> [!NOTE]
+> If you would like Telegraf to act as a proxy/relay for InfluxDB v1 or
+> InfluxDB v2 it is recommended to use the
+> [influxdb__listener][influxdb_listener] or
+> [influxdb_v2_listener][influxdb_v2_listener] plugin instead.
+
+⭐ Telegraf v1.9.0
+🏷️ server
+💻 all
+
+[data_formats]: /docs/DATA_FORMATS_INPUT.md
+[influxdb_listener]: /plugins/inputs/influxdb_listener/README.md
+[influxdb_v2_listener]: /plugins/inputs/influxdb_v2_listener/README.md
 
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
-interval setting. Service plugins start a service to listens and waits for
+interval setting. Service plugins start a service to listen and wait for
 metrics or events to occur. Service plugins have two key differences from
 normal plugins:
 
@@ -36,8 +42,19 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 ```toml @sample.conf
 # Generic HTTP write listener
 [[inputs.http_listener_v2]]
-  ## Address and port to host HTTP listener on
-  service_address = ":8080"
+  ## Address to host HTTP listener on
+  ## can be prefixed by protocol tcp, or unix if not provided defaults to tcp
+  ## if unix network type provided it should be followed by absolute path for unix socket
+  service_address = "tcp://:8080"
+  ## service_address = "tcp://:8443"
+  ## service_address = "unix:///tmp/telegraf.sock"
+
+  ## Permission for unix sockets (only available for unix sockets)
+  ## This setting may not be respected by some platforms. To safely restrict
+  ## permissions it is recommended to place the socket into a previously
+  ## created directory with the desired permissions.
+  ##   ex: socket_mode = "777"
+  # socket_mode = ""
 
   ## Paths to listen to.
   # paths = ["/telegraf"]
@@ -124,8 +141,3 @@ Send query params:
 ```shell
 curl -i -XGET 'http://localhost:8080/telegraf?host=server01&value=0.42'
 ```
-
-[data_format]: /docs/DATA_FORMATS_INPUT.md
-[influxdb_listener]: /plugins/inputs/influxdb_listener/README.md
-[line_protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/
-[influxdb_v2_listener]: /plugins/inputs/influxdb_v2_listener/README.md

@@ -10,10 +10,10 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 )
 
-type MockProc struct{}
+type mockProc struct{}
 
-func (m *MockProc) getAllProcesses() ([]Process, error) {
-	procs := []Process{
+func (*mockProc) getAllProcesses() ([]process, error) {
+	procs := []process{
 		{Name: "process", PID: 1000},
 		{Name: "process2", PID: 1002},
 		{Name: "process2", PID: 1003},
@@ -23,10 +23,10 @@ func (m *MockProc) getAllProcesses() ([]Process, error) {
 
 func TestAssociateProcessesWithPIDs(t *testing.T) {
 	log := testutil.Logger{}
-	proc := &MockProc{}
+	proc := &mockProc{}
 	rdt := IntelRDT{
 		Log:       log,
-		Processor: proc,
+		processor: proc,
 	}
 	processes := []string{"process"}
 	expectedPID := "1000"
@@ -61,9 +61,9 @@ func TestSplitCSVLineIntoValues(t *testing.T) {
 	wrongLine := "2020-08-12 13:34:36,37,44,0.00,0,0.0"
 	splitCSV, err = splitCSVLineIntoValues(wrongLine)
 	require.Error(t, err)
-	require.Equal(t, "", splitCSV.timeValue)
-	require.Nil(t, nil, splitCSV.metricsValues)
-	require.Nil(t, nil, splitCSV.coreOrPIDsValues)
+	require.Empty(t, splitCSV.timeValue)
+	require.Nil(t, splitCSV.metricsValues)
+	require.Nil(t, splitCSV.coreOrPIDsValues)
 }
 
 func TestFindPIDsInMeasurement(t *testing.T) {
@@ -76,7 +76,7 @@ func TestFindPIDsInMeasurement(t *testing.T) {
 	line = "pids not included"
 	result, err = findPIDsInMeasurement(line)
 	require.Error(t, err)
-	require.Equal(t, "", result)
+	require.Empty(t, result)
 }
 
 func TestCreateArgsProcesses(t *testing.T) {

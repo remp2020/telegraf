@@ -22,7 +22,7 @@ type Serializer struct {
 	NestedFieldsInclude []string        `toml:"json_nested_fields_include"`
 	NestedFieldsExclude []string        `toml:"json_nested_fields_exclude"`
 
-	nestedfields filter.Filter
+	nestedFields filter.Filter
 }
 
 func (s *Serializer) Init() error {
@@ -48,7 +48,7 @@ func (s *Serializer) Init() error {
 		if err != nil {
 			return err
 		}
-		s.nestedfields = f
+		s.nestedFields = f
 	}
 
 	return nil
@@ -70,7 +70,7 @@ func (s *Serializer) Serialize(metric telegraf.Metric) ([]byte, error) {
 
 	serialized, err := json.Marshal(obj)
 	if err != nil {
-		return []byte{}, err
+		return nil, err
 	}
 	serialized = append(serialized, '\n')
 
@@ -101,7 +101,7 @@ func (s *Serializer) SerializeBatch(metrics []telegraf.Metric) ([]byte, error) {
 
 	serialized, err := json.Marshal(obj)
 	if err != nil {
-		return []byte{}, err
+		return nil, err
 	}
 	serialized = append(serialized, '\n')
 
@@ -128,7 +128,7 @@ func (s *Serializer) createObject(metric telegraf.Metric) map[string]interface{}
 			}
 		case string:
 			// Check for nested fields if any
-			if s.nestedfields != nil && s.nestedfields.Match(field.Key) {
+			if s.nestedFields != nil && s.nestedFields.Match(field.Key) {
 				bv := []byte(fv)
 				if json.Valid(bv) {
 					var nested interface{}
@@ -162,19 +162,8 @@ func (s *Serializer) transform(obj interface{}) (interface{}, error) {
 
 func init() {
 	serializers.Add("json",
-		func() serializers.Serializer {
+		func() telegraf.Serializer {
 			return &Serializer{}
 		},
 	)
-}
-
-// InitFromConfig is a compatibility function to construct the parser the old way
-func (s *Serializer) InitFromConfig(cfg *serializers.Config) error {
-	s.TimestampUnits = config.Duration(cfg.TimestampUnits)
-	s.TimestampFormat = cfg.TimestampFormat
-	s.Transformation = cfg.Transformation
-	s.NestedFieldsInclude = cfg.JSONNestedFieldInclude
-	s.NestedFieldsExclude = cfg.JSONNestedFieldExclude
-
-	return nil
 }

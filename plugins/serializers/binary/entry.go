@@ -11,6 +11,7 @@ import (
 
 type converterFunc func(value interface{}, order binary.ByteOrder) ([]byte, error)
 
+// Entry defines a single entry in the binary serializer configuration.
 type Entry struct {
 	ReadFrom         string `toml:"read_from"`         // field, tag, time, name
 	Name             string `toml:"name"`              // name of entry
@@ -59,25 +60,25 @@ func (e *Entry) fillDefaults() error {
 	case "":
 		return errors.New("missing data format")
 	case "float64":
-		e.converter = e.convertToFloat64
+		e.converter = convertToFloat64
 	case "float32":
-		e.converter = e.convertToFloat32
+		e.converter = convertToFloat32
 	case "uint64":
-		e.converter = e.convertToUint64
+		e.converter = convertToUint64
 	case "uint32":
-		e.converter = e.convertToUint32
+		e.converter = convertToUint32
 	case "uint16":
-		e.converter = e.convertToUint16
+		e.converter = convertToUint16
 	case "uint8":
-		e.converter = e.convertToUint8
+		e.converter = convertToUint8
 	case "int64":
-		e.converter = e.convertToInt64
+		e.converter = convertToInt64
 	case "int32":
-		e.converter = e.convertToInt32
+		e.converter = convertToInt32
 	case "int16":
-		e.converter = e.convertToInt16
+		e.converter = convertToInt16
 	case "int8":
-		e.converter = e.convertToInt8
+		e.converter = convertToInt8
 	case "string":
 		switch e.StringTerminator {
 		case "", "null":

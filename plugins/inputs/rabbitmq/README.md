@@ -1,12 +1,14 @@
 # RabbitMQ Input Plugin
 
-Reads metrics from RabbitMQ servers via the [Management Plugin][management].
+This plugin gathers statistics from [RabbitMQ][rabbitmq] servers via the
+[Management Plugin][mgmnt_plugin].
 
-For additional details reference the [RabbitMQ Management HTTP
-Stats][management-reference].
+⭐ Telegraf v0.1.5
+🏷️ server
+💻 all
 
-[management]: https://www.rabbitmq.com/management.html
-[management-reference]: https://raw.githack.com/rabbitmq/rabbitmq-management/rabbitmq_v3_6_9/priv/www/api/index.html
+[rabbitmq]: https://www.rabbitmq.com
+[mgmnt_plugin]: https://www.rabbitmq.com/management.html
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -33,8 +35,7 @@ to use them.
 [[inputs.rabbitmq]]
   ## Management Plugin url. (default: http://localhost:15672)
   # url = "http://localhost:15672"
-  ## Tag added to rabbitmq_overview series; deprecated: use tags
-  # name = "rmq-server-1"
+
   ## Credentials
   # username = "guest"
   # password = "guest"
@@ -59,11 +60,6 @@ to use them.
   ## A list of nodes to gather as the rabbitmq_node measurement. If not
   ## specified, metrics for all nodes are gathered.
   # nodes = ["rabbit@node1", "rabbit@node2"]
-
-  ## A list of queues to gather as the rabbitmq_queue measurement. If not
-  ## specified, metrics for all queues are gathered.
-  ## Deprecated in 1.6: Use queue_name_include instead.
-  # queues = ["telegraf"]
 
   ## A list of exchanges to gather as the rabbitmq_exchange measurement. If not
   ## specified, metrics for all exchanges are gathered.
@@ -238,16 +234,6 @@ to use them.
     - messages_confirm (int, count)
     - messages_publish (int, count)
     - messages_return_unroutable (int, count)
-
-## Sample Queries
-
-Message rates for the entire node can be calculated from total message
-counts. For instance, to get the rate of messages published per minute, use this
-query:
-
-```sql
-SELECT NON_NEGATIVE_DERIVATIVE(LAST("messages_published"), 1m) AS messages_published_rate FROM rabbitmq_overview WHERE time > now() - 10m GROUP BY time(1m)
-```
 
 ## Example Output
 

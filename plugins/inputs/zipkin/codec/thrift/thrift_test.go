@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/plugins/inputs/zipkin/codec/thrift/gen-go/zipkincore"
 )
@@ -49,9 +49,7 @@ func Test_endpointHost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := endpoint{tt.args.h}
-			if got := e.Host(); got != tt.want {
-				t.Errorf("host() = %v, want %v", got, tt.want)
-			}
+			require.Equal(t, tt.want, e.Host())
 		})
 	}
 }
@@ -85,9 +83,7 @@ func Test_endpointName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := endpoint{tt.args.h}
-			if got := e.Name(); got != tt.want {
-				t.Errorf("serviceName() = %v, want %v", got, tt.want)
-			}
+			require.Equal(t, tt.want, e.Name())
 		})
 	}
 }
@@ -111,7 +107,7 @@ func TestUnmarshalThrift(t *testing.T) {
 					ParentID:    addr(22964302721410078),
 					Timestamp:   addr(1498688360851331),
 					Duration:    addr(53106),
-					Annotations: []*zipkincore.Annotation{},
+					Annotations: make([]*zipkincore.Annotation, 0),
 					BinaryAnnotations: []*zipkincore.BinaryAnnotation{
 						{
 							Key:            "lc",
@@ -131,7 +127,7 @@ func TestUnmarshalThrift(t *testing.T) {
 					ParentID:    addr(22964302721410078),
 					Timestamp:   addr(1498688360904552),
 					Duration:    addr(50410),
-					Annotations: []*zipkincore.Annotation{},
+					Annotations: make([]*zipkincore.Annotation, 0),
 					BinaryAnnotations: []*zipkincore.BinaryAnnotation{
 						{
 							Key:            "lc",
@@ -198,14 +194,13 @@ func TestUnmarshalThrift(t *testing.T) {
 				t.Fatalf("Could not find file %s\n", tt.filename)
 			}
 
-			got, err := UnmarshalThrift(dat)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("UnmarshalThrift() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			got, err := unmarshalThrift(dat)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
-			if !cmp.Equal(tt.want, got) {
-				t.Errorf("UnmarshalThrift() got(-)/want(+): %s", cmp.Diff(tt.want, got))
-			}
+			require.Equal(t, tt.want, got)
 		})
 	}
 }

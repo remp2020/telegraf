@@ -4,15 +4,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
-	"github.com/influxdata/telegraf/testutil"
-	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestMemStats(t *testing.T) {
-	var mps system.MockPS
+	var mps psutil.MockPS
 	var err error
 	defer mps.AssertExpectations(t)
 	var acc testutil.Accumulator
@@ -55,7 +56,7 @@ func TestMemStats(t *testing.T) {
 	}
 
 	mps.On("VMStat").Return(vms, nil)
-	plugin := &MemStats{ps: &mps}
+	plugin := &Mem{ps: &mps}
 
 	err = plugin.Init()
 	require.NoError(t, err)

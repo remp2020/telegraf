@@ -15,6 +15,7 @@ type T struct {
 	markdown       []byte
 	newlineOffsets []int
 	sourceFlag     bool
+	pluginType     plugin
 
 	fails int
 }
@@ -36,9 +37,16 @@ func (t *T) assertNodef(n ast.Node, format string, args ...interface{}) {
 	t.printFailedAssertf(n, format, args...)
 }
 
+func (t *T) assertNodeLineOffsetf(n ast.Node, offset int, format string, args ...interface{}) {
+	t.printFileOffset(n, offset)
+	fmt.Printf(format+"\n", args...)
+	t.printRule(3)
+	t.fails++
+}
+
 func (t *T) assertLinef(line int, format string, args ...interface{}) {
-	//this func only exists to make the call stack to t.printRule the same depth
-	//as when called through assertf
+	// this func only exists to make the call stack to t.printRule the same depth
+	// as when called through assertf
 
 	t.assertLine2f(line, format, args...)
 }
@@ -79,14 +87,17 @@ func (t *T) line(offset int) int {
 }
 
 func (t *T) printFile(n ast.Node) {
+	t.printFileOffset(n, 0)
+}
+
+func (t *T) printFileOffset(n ast.Node, offset int) {
 	lines := n.Lines()
 	if lines == nil || lines.Len() == 0 {
 		t.printFileLine(0)
 		return
 	}
-	offset := lines.At(0).Start
-	line := t.line(offset)
-	t.printFileLine(line)
+	line := t.line(lines.At(0).Start)
+	t.printFileLine(line + offset)
 }
 
 func (t *T) printFileLine(line int) {
@@ -118,6 +129,7 @@ func (t *T) assertFirstChildRegexp(expectedPattern string, n ast.Node) {
 	}
 	c := n.FirstChild()
 
+	//nolint:staticcheck // need to use this since we aren't sure the type
 	actual := string(c.Text(t.markdown))
 
 	if !validRegexp.MatchString(actual) {

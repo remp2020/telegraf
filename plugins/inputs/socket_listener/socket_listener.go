@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
@@ -20,6 +21,7 @@ var once sync.Once
 
 type SocketListener struct {
 	ServiceAddress string          `toml:"service_address"`
+	TimeSource     string          `toml:"time_source"`
 	Log            telegraf.Logger `toml:"-"`
 	socket.Config
 	socket.SplitConfig
@@ -32,6 +34,10 @@ func (*SocketListener) SampleConfig() string {
 	return sampleConfig
 }
 
+func (sl *SocketListener) SetParser(parser telegraf.Parser) {
+	sl.parser = parser
+}
+
 func (sl *SocketListener) Init() error {
 	sock, err := sl.Config.NewSocket(sl.ServiceAddress, &sl.SplitConfig, sl.Log)
 	if err != nil {
@@ -42,28 +48,29 @@ func (sl *SocketListener) Init() error {
 	return nil
 }
 
-func (sl *SocketListener) Gather(_ telegraf.Accumulator) error {
-	return nil
-}
-
-func (sl *SocketListener) SetParser(parser telegraf.Parser) {
-	sl.parser = parser
-}
-
 func (sl *SocketListener) Start(acc telegraf.Accumulator) error {
 	// Create the callbacks for parsing the data and recording issues
-	onData := func(_ net.Addr, data []byte) {
+	onData := func(_ net.Addr, data []byte, receiveTime time.Time) {
 		metrics, err := sl.parser.Parse(data)
+
 		if err != nil {
 			acc.AddError(err)
 			return
 		}
+
 		if len(metrics) == 0 {
 			once.Do(func() {
 				sl.Log.Debug(internal.NoMetricsCreatedMsg)
 			})
 		}
+
 		for _, m := range metrics {
+			switch sl.TimeSource {
+			case "", "metric":
+			case "receive_time":
+				m.SetTime(receiveTime)
+			}
+
 			acc.AddMetric(m)
 		}
 	}
@@ -79,6 +86,10 @@ func (sl *SocketListener) Start(acc telegraf.Accumulator) error {
 	addr := sl.socket.Address()
 	sl.Log.Infof("Listening on %s://%s", addr.Network(), addr.String())
 
+	return nil
+}
+
+func (*SocketListener) Gather(telegraf.Accumulator) error {
 	return nil
 }
 

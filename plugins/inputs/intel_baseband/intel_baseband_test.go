@@ -20,7 +20,7 @@ func TestInit(t *testing.T) {
 
 		err := baseband.Init()
 
-		//check default variables
+		// check default variables
 		// check empty values
 		require.Empty(t, baseband.SocketPath)
 		require.Empty(t, baseband.FileLogPath)
@@ -63,7 +63,7 @@ func TestInit(t *testing.T) {
 		defer tempSocket.Close()
 
 		logTempFile := newTempLogFile(t)
-		defer logTempFile.Close()
+		defer logTempFile.close()
 
 		baseband.SocketPath = tempSocket.pathToSocket
 		baseband.FileLogPath = logTempFile.pathToFile
@@ -129,6 +129,9 @@ func (ts *tempSocket) Close() {
 }
 
 func newTempSocket(t *testing.T) *tempSocket {
+	// The Maximum length of the socket path is 104/108 characters, path created with t.TempDir() is too long for some cases
+	// (it combines test name with subtest name and some random numbers in the path). Therefore, in this case, it is safer to stick with `os.MkdirTemp()`.
+	//nolint:usetesting // Ignore "os.MkdirTemp() could be replaced by t.TempDir() in newTempSocket" finding.
 	dirPath, err := os.MkdirTemp("", "test-socket")
 	require.NoError(t, err)
 
@@ -148,7 +151,7 @@ type tempLogFile struct {
 	file       *os.File
 }
 
-func (tlf *tempLogFile) Close() {
+func (tlf *tempLogFile) close() {
 	var err error
 	if err = tlf.file.Close(); err != nil {
 		panic(err)
@@ -160,7 +163,7 @@ func (tlf *tempLogFile) Close() {
 }
 
 func newTempLogFile(t *testing.T) *tempLogFile {
-	file, err := os.CreateTemp("", "*.log")
+	file, err := os.CreateTemp(t.TempDir(), "*.log")
 	require.NoError(t, err)
 
 	return &tempLogFile{

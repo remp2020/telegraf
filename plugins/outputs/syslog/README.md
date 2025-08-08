@@ -1,13 +1,24 @@
 # Syslog Output Plugin
 
-The syslog output plugin sends syslog messages transmitted over
-[UDP](https://tools.ietf.org/html/rfc5426) or
-[TCP](https://tools.ietf.org/html/rfc6587) or
-[TLS](https://tools.ietf.org/html/rfc5425), with or without the octet counting
-framing.
+This plugin writes metrics as syslog messages via UDP in
+[RFC5426 format][rfc5426] or via TCP in [RFC6587 format][rfc6587] or via
+TLS in [RFC5425 format][rfc5425], with or without the octet counting framing.
 
-Syslog messages are formatted according to [RFC
-5424](https://tools.ietf.org/html/rfc5424).
+> [!IMPORTANT]
+> Syslog messages are formatted according to [RFC5424][rfc5424] limiting the
+> field sizes when sending messages according to the
+> [syslog message format][msgformat] section of the RFC. Sending messages beyond
+> these sizes may get dropped by a strict receiver silently.
+
+⭐ Telegraf v1.11.0
+🏷️ logging
+💻 all
+
+[rfc5426]: https://tools.ietf.org/html/rfc5426
+[rfc6587]: https://tools.ietf.org/html/rfc6587
+[rfc5425]: https://tools.ietf.org/html/rfc5425
+[rfc5424]: https://tools.ietf.org/html/rfc5424
+[msgformat]: https://datatracker.ietf.org/doc/html/rfc5424#section-6
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -17,6 +28,23 @@ modify metrics, tags, and field or create aliases and configure ordering, etc.
 See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Startup error behavior options <!-- @/docs/includes/startup_error_behavior.md -->
+
+In addition to the plugin-specific and global configuration settings the plugin
+supports options for specifying the behavior when experiencing startup errors
+using the `startup_error_behavior` setting. Available values are:
+
+- `error`:  Telegraf with stop and exit in case of startup errors. This is the
+            default behavior.
+- `ignore`: Telegraf will ignore startup errors for this plugin and disables it
+            but continues processing for all other plugins.
+- `retry`:  Telegraf will try to startup the plugin in every gather or write
+            cycle in case of startup errors. The plugin is disabled until
+            the startup succeeds.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
+            in case probing fails. If the plugin does not support probing, Telegraf will
+            behave as if `ignore` was set instead.
 
 ## Configuration
 

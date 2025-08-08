@@ -6,32 +6,34 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	docker "github.com/docker/docker/client"
 )
 
-/*This file is inherited from telegraf docker input plugin*/
+// This file is inherited from telegraf docker input plugin
 var (
 	version        = "1.24"
 	defaultHeaders = map[string]string{"User-Agent": "engine-api-cli-1.0"}
 )
 
-type Client interface {
-	ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error)
+type dockerClient interface {
+	// ContainerList lists the containers in the Docker environment.
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	// ContainerLogs retrieves the logs of a specific container.
 	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
-	ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error)
+	// ContainerInspect inspects a specific container and retrieves its details.
+	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 }
 
-func NewEnvClient() (Client, error) {
+func newEnvClient() (dockerClient, error) {
 	client, err := docker.NewClientWithOpts(docker.FromEnv)
 	if err != nil {
 		return nil, err
 	}
-	return &SocketClient{client}, nil
+	return &socketClient{client}, nil
 }
 
-func NewClient(host string, tlsConfig *tls.Config) (Client, error) {
+func newClient(host string, tlsConfig *tls.Config) (dockerClient, error) {
 	transport := &http.Transport{
 		TLSClientConfig: tlsConfig,
 	}
@@ -45,20 +47,24 @@ func NewClient(host string, tlsConfig *tls.Config) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SocketClient{client}, nil
+	return &socketClient{client}, nil
 }
 
-type SocketClient struct {
+type socketClient struct {
 	client *docker.Client
 }
 
-func (c *SocketClient) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
+// ContainerList lists the containers in the Docker environment.
+func (c *socketClient) ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 	return c.client.ContainerList(ctx, options)
 }
 
-func (c *SocketClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+// ContainerLogs retrieves the logs of a specific container.
+func (c *socketClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
 	return c.client.ContainerLogs(ctx, containerID, options)
 }
-func (c *SocketClient) ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error) {
+
+// ContainerInspect inspects a specific container and retrieves its details.
+func (c *socketClient) ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error) {
 	return c.client.ContainerInspect(ctx, containerID)
 }

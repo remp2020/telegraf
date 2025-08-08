@@ -28,7 +28,7 @@ import (
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal/globpath"
 	"github.com/influxdata/telegraf/plugins/common/proxy"
-	commontls "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -38,14 +38,15 @@ var sampleConfig string
 // Regexp for handling file URIs containing a drive letter and leading slash
 var reDriveLetter = regexp.MustCompile(`^/([a-zA-Z]:/)`)
 
-// X509Cert holds the configuration of the plugin.
 type X509Cert struct {
 	Sources          []string        `toml:"sources"`
 	Timeout          config.Duration `toml:"timeout"`
 	ServerName       string          `toml:"server_name"`
+	Password         config.Secret   `toml:"password"`
 	ExcludeRootCerts bool            `toml:"exclude_root_certs"`
+	PadSerial        bool            `toml:"pad_serial_with_zeroes"`
 	Log              telegraf.Logger `toml:"-"`
-	commontls.ClientConfig
+	common_tls.ClientConfig
 	proxy.TCPProxy
 
 	tlsCfg    *tls.Config
@@ -91,7 +92,6 @@ func (c *X509Cert) Init() error {
 	return nil
 }
 
-// Gather adds metrics into the accumulator.
 func (c *X509Cert) Gather(acc telegraf.Accumulator) error {
 	now := time.Now()
 
@@ -132,7 +132,7 @@ func (c *X509Cert) Gather(acc telegraf.Accumulator) error {
 
 		for i, cert := range certs {
 			fields := getFields(cert, now)
-			tags := getTags(cert, location.String())
+			tags := c.getTags(cert, location.String())
 
 			// Extract the verification result
 			err := results[i]
@@ -215,7 +215,7 @@ func (c *X509Cert) Gather(acc telegraf.Accumulator) error {
 func (c *X509Cert) processCertificate(certificate *x509.Certificate, opts x509.VerifyOptions) error {
 	chains, err := certificate.Verify(opts)
 	if err != nil {
-		c.Log.Debugf("Invalid certificate %v", certificate.SerialNumber.Text(16))
+		c.Log.Debugf("Invalid certificate %v", c.getSerialNumberString(certificate))
 		c.Log.Debugf("  cert DNS names:    %v", certificate.DNSNames)
 		c.Log.Debugf("  cert IP addresses: %v", certificate.IPAddresses)
 		c.Log.Debugf("  cert subject:      %v", certificate.Subject)
@@ -445,6 +445,12 @@ func (c *X509Cert) getCert(u *url.URL, timeout time.Duration) ([]*x509.Certifica
 		ocspresp := tlsConn.ConnectionState().OCSPResponse
 
 		return certs, &ocspresp, nil
+	case "jks":
+		certs, err := c.processJKS(u.Path)
+		return certs, nil, err
+	case "pkcs12":
+		certs, err := c.processPKCS12(u.Path)
+		return certs, nil, err
 	default:
 		return nil, nil, fmt.Errorf("unsupported scheme %q in location %s", u.Scheme, u.String())
 	}
@@ -466,11 +472,11 @@ func getFields(cert *x509.Certificate, now time.Time) map[string]interface{} {
 	return fields
 }
 
-func getTags(cert *x509.Certificate, location string) map[string]string {
+func (c *X509Cert) getTags(cert *x509.Certificate, location string) map[string]string {
 	tags := map[string]string{
 		"source":               location,
 		"common_name":          cert.Subject.CommonName,
-		"serial_number":        cert.SerialNumber.Text(16),
+		"serial_number":        c.getSerialNumberString(cert),
 		"signature_algorithm":  cert.SignatureAlgorithm.String(),
 		"public_key_algorithm": cert.PublicKeyAlgorithm.String(),
 	}
@@ -511,7 +517,7 @@ func (c *X509Cert) collectCertURLs() []*url.URL {
 
 	for _, path := range c.globpaths {
 		files := path.Match()
-		if len(files) <= 0 {
+		if len(files) == 0 {
 			c.Log.Errorf("could not find file: %v", path.GetRoots())
 			continue
 		}
@@ -522,6 +528,13 @@ func (c *X509Cert) collectCertURLs() []*url.URL {
 	}
 
 	return urls
+}
+
+func (c *X509Cert) getSerialNumberString(cert *x509.Certificate) string {
+	if c.PadSerial {
+		return fmt.Sprintf("%016x", cert.SerialNumber)
+	}
+	return cert.SerialNumber.Text(16)
 }
 
 func init() {

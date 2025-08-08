@@ -15,12 +15,6 @@ type MinMax struct {
 	cache map[uint64]aggregate
 }
 
-func NewMinMax() telegraf.Aggregator {
-	mm := &MinMax{}
-	mm.Reset()
-	return mm
-}
-
 type aggregate struct {
 	fields map[string]minmax
 	name   string
@@ -81,7 +75,7 @@ func (m *MinMax) Add(in telegraf.Metric) {
 
 func (m *MinMax) Push(acc telegraf.Accumulator) {
 	for _, aggregate := range m.cache {
-		fields := map[string]interface{}{}
+		fields := make(map[string]interface{}, len(aggregate.fields))
 		for k, v := range aggregate.fields {
 			fields[k+"_min"] = v.min
 			fields[k+"_max"] = v.max
@@ -107,8 +101,14 @@ func convert(in interface{}) (float64, bool) {
 	}
 }
 
+func newMinMax() telegraf.Aggregator {
+	mm := &MinMax{}
+	mm.Reset()
+	return mm
+}
+
 func init() {
 	aggregators.Add("minmax", func() telegraf.Aggregator {
-		return NewMinMax()
+		return newMinMax()
 	})
 }

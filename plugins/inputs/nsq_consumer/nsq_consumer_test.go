@@ -36,18 +36,19 @@ func TestReadsMetricsFromNSQ(t *testing.T) {
 		{100 * time.Millisecond, -1, []byte("exit")},
 	}
 
-	addr, _ := net.ResolveTCPAddr("tcp", "127.0.0.1:4155")
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:4155")
+	require.NoError(t, err)
 	newMockNSQD(t, script, addr.String())
 
 	consumer := &NSQConsumer{
 		Log:                    testutil.Logger{},
-		Server:                 "127.0.0.1:4155",
 		Topic:                  "telegraf",
 		Channel:                "consume",
 		MaxInFlight:            1,
 		MaxUndeliveredMessages: defaultMaxUndeliveredMessages,
 		Nsqd:                   []string{"127.0.0.1:4155"},
 	}
+	require.NoError(t, consumer.Init())
 
 	p := &influx.Parser{}
 	require.NoError(t, p.Init())
@@ -79,7 +80,7 @@ func waitForPoint(acc *testutil.Accumulator, t *testing.T) {
 	defer ticker.Stop()
 	counter := 0
 
-	//nolint:gosimple // for-select used on purpose
+	//nolint:staticcheck // for-select used on purpose
 	for {
 		select {
 		case <-ticker.C:
@@ -186,7 +187,11 @@ func (n *mockNSQD) handle(conn net.Conn) {
 					goto exit
 				}
 			case bytes.Equal(params[0], []byte("RDY")):
-				rdy, _ := strconv.Atoi(string(params[1]))
+				rdy, err := strconv.Atoi(string(params[1]))
+				if err != nil {
+					log.Print(err.Error())
+					goto exit
+				}
 				rdyCount = rdy
 			case bytes.Equal(params[0], []byte("FIN")):
 			case bytes.Equal(params[0], []byte("REQ")):

@@ -2,11 +2,12 @@ package diskio
 
 import (
 	"testing"
+	"time"
 
-	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/stretchr/testify/require"
 
-	"github.com/influxdata/telegraf/plugins/inputs/system"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -102,7 +103,7 @@ func TestDiskIO(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var mps system.MockPS
+			var mps psutil.MockPS
 			mps.On("DiskIO").Return(tt.result.stats, tt.result.err)
 
 			var acc testutil.Accumulator
@@ -126,4 +127,66 @@ func TestDiskIO(t *testing.T) {
 			require.True(t, mps.AssertExpectations(t))
 		})
 	}
+}
+
+func TestDiskIOUtil(t *testing.T) {
+	cts := map[string]disk.IOCountersStat{
+		"sda": {
+			ReadCount:        888,
+			WriteCount:       5341,
+			ReadBytes:        100000,
+			WriteBytes:       200000,
+			ReadTime:         7123,
+			WriteTime:        9087,
+			MergedReadCount:  11,
+			MergedWriteCount: 12,
+			Name:             "sda",
+			IoTime:           123552,
+			SerialNumber:     "ab-123-ad",
+		},
+	}
+
+	cts2 := map[string]disk.IOCountersStat{
+		"sda": {
+			ReadCount:        1000,
+			WriteCount:       6000,
+			ReadBytes:        200000,
+			WriteBytes:       300000,
+			ReadTime:         8123,
+			WriteTime:        9187,
+			MergedReadCount:  16,
+			MergedWriteCount: 30,
+			Name:             "sda",
+			IoTime:           163552,
+			SerialNumber:     "ab-123-ad",
+		},
+	}
+
+	var acc testutil.Accumulator
+	var mps psutil.MockPS
+	mps.On("DiskIO").Return(cts, nil)
+	diskio := &DiskIO{
+		Log:     testutil.Logger{},
+		Devices: []string{"sd*"},
+		ps:      &mps,
+	}
+	require.NoError(t, diskio.Init())
+	// gather
+	require.NoError(t, diskio.Gather(&acc))
+	// sleep
+	time.Sleep(1 * time.Second)
+	// gather twice
+	mps2 := psutil.MockPS{}
+	mps2.On("DiskIO").Return(cts2, nil)
+	diskio.ps = &mps2
+
+	err := diskio.Gather(&acc)
+	require.NoError(t, err)
+	require.True(t, acc.HasField("diskio", "io_util"), "miss io util")
+	require.True(t, acc.HasField("diskio", "io_svctm"), "miss io_svctm")
+	require.True(t, acc.HasField("diskio", "io_await"), "miss io_await")
+
+	require.True(t, acc.HasFloatField("diskio", "io_util"), "io_util not have value")
+	require.True(t, acc.HasFloatField("diskio", "io_svctm"), "io_svctm not have value")
+	require.True(t, acc.HasFloatField("diskio", "io_await"), "io_await not have value")
 }

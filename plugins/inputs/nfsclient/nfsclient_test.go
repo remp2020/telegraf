@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func getMountStatsPath() string {
@@ -94,12 +95,13 @@ func TestNFSClientProcessStat(t *testing.T) {
 	nfsclient := NFSClient{}
 	nfsclient.Fullstat = false
 
-	file, _ := os.Open(getMountStatsPath())
+	file, err := os.Open(getMountStatsPath())
+	require.NoError(t, err)
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 
-	err := nfsclient.processText(scanner, &acc)
+	err = nfsclient.processText(scanner, &acc)
 	require.NoError(t, err)
 
 	fieldsReadstat := map[string]interface{}{
@@ -142,12 +144,13 @@ func TestNFSClientProcessFull(t *testing.T) {
 	nfsclient := NFSClient{}
 	nfsclient.Fullstat = true
 
-	file, _ := os.Open(getMountStatsPath())
+	file, err := os.Open(getMountStatsPath())
+	require.NoError(t, err)
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 
-	err := nfsclient.processText(scanner, &acc)
+	err = nfsclient.processText(scanner, &acc)
 	require.NoError(t, err)
 
 	fieldsEvents := map[string]interface{}{
@@ -211,4 +214,128 @@ func TestNFSClientFileDoesNotExist(t *testing.T) {
 	nfsclient := NFSClient{Fullstat: true}
 	nfsclient.mountstatsPath = "/does_not_exist"
 	require.Error(t, nfsclient.Gather(&acc))
+}
+
+func TestNFSClientProcessTextWithIncludeExclude(t *testing.T) {
+	// Test cases for different include/exclude scenarios
+	testCases := []struct {
+		name             string
+		includeMounts    []string
+		excludeMounts    []string
+		expectedMounts   []string
+		unexpectedMounts []string
+	}{
+		{
+			name:           "No filters",
+			includeMounts:  nil,
+			excludeMounts:  nil,
+			expectedMounts: []string{"/A", "/B"}, // All mounts should be included
+		},
+		{
+			name:             "Exclude one mount",
+			includeMounts:    nil,
+			excludeMounts:    []string{"^/A$"},
+			expectedMounts:   []string{"/B"},
+			unexpectedMounts: []string{"/A"},
+		},
+		{
+			name:             "Include one mount",
+			includeMounts:    []string{"^/A$"},
+			excludeMounts:    nil,
+			expectedMounts:   []string{"/A"},
+			unexpectedMounts: []string{"/B"},
+		},
+		{
+			name:             "Include and exclude with regex",
+			includeMounts:    []string{"^/"},
+			excludeMounts:    []string{"^/A$"},
+			expectedMounts:   []string{"/B"},
+			unexpectedMounts: []string{"/A"},
+		},
+		{
+			name:             "Exclude with prefix pattern",
+			includeMounts:    nil,
+			excludeMounts:    []string{"^/A"},
+			expectedMounts:   []string{"/B"},
+			unexpectedMounts: []string{"/A"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create NFS client with test configuration
+			nfsclient := NFSClient{
+				IncludeMounts: tc.includeMounts,
+				ExcludeMounts: tc.excludeMounts,
+				Fullstat:      true,
+				Log:           testutil.Logger{},
+			}
+			require.NoError(t, nfsclient.Init())
+
+			// Open the test data
+			file, err := os.Open(getMountStatsPath())
+			require.NoError(t, err)
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+
+			// Process the data
+			var acc testutil.Accumulator
+			require.NoError(t, nfsclient.processText(scanner, &acc))
+
+			// Verify expected mounts are present
+			for _, mount := range tc.expectedMounts {
+				found := false
+				for _, metric := range acc.Metrics {
+					if mountpoint, exists := metric.Tags["mountpoint"]; exists && mountpoint == mount {
+						found = true
+						break
+					}
+				}
+				require.True(t, found, "Expected mount %s not found", mount)
+			}
+
+			// Verify unexpected mounts are absent
+			for _, mount := range tc.unexpectedMounts {
+				found := false
+				for _, metric := range acc.Metrics {
+					if mountpoint, exists := metric.Tags["mountpoint"]; exists && mountpoint == mount {
+						found = true
+						break
+					}
+				}
+				require.False(t, found, "Unexpected mount %s found", mount)
+			}
+		})
+	}
+}
+
+func TestNFSClientInvalidIncludeRegex(t *testing.T) {
+	// Test that invalid include regex patterns are properly reported as errors during Init
+	nfsclient := &NFSClient{
+		IncludeMounts: []string{"[invalid"},
+		ExcludeMounts: nil,
+		Fullstat:      true,
+		Log:           testutil.Logger{},
+	}
+
+	// Init should fail with an error due to invalid regex
+	err := nfsclient.Init()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to compile include mount pattern")
+}
+
+func TestNFSClientInvalidExcludeRegex(t *testing.T) {
+	// Test that invalid exclude regex patterns are properly reported as errors during Init
+	nfsclient := &NFSClient{
+		IncludeMounts: nil,
+		ExcludeMounts: []string{"[also-invalid"},
+		Fullstat:      true,
+		Log:           testutil.Logger{},
+	}
+
+	// Init should fail with an error due to invalid regex
+	err := nfsclient.Init()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to compile exclude mount pattern")
 }

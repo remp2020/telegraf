@@ -44,7 +44,7 @@ func newFcgiClient(timeout time.Duration, h string, args ...interface{}) (*conn,
 	return &conn{rwc: con}, nil
 }
 
-func (c *conn) Request(env map[string]string, requestData string) (retout []byte, reterr []byte, err error) {
+func (c *conn) request(env map[string]string, requestData string) (retout, reterr []byte, err error) {
 	defer c.rwc.Close()
 	var reqID uint16 = 1
 
@@ -84,12 +84,12 @@ READ_LOOP:
 			break
 		}
 
-		switch {
-		case rec.h.Type == typeStdout:
+		switch rec.h.Type {
+		case typeStdout:
 			retout = append(retout, rec.content()...)
-		case rec.h.Type == typeStderr:
+		case typeStderr:
 			reterr = append(reterr, rec.content()...)
-		case rec.h.Type == typeEndRequest:
+		case typeEndRequest:
 			fallthrough
 		default:
 			break READ_LOOP

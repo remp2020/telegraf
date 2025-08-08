@@ -1,15 +1,17 @@
 # Windows Eventlog Input Plugin
 
-Telegraf's win_eventlog input plugin gathers metrics from the windows event log.
+This plugin gathers metrics from the [Windows event log][win_event_log] on
+Windows Vista and higher.
 
-## Collect Windows Event Log messages
+> [!NOTE]
+> Some event channels, like the System Log, require Administrator permissions
+> to subscribe.
 
-Supports Windows Vista and higher.
+⭐ Telegraf v1.16.0
+🏷️ logging
+💻 windows
 
-Telegraf should have Administrator permissions to subscribe for some of the
-Windows Events Channels, like System Log.
-
-Telegraf minimum version: Telegraf 1.16.0
+[win_event_log]: https://learn.microsoft.com/en-us/shows/inside/event-viewer
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -120,6 +122,11 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## The values below are included by default.
   ## Globbing supported (e.g. "Level*" matches both "Level" and "LevelText")
   # exclude_empty = ["Task", "Opcode", "*ActivityID", "UserID"]
+
+  ## Maximum memory size available for an event to render
+  ## Events larger that that are not processed and will not create a metric.
+  ## NOTE: As events are encoded in UTF-16 we need two bytes per character.
+  # event_size_limit = "64KB"
 ```
 
 ### Filtering
@@ -266,7 +273,7 @@ CbsPackageChangeState_Client = "UpdateAgentLCU"
 If there are more than one field with the same name, all those fields are given
 suffix with number: `_1`, `_2` and so on.
 
-## Localization
+### Localization
 
 Human readable Event Description is in the Message field. But it is better to be
 skipped in favour of the Event XML values, because they are more

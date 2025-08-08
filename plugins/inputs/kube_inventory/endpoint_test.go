@@ -4,17 +4,16 @@ import (
 	"testing"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestEndpoint(t *testing.T) {
-	cli := &client{}
-
 	now := time.Now()
 	now = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 1, 36, 0, now.Location())
 
@@ -28,7 +27,7 @@ func TestEndpoint(t *testing.T) {
 			name: "no endpoints",
 			handler: &mockHandler{
 				responseMap: map[string]interface{}{
-					"/endpoints/": &v1.EndpointsList{},
+					"/endpoints/": &discoveryv1.EndpointSliceList{},
 				},
 			},
 			hasError: false,
@@ -37,28 +36,27 @@ func TestEndpoint(t *testing.T) {
 			name: "collect ready endpoints",
 			handler: &mockHandler{
 				responseMap: map[string]interface{}{
-					"/endpoints/": &v1.EndpointsList{
-						Items: []v1.Endpoints{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
 							{
-								Subsets: []v1.EndpointSubset{
+								Endpoints: []discoveryv1.Endpoint{
 									{
-										Addresses: []v1.EndpointAddress{
-											{
-												Hostname: "storage-6",
-												NodeName: toStrPtr("b.storage.internal"),
-												TargetRef: &v1.ObjectReference{
-													Kind: "pod",
-													Name: "storage-6",
-												},
-											},
+										Hostname: toPtr("storage-6"),
+										NodeName: toPtr("b.storage.internal"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-6",
 										},
-										Ports: []v1.EndpointPort{
-											{
-												Name:     "server",
-												Protocol: "TCP",
-												Port:     8080,
-											},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: toPtr(true),
 										},
+									},
+								},
+								Ports: []discoveryv1.EndpointPort{
+									{
+										Name:     toPtr("server"),
+										Protocol: toPtr(corev1.Protocol("TCP")),
+										Port:     toPtr(int32(8080)),
 									},
 								},
 								ObjectMeta: metav1.ObjectMeta{
@@ -99,27 +97,19 @@ func TestEndpoint(t *testing.T) {
 			name: "collect notready endpoints",
 			handler: &mockHandler{
 				responseMap: map[string]interface{}{
-					"/endpoints/": &v1.EndpointsList{
-						Items: []v1.Endpoints{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
 							{
-								Subsets: []v1.EndpointSubset{
+								Endpoints: []discoveryv1.Endpoint{
 									{
-										NotReadyAddresses: []v1.EndpointAddress{
-											{
-												Hostname: "storage-6",
-												NodeName: toStrPtr("b.storage.internal"),
-												TargetRef: &v1.ObjectReference{
-													Kind: "pod",
-													Name: "storage-6",
-												},
-											},
+										Hostname: toPtr("storage-6"),
+										NodeName: toPtr("b.storage.internal"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-6",
 										},
-										Ports: []v1.EndpointPort{
-											{
-												Name:     "server",
-												Protocol: "TCP",
-												Port:     8080,
-											},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: toPtr(false),
 										},
 									},
 								},
@@ -128,6 +118,13 @@ func TestEndpoint(t *testing.T) {
 									Namespace:         "ns1",
 									Name:              "storage",
 									CreationTimestamp: metav1.Time{Time: now},
+								},
+								Ports: []discoveryv1.EndpointPort{
+									{
+										Name:     toPtr("server"),
+										Protocol: toPtr(corev1.Protocol("TCP")),
+										Port:     toPtr(int32(8080)),
+									},
 								},
 							},
 						},
@@ -161,44 +158,28 @@ func TestEndpoint(t *testing.T) {
 			name: "endpoints missing node_name",
 			handler: &mockHandler{
 				responseMap: map[string]interface{}{
-					"/endpoints/": &v1.EndpointsList{
-						Items: []v1.Endpoints{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
 							{
-								Subsets: []v1.EndpointSubset{
+								Endpoints: []discoveryv1.Endpoint{
 									{
-										NotReadyAddresses: []v1.EndpointAddress{
-											{
-												Hostname: "storage-6",
-												TargetRef: &v1.ObjectReference{
-													Kind: "pod",
-													Name: "storage-6",
-												},
-											},
+										Hostname: toPtr("storage-6"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-6",
 										},
-										Ports: []v1.EndpointPort{
-											{
-												Name:     "server",
-												Protocol: "TCP",
-												Port:     8080,
-											},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: toPtr(false),
 										},
 									},
 									{
-										Addresses: []v1.EndpointAddress{
-											{
-												Hostname: "storage-12",
-												TargetRef: &v1.ObjectReference{
-													Kind: "pod",
-													Name: "storage-12",
-												},
-											},
+										Hostname: toPtr("storage-12"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-12",
 										},
-										Ports: []v1.EndpointPort{
-											{
-												Name:     "server",
-												Protocol: "TCP",
-												Port:     8080,
-											},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: toPtr(true),
 										},
 									},
 								},
@@ -207,6 +188,13 @@ func TestEndpoint(t *testing.T) {
 									Namespace:         "ns1",
 									Name:              "storage",
 									CreationTimestamp: metav1.Time{Time: now},
+								},
+								Ports: []discoveryv1.EndpointPort{
+									{
+										Name:     toPtr("server"),
+										Protocol: toPtr(corev1.Protocol("TCP")),
+										Port:     toPtr(int32(8080)),
+									},
 								},
 							},
 						},
@@ -256,12 +244,9 @@ func TestEndpoint(t *testing.T) {
 	}
 
 	for _, v := range tests {
-		ks := &KubernetesInventory{
-			client: cli,
-		}
 		acc := new(testutil.Accumulator)
-		for _, endpoint := range ((v.handler.responseMap["/endpoints/"]).(*v1.EndpointsList)).Items {
-			ks.gatherEndpoint(endpoint, acc)
+		for _, endpoint := range ((v.handler.responseMap["/endpoints/"]).(*discoveryv1.EndpointSliceList)).Items {
+			gatherEndpoint(endpoint, acc)
 		}
 
 		err := acc.FirstError()

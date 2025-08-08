@@ -68,8 +68,8 @@ func TestZabbixAutoregisterPush(t *testing.T) {
 	zabbixSender.Reset()
 	z.autoregisterPush()
 	require.Len(t, z.autoregisterLastSend, 1)
-	require.Equal(t, "", zabbixSender.hostname)
-	require.Equal(t, "", zabbixSender.hostMetadata)
+	require.Empty(t, zabbixSender.hostname)
+	require.Empty(t, zabbixSender.hostMetadata)
 
 	// Test that autoregister is sent if last send was more than autoregisterSendPeriod ago.
 	z.Autoregister = "autoregister"
@@ -112,11 +112,7 @@ func (m *mockZabbixSender) Send(packet *zabbix.Packet) (res zabbix.Response, err
 	return zabbix.Response{}, nil
 }
 
-func (m *mockZabbixSender) SendMetrics(metrics []*zabbix.Metric) (
-	resActive zabbix.Response,
-	resTrapper zabbix.Response,
-	err error,
-) {
+func (m *mockZabbixSender) SendMetrics(metrics []*zabbix.Metric) (resActive, resTrapper zabbix.Response, err error) {
 	m.sendMetrics = append(m.sendMetrics, metrics...)
 	return zabbix.Response{}, zabbix.Response{}, nil
 }

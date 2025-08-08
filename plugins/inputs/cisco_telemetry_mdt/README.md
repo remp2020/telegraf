@@ -1,21 +1,25 @@
 # Cisco Model-Driven Telemetry (MDT) Input Plugin
 
-Cisco model-driven telemetry (MDT) is an input plugin that consumes telemetry
-data from Cisco IOS XR, IOS XE and NX-OS platforms. It supports TCP & GRPC
-dialout transports.  RPC-based transport can utilize TLS for authentication and
-encryption.  Telemetry data is expected to be GPB-KV (self-describing-gpb)
-encoded.
+This plugin consumes [Cisco model-driven telemetry (MDT)][cisco_mdt] data from
+Cisco IOS XR, IOS XE and NX-OS platforms via TCP or GRPC. GRPC-based transport
+can utilize TLS for authentication and encryption. Telemetry data is expected to
+be GPB-KV (self-describing-gpb) encoded.
 
 The GRPC dialout transport is supported on various IOS XR (64-bit) 6.1.x and
-later, IOS XE 16.10 and later, as well as NX-OS 7.x and later platforms.
-
-The TCP dialout transport is supported on IOS XR (32-bit and 64-bit) 6.1.x and
+later, IOS XE 16.10 and later, as well as NX-OS 7.x and later platforms. The
+TCP dialout transport is supported on IOS XR (32-bit and 64-bit) 6.1.x and
 later.
+
+⭐ Telegraf v1.11.0
+🏷️ applications
+💻 all
+
+[cisco_mdt]: https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9300-series-switches/model-driven-telemetry-wp.html
 
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
-interval setting. Service plugins start a service to listens and waits for
+interval setting. Service plugins start a service to listen and wait for
 metrics or events to occur. Service plugins have two key differences from
 normal plugins:
 

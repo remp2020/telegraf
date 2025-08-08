@@ -15,56 +15,73 @@ const DefaultServiceName = "unknown"
 
 // Decoder decodes the bytes and returns a trace
 type Decoder interface {
+	// Decode decodes the given byte slice into a slice of Spans.
 	Decode(octets []byte) ([]Span, error)
 }
 
-// Span are created by instrumentation in RPC clients or servers
+// Span represents a span created by instrumentation in RPC clients or servers.
 type Span interface {
+	// Trace returns the trace ID of the span.
 	Trace() (string, error)
+	// SpanID returns the span ID.
 	SpanID() (string, error)
+	// Parent returns the parent span ID.
 	Parent() (string, error)
+	// Name returns the name of the span.
 	Name() string
+	// Annotations returns the annotations of the span.
 	Annotations() []Annotation
+	// BinaryAnnotations returns the binary annotations of the span.
 	BinaryAnnotations() ([]BinaryAnnotation, error)
+	// Timestamp returns the timestamp of the span.
 	Timestamp() time.Time
+	// Duration returns the duration of the span.
 	Duration() time.Duration
 }
 
 // Annotation represents an event that explains latency with a timestamp.
 type Annotation interface {
+	// Timestamp returns the timestamp of the annotation.
 	Timestamp() time.Time
+	// Value returns the value of the annotation.
 	Value() string
+	// Host returns the endpoint associated with the annotation.
 	Host() Endpoint
 }
 
-// BinaryAnnotation represent tags applied to a Span to give it context
+// BinaryAnnotation represents tags applied to a Span to give it context.
 type BinaryAnnotation interface {
+	// Key returns the key of the binary annotation.
 	Key() string
+	// Value returns the value of the binary annotation.
 	Value() string
+	// Host returns the endpoint associated with the binary annotation.
 	Host() Endpoint
 }
 
-// Endpoint represents the network context of a service recording an annotation
+// Endpoint represents the network context of a service recording an annotation.
 type Endpoint interface {
+	// Host returns the host address of the endpoint.
 	Host() string
+	// Name returns the name of the service associated with the endpoint.
 	Name() string
 }
 
-// DefaultEndpoint is used if the annotations have no endpoints
-type DefaultEndpoint struct{}
+// defaultEndpoint is used if the annotations have no endpoints.
+type defaultEndpoint struct{}
 
-// Host returns 0.0.0.0; used when the host is unknown
-func (d *DefaultEndpoint) Host() string { return "0.0.0.0" }
+// Host returns 0.0.0.0; used when the host is unknown.
+func (*defaultEndpoint) Host() string { return "0.0.0.0" }
 
-// Name returns "unknown" when an endpoint doesn't exist
-func (d *DefaultEndpoint) Name() string { return DefaultServiceName }
+// Name returns "unknown" when an endpoint doesn't exist.
+func (*defaultEndpoint) Name() string { return DefaultServiceName }
 
-// MicroToTime converts zipkin's native time of microseconds into time.Time
+// MicroToTime converts zipkin's native time of microseconds into time.Time.
 func MicroToTime(micro int64) time.Time {
 	return time.Unix(0, micro*int64(time.Microsecond)).UTC()
 }
 
-// NewTrace converts a slice of []Span into a new Trace
+// NewTrace converts a slice of Spans into a new Trace.
 func NewTrace(spans []Span) (trace.Trace, error) {
 	tr := make(trace.Trace, len(spans))
 	for i, span := range spans {
@@ -133,22 +150,22 @@ func NewBinaryAnnotations(annotations []BinaryAnnotation, endpoint Endpoint) []t
 	return formatted
 }
 
-func minMax(span Span) (time.Time, time.Time) {
-	min := now().UTC()
-	max := time.Time{}.UTC()
+func minMax(span Span) (low, high time.Time) {
+	low = now().UTC()
+	high = time.Time{}.UTC()
 	for _, annotation := range span.Annotations() {
 		ts := annotation.Timestamp()
-		if !ts.IsZero() && ts.Before(min) {
-			min = ts
+		if !ts.IsZero() && ts.Before(low) {
+			low = ts
 		}
-		if !ts.IsZero() && ts.After(max) {
-			max = ts
+		if !ts.IsZero() && ts.After(high) {
+			high = ts
 		}
 	}
-	if max.IsZero() {
-		max = min
+	if high.IsZero() {
+		high = low
 	}
-	return min, max
+	return low, high
 }
 
 func guessTimestamp(span Span) time.Time {
@@ -157,8 +174,8 @@ func guessTimestamp(span Span) time.Time {
 		return ts
 	}
 
-	min, _ := minMax(span)
-	return min
+	low, _ := minMax(span)
+	return low
 }
 
 func convertDuration(span Span) time.Duration {
@@ -166,8 +183,8 @@ func convertDuration(span Span) time.Duration {
 	if duration != 0 {
 		return duration
 	}
-	min, max := minMax(span)
-	return max.Sub(min)
+	low, high := minMax(span)
+	return high.Sub(low)
 }
 
 func parentID(span Span) (string, error) {
@@ -206,5 +223,5 @@ func serviceEndpoint(ann []Annotation, bann []BinaryAnnotation) Endpoint {
 			return a.Host()
 		}
 	}
-	return &DefaultEndpoint{}
+	return &defaultEndpoint{}
 }

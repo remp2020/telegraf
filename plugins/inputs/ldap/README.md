@@ -1,8 +1,15 @@
 # LDAP Input Plugin
 
 This plugin gathers metrics from LDAP servers' monitoring (`cn=Monitor`)
-backend. Currently this plugin supports [OpenLDAP](https://www.openldap.org/)
-and [389ds](https://www.port389.org/) servers.
+backend. Currently this plugin supports [OpenLDAP][openldap] and [389ds][389ds]
+servers.
+
+⭐ Telegraf v1.29.0
+🏷️ network, server
+💻 all
+
+[openldap]: https://www.openldap.org/
+[389ds]: https://www.port389.org/
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -55,8 +62,10 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## Minimal TLS version to accept by the client
   # tls_min_version = "TLS12"
   ## List of ciphers to accept, by default all secure ciphers will be accepted
-  ## See https://pkg.go.dev/crypto/tls#pkg-constants for supported values
-  # tls_cipher_suites = []
+  ## See https://pkg.go.dev/crypto/tls#pkg-constants for supported values.
+  ## Use "all", "secure" and "insecure" to add all support ciphers, secure
+  ## suites or insecure suites respectively.
+  # tls_cipher_suites = ["secure"]
   ## Renegotiation method, "never", "once" or "freely"
   # tls_renegotiation_method = "never"
   ## Use TLS but skip chain & host verification
@@ -64,9 +73,10 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 ```
 
 To use this plugin you must enable the monitoring backend/plugin of your LDAP
-server. See
-[OpenLDAP](https://www.openldap.org/devel/admin/monitoringslapd.html) or 389ds
-documentation for details.
+server. See [OpenLDAP][openldap_monitoring] or [389ds][389ds] documentation for
+details.
+
+[openldap_monitoring]: https://www.openldap.org/devel/admin/monitoringslapd.html
 
 ## Metrics
 

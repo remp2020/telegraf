@@ -1,26 +1,16 @@
 # MySQL Input Plugin
 
-This plugin gathers the statistic data from MySQL server
+This plugin gathers statistics from [MySQL][mysql] server instances.
 
-* Global statuses
-* Global variables
-* Slave statuses
-* Binlog size
-* Process list
-* User Statistics
-* Info schema auto increment columns
-* InnoDB metrics
-* Table I/O waits
-* Index I/O waits
-* Perf Schema table lock waits
-* Perf Schema event waits
-* Perf Schema events statements
-* File events statistics
-* Table schema statistics
+> [!NOTE]
+> To gather metrics from the performance schema, it must first be enabled in
+> MySQL. See the performance schema [quick start][quick-start] for details.
 
-In order to gather metrics from the performance schema, it must first be enabled
-in mySQL configuration. See the performance schema [quick start][quick-start].
+⭐ Telegraf v0.1.1
+🏷️ datastore
+💻 all
 
+[mysql]: https://www.mysql.com/
 [quick-start]: https://dev.mysql.com/doc/refman/8.0/en/performance-schema-quick-start.html
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
@@ -85,7 +75,11 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## gather metrics from SHOW SLAVE STATUS command output
   # gather_slave_status = false
 
+  ## gather metrics from SHOW REPLICA STATUS command output
+  # gather_replica_status = false
+
   ## use SHOW ALL SLAVES STATUS command output for MariaDB
+  ## use SHOW ALL REPLICAS STATUS command if enable gather replica status
   # mariadb_dialect = false
 
   ## gather metrics from SHOW BINARY LOGS command output
@@ -260,7 +254,8 @@ the single-source replication is on. If the multi-source replication is set,
 then everything works differently, this metric does not work with multi-source
 replication, unless you set `gather_all_slave_channels = true`. For MariaDB,
 `mariadb_dialect = true` should be set to address the field names and commands
-differences.
+differences. If enable `gather_replica_status` metrics gather from command
+`SHOW REPLICA STATUS`, for MariaDB will be `SHOW ALL REPLICAS STATUS`
   * slave_[column name]
 * Binary logs - all metrics including size and count of all binary files.
 Requires to be turned on in configuration.

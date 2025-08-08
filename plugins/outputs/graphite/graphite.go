@@ -15,7 +15,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers/graphite"
 )
@@ -44,10 +44,10 @@ type Graphite struct {
 	Templates []string        `toml:"templates"`
 	Timeout   config.Duration `toml:"timeout"`
 	Log       telegraf.Logger `toml:"-"`
-	tlsint.ClientConfig
+	common_tls.ClientConfig
 
 	connections []connection
-	serializer  *graphite.GraphiteSerializer
+	serializer  *graphite.Serializer
 }
 
 func (*Graphite) SampleConfig() string {
@@ -55,7 +55,7 @@ func (*Graphite) SampleConfig() string {
 }
 
 func (g *Graphite) Init() error {
-	s := &graphite.GraphiteSerializer{
+	s := &graphite.Serializer{
 		Prefix:          g.Prefix,
 		Template:        g.Template,
 		StrictRegex:     g.GraphiteStrictRegex,
@@ -200,7 +200,7 @@ func (g *Graphite) checkEOF(conn net.Conn) error {
 	}
 	// Log non-timeout errors and close.
 	var netErr net.Error
-	if !(errors.As(err, &netErr) && netErr.Timeout()) {
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		g.Log.Debugf("conn %s checkEOF .conn.Read returned err != EOF, which is unexpected.  closing conn. error: %s", conn, err)
 		err = conn.Close()
 		g.Log.Debugf("Failed to close the connection: %v", err)

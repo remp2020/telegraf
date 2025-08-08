@@ -15,9 +15,9 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/outputs"
-	serializer "github.com/influxdata/telegraf/plugins/serializers/wavefront"
+	serializers_wavefront "github.com/influxdata/telegraf/plugins/serializers/wavefront"
 )
 
 //go:embed sample.conf
@@ -32,28 +32,25 @@ type authCSPClientCredentials struct {
 }
 
 type Wavefront struct {
-	URL                      string                          `toml:"url"`
-	Token                    config.Secret                   `toml:"token"`
-	CSPBaseURL               string                          `toml:"auth_csp_base_url"`
-	AuthCSPAPIToken          config.Secret                   `toml:"auth_csp_api_token"`
-	AuthCSPClientCredentials *authCSPClientCredentials       `toml:"auth_csp_client_credentials"`
-	Host                     string                          `toml:"host" deprecated:"1.28.0;1.35.0;use url instead"`
-	Port                     int                             `toml:"port" deprecated:"1.28.0;1.35.0;use url instead"`
-	Prefix                   string                          `toml:"prefix"`
-	SimpleFields             bool                            `toml:"simple_fields"`
-	MetricSeparator          string                          `toml:"metric_separator"`
-	ConvertPaths             bool                            `toml:"convert_paths"`
-	ConvertBool              bool                            `toml:"convert_bool"`
-	HTTPMaximumBatchSize     int                             `toml:"http_maximum_batch_size"`
-	UseRegex                 bool                            `toml:"use_regex"`
-	UseStrict                bool                            `toml:"use_strict"`
-	TruncateTags             bool                            `toml:"truncate_tags"`
-	ImmediateFlush           bool                            `toml:"immediate_flush"`
-	SendInternalMetrics      bool                            `toml:"send_internal_metrics"`
-	SourceOverride           []string                        `toml:"source_override"`
-	StringToNumber           map[string][]map[string]float64 `toml:"string_to_number" deprecated:"1.9.0;1.35.0;use the enum processor instead"`
+	URL                      string                    `toml:"url"`
+	Token                    config.Secret             `toml:"token"`
+	CSPBaseURL               string                    `toml:"auth_csp_base_url"`
+	AuthCSPAPIToken          config.Secret             `toml:"auth_csp_api_token"`
+	AuthCSPClientCredentials *authCSPClientCredentials `toml:"auth_csp_client_credentials"`
+	Prefix                   string                    `toml:"prefix"`
+	SimpleFields             bool                      `toml:"simple_fields"`
+	MetricSeparator          string                    `toml:"metric_separator"`
+	ConvertPaths             bool                      `toml:"convert_paths"`
+	ConvertBool              bool                      `toml:"convert_bool"`
+	HTTPMaximumBatchSize     int                       `toml:"http_maximum_batch_size"`
+	UseRegex                 bool                      `toml:"use_regex"`
+	UseStrict                bool                      `toml:"use_strict"`
+	TruncateTags             bool                      `toml:"truncate_tags"`
+	ImmediateFlush           bool                      `toml:"immediate_flush"`
+	SendInternalMetrics      bool                      `toml:"send_internal_metrics"`
+	SourceOverride           []string                  `toml:"source_override"`
 
-	httpconfig.HTTPClientConfig
+	common_http.HTTPClientConfig
 
 	sender wavefront.Sender
 	Log    telegraf.Logger `toml:"-"`
@@ -72,12 +69,7 @@ func (*Wavefront) SampleConfig() string {
 
 func (w *Wavefront) parseConnectionURL() (string, error) {
 	if w.URL == "" {
-		if w.Host == "" || w.Port <= 0 {
-			return "", errors.New("no URL specified")
-		}
-		generatedURL := fmt.Sprintf("http://%s:%d", w.Host, w.Port)
-		w.Log.Warnf("translating host/port into url: %s\n", generatedURL)
-		return generatedURL, nil
+		return "", errors.New("no URL specified")
 	}
 
 	u, err := url.ParseRequestURI(w.URL)
@@ -168,8 +160,8 @@ func (w *Wavefront) Write(metrics []telegraf.Metric) error {
 	return nil
 }
 
-func (w *Wavefront) buildMetrics(m telegraf.Metric) []*serializer.MetricPoint {
-	ret := make([]*serializer.MetricPoint, 0)
+func (w *Wavefront) buildMetrics(m telegraf.Metric) []*serializers_wavefront.MetricPoint {
+	ret := make([]*serializers_wavefront.MetricPoint, 0)
 
 	for fieldName, value := range m.Fields() {
 		var name string
@@ -182,14 +174,14 @@ func (w *Wavefront) buildMetrics(m telegraf.Metric) []*serializer.MetricPoint {
 		if w.UseRegex {
 			name = sanitizedRegex.ReplaceAllLiteralString(name, "-")
 		} else {
-			name = serializer.Sanitize(w.UseStrict, name)
+			name = serializers_wavefront.Sanitize(w.UseStrict, name)
 		}
 
 		if w.ConvertPaths {
 			name = pathReplacer.Replace(name)
 		}
 
-		metric := &serializer.MetricPoint{
+		metric := &serializers_wavefront.MetricPoint{
 			Metric:    name,
 			Timestamp: m.Time().Unix(),
 		}
@@ -259,7 +251,7 @@ func (w *Wavefront) buildTags(mTags map[string]string) (string, map[string]strin
 		if w.UseRegex {
 			key = sanitizedRegex.ReplaceAllLiteralString(k, "-")
 		} else {
-			key = serializer.Sanitize(w.UseStrict, k)
+			key = serializers_wavefront.Sanitize(w.UseStrict, k)
 		}
 		val := tagValueReplacer.Replace(v)
 		if w.TruncateTags {
@@ -293,18 +285,6 @@ func buildValue(v interface{}, name string, w *Wavefront) (float64, error) {
 		return float64(v.(uint64)), nil
 	case float64:
 		return v.(float64), nil
-	case string:
-		for prefix, mappings := range w.StringToNumber {
-			if strings.HasPrefix(name, prefix) {
-				for _, mapping := range mappings {
-					val, hasVal := mapping[p]
-					if hasVal {
-						return val, nil
-					}
-				}
-			}
-		}
-		return 0, fmt.Errorf("unexpected type: %T, with value: %v, for: %s", v, v, name)
 	default:
 		return 0, fmt.Errorf("unexpected type: %T, with value: %v, for: %s", v, v, name)
 	}
@@ -382,7 +362,7 @@ func init() {
 			ImmediateFlush:       true,
 			SendInternalMetrics:  true,
 			HTTPMaximumBatchSize: 10000,
-			HTTPClientConfig:     httpconfig.HTTPClientConfig{Timeout: config.Duration(10 * time.Second)},
+			HTTPClientConfig:     common_http.HTTPClientConfig{Timeout: config.Duration(10 * time.Second)},
 			CSPBaseURL:           "https://console.cloud.vmware.com",
 		}
 	})

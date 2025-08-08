@@ -20,33 +20,17 @@ const (
 	defaultMaxUndeliveredMessages = 1000
 )
 
-type empty struct{}
-type semaphore chan empty
-
-type logger struct {
-	log telegraf.Logger
-}
-
-func (l *logger) Output(_ int, s string) error {
-	l.log.Debug(s)
-	return nil
-}
-
-// NSQConsumer represents the configuration of the plugin
 type NSQConsumer struct {
-	Server      string   `toml:"server" deprecated:"1.5.0;1.35.0;use 'nsqd' instead"`
-	Nsqd        []string `toml:"nsqd"`
-	Nsqlookupd  []string `toml:"nsqlookupd"`
-	Topic       string   `toml:"topic"`
-	Channel     string   `toml:"channel"`
-	MaxInFlight int      `toml:"max_in_flight"`
-
-	MaxUndeliveredMessages int `toml:"max_undelivered_messages"`
+	Nsqd                   []string        `toml:"nsqd"`
+	Nsqlookupd             []string        `toml:"nsqlookupd"`
+	Topic                  string          `toml:"topic"`
+	Channel                string          `toml:"channel"`
+	MaxInFlight            int             `toml:"max_in_flight"`
+	MaxUndeliveredMessages int             `toml:"max_undelivered_messages"`
+	Log                    telegraf.Logger `toml:"-"`
 
 	parser   telegraf.Parser
 	consumer *nsq.Consumer
-
-	Log telegraf.Logger
 
 	mu       sync.Mutex
 	messages map[telegraf.TrackingID]*nsq.Message
@@ -54,8 +38,32 @@ type NSQConsumer struct {
 	cancel   context.CancelFunc
 }
 
+type (
+	empty     struct{}
+	semaphore chan empty
+)
+
+type logger struct {
+	log telegraf.Logger
+}
+
+// Output writes log messages from the NSQ library to the Telegraf logger.
+func (l *logger) Output(_ int, s string) error {
+	l.log.Debug(s)
+	return nil
+}
+
 func (*NSQConsumer) SampleConfig() string {
 	return sampleConfig
+}
+
+func (n *NSQConsumer) Init() error {
+	// Check if we have anything to connect to
+	if len(n.Nsqlookupd) == 0 && len(n.Nsqd) == 0 {
+		return errors.New("either 'nsqd' or 'nsqlookupd' needs to be specified")
+	}
+
+	return nil
 }
 
 // SetParser takes the data_format from the config and finds the right parser for that format
@@ -63,7 +71,6 @@ func (n *NSQConsumer) SetParser(parser telegraf.Parser) {
 	n.parser = parser
 }
 
-// Start pulls data from nsq
 func (n *NSQConsumer) Start(ac telegraf.Accumulator) error {
 	acc := ac.WithTracking(n.MaxUndeliveredMessages)
 	sem := make(semaphore, n.MaxUndeliveredMessages)
@@ -104,16 +111,6 @@ func (n *NSQConsumer) Start(ac telegraf.Accumulator) error {
 		return nil
 	}))
 
-	// For backward compatibility
-	if n.Server != "" {
-		n.Nsqd = append(n.Nsqd, n.Server)
-	}
-
-	// Check if we have anything to connect to
-	if len(n.Nsqlookupd) == 0 && len(n.Nsqd) == 0 {
-		return errors.New("either 'nsqd' or 'nsqlookupd' needs to be specified")
-	}
-
 	if len(n.Nsqlookupd) > 0 {
 		err := n.consumer.ConnectToNSQLookupds(n.Nsqlookupd)
 		if err != nil && !errors.Is(err, nsq.ErrAlreadyConnected) {
@@ -134,6 +131,17 @@ func (n *NSQConsumer) Start(ac telegraf.Accumulator) error {
 		n.onDelivery(ctx, acc, sem)
 	}()
 	return nil
+}
+
+func (*NSQConsumer) Gather(telegraf.Accumulator) error {
+	return nil
+}
+
+func (n *NSQConsumer) Stop() {
+	n.cancel()
+	n.wg.Wait()
+	n.consumer.Stop()
+	<-n.consumer.StopChan
 }
 
 func (n *NSQConsumer) onDelivery(ctx context.Context, acc telegraf.TrackingAccumulator, sem semaphore) {
@@ -159,19 +167,6 @@ func (n *NSQConsumer) onDelivery(ctx context.Context, acc telegraf.TrackingAccum
 			}
 		}
 	}
-}
-
-// Stop processing messages
-func (n *NSQConsumer) Stop() {
-	n.cancel()
-	n.wg.Wait()
-	n.consumer.Stop()
-	<-n.consumer.StopChan
-}
-
-// Gather is a noop
-func (n *NSQConsumer) Gather(_ telegraf.Accumulator) error {
-	return nil
 }
 
 func (n *NSQConsumer) connect() error {

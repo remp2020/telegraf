@@ -1,13 +1,11 @@
 package kafka
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 	kafkacontainer "github.com/testcontainers/testcontainers-go/modules/kafka"
 
 	"github.com/influxdata/telegraf"
@@ -26,15 +24,11 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	ctx := context.Background()
-	kafkaContainer, err := kafkacontainer.RunContainer(ctx,
-		kafkacontainer.WithClusterID("test-cluster"),
-		testcontainers.WithImage("confluentinc/confluent-local:7.5.0"),
-	)
+	kafkaContainer, err := kafkacontainer.Run(t.Context(), "confluentinc/confluent-local:7.5.0")
 	require.NoError(t, err)
-	defer kafkaContainer.Terminate(ctx) //nolint:errcheck // ignored
+	defer kafkaContainer.Terminate(t.Context()) //nolint:errcheck // ignored
 
-	brokers, err := kafkaContainer.Brokers(ctx)
+	brokers, err := kafkaContainer.Brokers(t.Context())
 	require.NoError(t, err)
 
 	// Setup the plugin
@@ -186,7 +180,7 @@ func (p *MockProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	return nil
 }
 
-func (p *MockProducer) Close() error {
+func (*MockProducer) Close() error {
 	return nil
 }
 

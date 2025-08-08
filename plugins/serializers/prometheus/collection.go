@@ -15,115 +15,115 @@ import (
 
 const helpString = "Telegraf collected metric"
 
-type TimeFunc func() time.Time
-
-type MetricFamily struct {
-	Name string
-	Type telegraf.ValueType
+type metricFamily struct {
+	name string
+	typ  telegraf.ValueType
 }
 
-type Metric struct {
-	Labels    []LabelPair
-	Time      time.Time
-	AddTime   time.Time
-	Scaler    *Scaler
-	Histogram *Histogram
-	Summary   *Summary
+type metric struct {
+	labels    []labelPair
+	time      time.Time
+	addTime   time.Time
+	scaler    *scaler
+	histogram *histogram
+	summary   *summary
 }
 
-type LabelPair struct {
-	Name  string
-	Value string
+type labelPair struct {
+	name  string
+	value string
 }
 
-type Scaler struct {
-	Value float64
+type scaler struct {
+	value float64
 }
 
-type Bucket struct {
-	Bound float64
-	Count uint64
+type bucket struct {
+	bound float64
+	count uint64
 }
 
-type Quantile struct {
-	Quantile float64
-	Value    float64
+type quantile struct {
+	quantile float64
+	value    float64
 }
 
-type Histogram struct {
-	Buckets []Bucket
-	Count   uint64
-	Sum     float64
+type histogram struct {
+	buckets []bucket
+	count   uint64
+	sum     float64
 }
 
-func (h *Histogram) merge(b Bucket) {
-	for i := range h.Buckets {
-		if h.Buckets[i].Bound == b.Bound {
-			h.Buckets[i].Count = b.Count
+func (h *histogram) merge(b bucket) {
+	for i := range h.buckets {
+		if h.buckets[i].bound == b.bound {
+			h.buckets[i].count = b.count
 			return
 		}
 	}
-	h.Buckets = append(h.Buckets, b)
+	h.buckets = append(h.buckets, b)
 }
 
-type Summary struct {
-	Quantiles []Quantile
-	Count     uint64
-	Sum       float64
+type summary struct {
+	quantiles []quantile
+	count     uint64
+	sum       float64
 }
 
-func (s *Summary) merge(q Quantile) {
-	for i := range s.Quantiles {
-		if s.Quantiles[i].Quantile == q.Quantile {
-			s.Quantiles[i].Value = q.Value
+func (s *summary) merge(q quantile) {
+	for i := range s.quantiles {
+		if s.quantiles[i].quantile == q.quantile {
+			s.quantiles[i].value = q.value
 			return
 		}
 	}
-	s.Quantiles = append(s.Quantiles, q)
+	s.quantiles = append(s.quantiles, q)
 }
 
-type MetricKey uint64
+type metricKey uint64
 
-func MakeMetricKey(labels []LabelPair) MetricKey {
+func makeMetricKey(labels []labelPair) metricKey {
 	h := fnv.New64a()
 	for _, label := range labels {
-		h.Write([]byte(label.Name))
+		h.Write([]byte(label.name))
 		h.Write([]byte("\x00"))
-		h.Write([]byte(label.Value))
+		h.Write([]byte(label.value))
 		h.Write([]byte("\x00"))
 	}
-	return MetricKey(h.Sum64())
+	return metricKey(h.Sum64())
 }
 
-type Entry struct {
-	Family  MetricFamily
-	Metrics map[MetricKey]*Metric
+type entry struct {
+	family  metricFamily
+	metrics map[metricKey]*metric
 }
 
+// Collection is a cache of metrics that are being processed.
 type Collection struct {
-	Entries map[MetricFamily]Entry
+	entries map[metricFamily]entry
 	config  FormatConfig
 }
 
+// NewCollection creates a new Collection instance.
 func NewCollection(config FormatConfig) *Collection {
 	cache := &Collection{
-		Entries: make(map[MetricFamily]Entry),
+		entries: make(map[metricFamily]entry),
 		config:  config,
 	}
 	return cache
 }
 
-func hasLabel(name string, labels []LabelPair) bool {
+func hasLabel(name string, labels []labelPair) bool {
 	for _, label := range labels {
-		if name == label.Name {
+		if name == label.name {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *Collection) createLabels(metric telegraf.Metric) []LabelPair {
-	labels := make([]LabelPair, 0, len(metric.TagList()))
+func (c *Collection) createLabels(metric telegraf.Metric) []labelPair {
+	labels := make([]labelPair, 0, len(metric.TagList()))
 	for _, tag := range metric.TagList() {
 		// Ignore special tags for histogram and summary types.
 		switch metric.Type() {
@@ -142,7 +142,7 @@ func (c *Collection) createLabels(metric telegraf.Metric) []LabelPair {
 			continue
 		}
 
-		labels = append(labels, LabelPair{Name: name, Value: tag.Value})
+		labels = append(labels, labelPair{name: name, value: tag.Value})
 	}
 
 	if !c.config.StringAsLabel {
@@ -167,56 +167,57 @@ func (c *Collection) createLabels(metric telegraf.Metric) []LabelPair {
 			continue
 		}
 
-		labels = append(labels, LabelPair{Name: name, Value: value})
+		labels = append(labels, labelPair{name: name, value: value})
 		addedFieldLabel = true
 	}
 
 	if addedFieldLabel {
 		sort.Slice(labels, func(i, j int) bool {
-			return labels[i].Name < labels[j].Name
+			return labels[i].name < labels[j].name
 		})
 	}
 
 	return labels
 }
 
-func (c *Collection) Add(metric telegraf.Metric, now time.Time) {
-	labels := c.createLabels(metric)
-	for _, field := range metric.FieldList() {
-		metricName := MetricName(metric.Name(), field.Key, metric.Type())
+// Add adds a metric to the collection. It will create a new entry if the metric is not already present.
+func (c *Collection) Add(m telegraf.Metric, now time.Time) {
+	labels := c.createLabels(m)
+	for _, field := range m.FieldList() {
+		metricName := MetricName(m.Name(), field.Key, m.Type())
 		metricName, ok := SanitizeMetricName(metricName)
 		if !ok {
 			continue
 		}
-		metricType := c.config.TypeMappings.DetermineType(metricName, metric)
+		metricType := c.config.TypeMappings.DetermineType(metricName, m)
 
-		family := MetricFamily{
-			Name: metricName,
-			Type: metricType,
+		family := metricFamily{
+			name: metricName,
+			typ:  metricType,
 		}
 
-		entry, ok := c.Entries[family]
+		singleEntry, ok := c.entries[family]
 		if !ok {
-			entry = Entry{
-				Family:  family,
-				Metrics: make(map[MetricKey]*Metric),
+			singleEntry = entry{
+				family:  family,
+				metrics: make(map[metricKey]*metric),
 			}
-			c.Entries[family] = entry
+			c.entries[family] = singleEntry
 		}
 
-		metricKey := MakeMetricKey(labels)
+		metricKey := makeMetricKey(labels)
 
-		m, ok := entry.Metrics[metricKey]
+		existingMetric, ok := singleEntry.metrics[metricKey]
 		if ok {
 			// A batch of metrics can contain multiple values for a single
 			// Prometheus sample.  If this metric is older than the existing
 			// sample then we can skip over it.
-			if metric.Time().Before(m.Time) {
+			if m.Time().Before(existingMetric.time) {
 				continue
 			}
 		}
 
-		switch metric.Type() {
+		switch m.Type() {
 		case telegraf.Counter:
 			fallthrough
 		case telegraf.Gauge:
@@ -227,29 +228,29 @@ func (c *Collection) Add(metric telegraf.Metric, now time.Time) {
 				continue
 			}
 
-			m = &Metric{
-				Labels:  labels,
-				Time:    metric.Time(),
-				AddTime: now,
-				Scaler:  &Scaler{Value: value},
+			existingMetric = &metric{
+				labels:  labels,
+				time:    m.Time(),
+				addTime: now,
+				scaler:  &scaler{value: value},
 			}
 
-			entry.Metrics[metricKey] = m
+			singleEntry.metrics[metricKey] = existingMetric
 		case telegraf.Histogram:
-			if m == nil {
-				m = &Metric{
-					Labels:    labels,
-					Time:      metric.Time(),
-					AddTime:   now,
-					Histogram: &Histogram{},
+			if existingMetric == nil {
+				existingMetric = &metric{
+					labels:    labels,
+					time:      m.Time(),
+					addTime:   now,
+					histogram: &histogram{},
 				}
 			} else {
-				m.Time = metric.Time()
-				m.AddTime = now
+				existingMetric.time = m.Time()
+				existingMetric.addTime = now
 			}
 			switch {
 			case strings.HasSuffix(field.Key, "_bucket"):
-				le, ok := metric.GetTag("le")
+				le, ok := m.GetTag("le")
 				if !ok {
 					continue
 				}
@@ -263,9 +264,9 @@ func (c *Collection) Add(metric telegraf.Metric, now time.Time) {
 					continue
 				}
 
-				m.Histogram.merge(Bucket{
-					Bound: bound,
-					Count: count,
+				existingMetric.histogram.merge(bucket{
+					bound: bound,
+					count: count,
 				})
 			case strings.HasSuffix(field.Key, "_sum"):
 				sum, ok := SampleSum(field.Value)
@@ -273,30 +274,30 @@ func (c *Collection) Add(metric telegraf.Metric, now time.Time) {
 					continue
 				}
 
-				m.Histogram.Sum = sum
+				existingMetric.histogram.sum = sum
 			case strings.HasSuffix(field.Key, "_count"):
 				count, ok := SampleCount(field.Value)
 				if !ok {
 					continue
 				}
 
-				m.Histogram.Count = count
+				existingMetric.histogram.count = count
 			default:
 				continue
 			}
 
-			entry.Metrics[metricKey] = m
+			singleEntry.metrics[metricKey] = existingMetric
 		case telegraf.Summary:
-			if m == nil {
-				m = &Metric{
-					Labels:  labels,
-					Time:    metric.Time(),
-					AddTime: now,
-					Summary: &Summary{},
+			if existingMetric == nil {
+				existingMetric = &metric{
+					labels:  labels,
+					time:    m.Time(),
+					addTime: now,
+					summary: &summary{},
 				}
 			} else {
-				m.Time = metric.Time()
-				m.AddTime = now
+				existingMetric.time = m.Time()
+				existingMetric.addTime = now
 			}
 			switch {
 			case strings.HasSuffix(field.Key, "_sum"):
@@ -305,20 +306,20 @@ func (c *Collection) Add(metric telegraf.Metric, now time.Time) {
 					continue
 				}
 
-				m.Summary.Sum = sum
+				existingMetric.summary.sum = sum
 			case strings.HasSuffix(field.Key, "_count"):
 				count, ok := SampleCount(field.Value)
 				if !ok {
 					continue
 				}
 
-				m.Summary.Count = count
+				existingMetric.summary.count = count
 			default:
-				quantileTag, ok := metric.GetTag("quantile")
+				quantileTag, ok := m.GetTag("quantile")
 				if !ok {
 					continue
 				}
-				quantile, err := strconv.ParseFloat(quantileTag, 64)
+				singleQuantile, err := strconv.ParseFloat(quantileTag, 64)
 				if err != nil {
 					continue
 				}
@@ -328,61 +329,64 @@ func (c *Collection) Add(metric telegraf.Metric, now time.Time) {
 					continue
 				}
 
-				m.Summary.merge(Quantile{
-					Quantile: quantile,
-					Value:    value,
+				existingMetric.summary.merge(quantile{
+					quantile: singleQuantile,
+					value:    value,
 				})
 			}
 
-			entry.Metrics[metricKey] = m
+			singleEntry.metrics[metricKey] = existingMetric
 		}
 	}
 }
 
+// Expire removes metrics that are older than the specified age.
 func (c *Collection) Expire(now time.Time, age time.Duration) {
 	expireTime := now.Add(-age)
-	for _, entry := range c.Entries {
-		for key, metric := range entry.Metrics {
-			if metric.AddTime.Before(expireTime) {
-				delete(entry.Metrics, key)
-				if len(entry.Metrics) == 0 {
-					delete(c.Entries, entry.Family)
+	for _, entry := range c.entries {
+		for key, metric := range entry.metrics {
+			if metric.addTime.Before(expireTime) {
+				delete(entry.metrics, key)
+				if len(entry.metrics) == 0 {
+					delete(c.entries, entry.family)
 				}
 			}
 		}
 	}
 }
 
-func (c *Collection) GetEntries() []Entry {
-	entries := make([]Entry, 0, len(c.Entries))
-	for _, entry := range c.Entries {
+// GetEntries returns a slice of all entries in the collection.
+func (c *Collection) GetEntries() []entry {
+	entries := make([]entry, 0, len(c.entries))
+	for _, entry := range c.entries {
 		entries = append(entries, entry)
 	}
 
 	if c.config.SortMetrics {
 		sort.Slice(entries, func(i, j int) bool {
-			lhs := entries[i].Family
-			rhs := entries[j].Family
-			if lhs.Name != rhs.Name {
-				return lhs.Name < rhs.Name
+			lhs := entries[i].family
+			rhs := entries[j].family
+			if lhs.name != rhs.name {
+				return lhs.name < rhs.name
 			}
 
-			return lhs.Type < rhs.Type
+			return lhs.typ < rhs.typ
 		})
 	}
 	return entries
 }
 
-func (c *Collection) GetMetrics(entry Entry) []*Metric {
-	metrics := make([]*Metric, 0, len(entry.Metrics))
-	for _, metric := range entry.Metrics {
+// GetMetrics returns a slice of all metrics in the entry.
+func (c *Collection) GetMetrics(entry entry) []*metric {
+	metrics := make([]*metric, 0, len(entry.metrics))
+	for _, metric := range entry.metrics {
 		metrics = append(metrics, metric)
 	}
 
 	if c.config.SortMetrics {
 		sort.Slice(metrics, func(i, j int) bool {
-			lhs := metrics[i].Labels
-			rhs := metrics[j].Labels
+			lhs := metrics[i].labels
+			rhs := metrics[j].labels
 			if len(lhs) != len(rhs) {
 				return len(lhs) < len(rhs)
 			}
@@ -391,12 +395,12 @@ func (c *Collection) GetMetrics(entry Entry) []*Metric {
 				l := lhs[index]
 				r := rhs[index]
 
-				if l.Name != r.Name {
-					return l.Name < r.Name
+				if l.name != r.name {
+					return l.name < r.name
 				}
 
-				if l.Value != r.Value {
-					return l.Value < r.Value
+				if l.value != r.value {
+					return l.value < r.value
 				}
 			}
 
@@ -407,13 +411,14 @@ func (c *Collection) GetMetrics(entry Entry) []*Metric {
 	return metrics
 }
 
+// GetProto returns a slice of all metrics in the collection as protobuf messages.
 func (c *Collection) GetProto() []*dto.MetricFamily {
-	result := make([]*dto.MetricFamily, 0, len(c.Entries))
+	result := make([]*dto.MetricFamily, 0, len(c.entries))
 
 	for _, entry := range c.GetEntries() {
 		mf := &dto.MetricFamily{
-			Name: proto.String(entry.Family.Name),
-			Type: MetricType(entry.Family.Type),
+			Name: proto.String(entry.family.name),
+			Type: metricType(entry.family.typ),
 		}
 
 		if !c.config.CompactEncoding {
@@ -421,11 +426,11 @@ func (c *Collection) GetProto() []*dto.MetricFamily {
 		}
 
 		for _, metric := range c.GetMetrics(entry) {
-			l := make([]*dto.LabelPair, 0, len(metric.Labels))
-			for _, label := range metric.Labels {
+			l := make([]*dto.LabelPair, 0, len(metric.labels))
+			for _, label := range metric.labels {
 				l = append(l, &dto.LabelPair{
-					Name:  proto.String(label.Name),
-					Value: proto.String(label.Value),
+					Name:  proto.String(label.name),
+					Value: proto.String(label.value),
 				})
 			}
 
@@ -434,43 +439,43 @@ func (c *Collection) GetProto() []*dto.MetricFamily {
 			}
 
 			if c.config.ExportTimestamp {
-				m.TimestampMs = proto.Int64(metric.Time.UnixNano() / int64(time.Millisecond))
+				m.TimestampMs = proto.Int64(metric.time.UnixNano() / int64(time.Millisecond))
 			}
 
-			switch entry.Family.Type {
+			switch entry.family.typ {
 			case telegraf.Gauge:
-				m.Gauge = &dto.Gauge{Value: proto.Float64(metric.Scaler.Value)}
+				m.Gauge = &dto.Gauge{Value: proto.Float64(metric.scaler.value)}
 			case telegraf.Counter:
-				m.Counter = &dto.Counter{Value: proto.Float64(metric.Scaler.Value)}
+				m.Counter = &dto.Counter{Value: proto.Float64(metric.scaler.value)}
 			case telegraf.Untyped:
-				m.Untyped = &dto.Untyped{Value: proto.Float64(metric.Scaler.Value)}
+				m.Untyped = &dto.Untyped{Value: proto.Float64(metric.scaler.value)}
 			case telegraf.Histogram:
-				buckets := make([]*dto.Bucket, 0, len(metric.Histogram.Buckets))
-				for _, bucket := range metric.Histogram.Buckets {
+				buckets := make([]*dto.Bucket, 0, len(metric.histogram.buckets))
+				for _, bucket := range metric.histogram.buckets {
 					buckets = append(buckets, &dto.Bucket{
-						UpperBound:      proto.Float64(bucket.Bound),
-						CumulativeCount: proto.Uint64(bucket.Count),
+						UpperBound:      proto.Float64(bucket.bound),
+						CumulativeCount: proto.Uint64(bucket.count),
 					})
 				}
 
 				m.Histogram = &dto.Histogram{
 					Bucket:      buckets,
-					SampleCount: proto.Uint64(metric.Histogram.Count),
-					SampleSum:   proto.Float64(metric.Histogram.Sum),
+					SampleCount: proto.Uint64(metric.histogram.count),
+					SampleSum:   proto.Float64(metric.histogram.sum),
 				}
 			case telegraf.Summary:
-				quantiles := make([]*dto.Quantile, 0, len(metric.Summary.Quantiles))
-				for _, quantile := range metric.Summary.Quantiles {
+				quantiles := make([]*dto.Quantile, 0, len(metric.summary.quantiles))
+				for _, quantile := range metric.summary.quantiles {
 					quantiles = append(quantiles, &dto.Quantile{
-						Quantile: proto.Float64(quantile.Quantile),
-						Value:    proto.Float64(quantile.Value),
+						Quantile: proto.Float64(quantile.quantile),
+						Value:    proto.Float64(quantile.value),
 					})
 				}
 
 				m.Summary = &dto.Summary{
 					Quantile:    quantiles,
-					SampleCount: proto.Uint64(metric.Summary.Count),
-					SampleSum:   proto.Float64(metric.Summary.Sum),
+					SampleCount: proto.Uint64(metric.summary.count),
+					SampleSum:   proto.Float64(metric.summary.sum),
 				}
 			default:
 				panic("unknown telegraf.ValueType")

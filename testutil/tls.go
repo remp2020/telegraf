@@ -2,7 +2,6 @@ package testutil
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -52,15 +51,15 @@ func (p *pki) CACertPath() string {
 	return path.Join(p.keyPath, "cacert.pem")
 }
 
-func (p *pki) CipherSuite() string {
+func (*pki) CipherSuite() string {
 	return "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
 }
 
-func (p *pki) TLSMinVersion() string {
+func (*pki) TLSMinVersion() string {
 	return "TLS11"
 }
 
-func (p *pki) TLSMaxVersion() string {
+func (*pki) TLSMaxVersion() string {
 	return "TLS13"
 }
 
@@ -147,11 +146,7 @@ func (p *pki) AbsolutePaths() (*PKIPaths, error) {
 }
 
 func readCertificate(filename string) string {
-	file, err := os.Open(filename)
-	if err != nil {
-		panic(fmt.Sprintf("opening %q: %v", filename, err))
-	}
-	octets, err := io.ReadAll(file)
+	octets, err := os.ReadFile(filename)
 	if err != nil {
 		panic(fmt.Sprintf("reading %q: %v", filename, err))
 	}

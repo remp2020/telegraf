@@ -1,11 +1,13 @@
 # Mock Data Input Plugin
 
-The mock input plugin generates random data based on a selection of different
-algorithms. For example, it can produce random data between a set of values,
-fake stock data, sine waves, and step-wise values.
+The plugin generates mock-metrics based on different algorithms like sine-wave
+functions, random numbers and more with the configured names and tags. Those
+metrics are usefull during testing (e.g. processors) or if random data is
+required.
 
-Additionally, users can set the measurement name and tags used to whatever is
-required to mock their situation.
+⭐ Telegraf v1.22.0
+🏷️ testing
+💻 all
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -40,6 +42,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   #   name = "wave"
   #   amplitude = 1.0
   #   period = 0.5
+  #   phase = 20.0
   #   base_line = 0.0
   # [[inputs.mock.step]]
   #   name = "plus_one"
@@ -60,12 +63,12 @@ The mock plugin only requires that:
 
 The available algorithms for generating mock data include:
 
-* Constant - generate a field with the given value of type string, float, int
+* `constant`: generate a field with the given value of type string, float, int
   or bool
-* Random Float - generate a random float, inclusive of min and max
-* Sine Wave - produce a sine wave with a certain amplitude, period and baseline
-* Step - always add the step value, negative values accepted
-* Stock - generate fake, stock-like price values based on a volatility variable
+* `random`: generate a random float, inclusive of min and max
+* `sine_wave`: produce a sine wave with a certain amplitude, period and baseline
+* `step`: always add the step value, negative values accepted
+* `stock`: generate fake, stock-like price values based on a volatility variable
 
 ## Metrics
 

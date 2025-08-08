@@ -13,27 +13,28 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/filter"
+	"github.com/influxdata/telegraf/internal"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-type NetIOStats struct {
-	filter filter.Filter
-	ps     system.PS
+type Net struct {
+	Interfaces          []string `toml:"interfaces"`
+	IgnoreProtocolStats bool     `toml:"ignore_protocol_stats"`
 
-	skipChecks          bool
-	IgnoreProtocolStats bool
-	Interfaces          []string
+	filter     filter.Filter
+	ps         psutil.PS
+	skipChecks bool
 }
 
-func (*NetIOStats) SampleConfig() string {
+func (*Net) SampleConfig() string {
 	return sampleConfig
 }
 
-func (n *NetIOStats) Init() error {
+func (n *Net) Init() error {
 	if !n.IgnoreProtocolStats {
 		config.PrintOptionValueDeprecationNotice("inputs.net", "ignore_protocol_stats", "false",
 			telegraf.DeprecationInfo{
@@ -44,10 +45,15 @@ func (n *NetIOStats) Init() error {
 		)
 	}
 
+	// So not use the interface list of the system if the HOST_PROC variable is
+	// set as the interfaces are determined by a syscall and therefore might
+	// differ especially in container environments.
+	n.skipChecks = os.Getenv("HOST_PROC") != ""
+
 	return nil
 }
 
-func (n *NetIOStats) Gather(acc telegraf.Accumulator) error {
+func (n *Net) Gather(acc telegraf.Accumulator) error {
 	netio, err := n.ps.NetIO()
 	if err != nil {
 		return fmt.Errorf("error getting net io info: %w", err)
@@ -63,7 +69,7 @@ func (n *NetIOStats) Gather(acc telegraf.Accumulator) error {
 	if err != nil {
 		return fmt.Errorf("error getting list of interfaces: %w", err)
 	}
-	interfacesByName := map[string]net.Interface{}
+	interfacesByName := make(map[string]net.Interface, len(interfaces))
 	for _, iface := range interfaces {
 		interfacesByName[iface.Name] = iface
 	}
@@ -115,6 +121,7 @@ func (n *NetIOStats) Gather(acc telegraf.Accumulator) error {
 	// Get system wide stats for different network protocols
 	// (ignore these stats if the call fails)
 	if !n.IgnoreProtocolStats {
+		//nolint:errcheck // stats ignored on fail
 		netprotos, _ := n.ps.NetProto()
 		fields := make(map[string]interface{})
 		for _, proto := range netprotos {
@@ -135,10 +142,7 @@ func (n *NetIOStats) Gather(acc telegraf.Accumulator) error {
 
 // Get the interface speed from /sys/class/net/*/speed file. returns -1 if unsupported
 func getInterfaceSpeed(ioName string) int64 {
-	sysPath := os.Getenv("HOST_SYS")
-	if sysPath == "" {
-		sysPath = "/sys"
-	}
+	sysPath := internal.GetSysPath()
 
 	raw, err := os.ReadFile(filepath.Join(sysPath, "class", "net", ioName, "speed"))
 	if err != nil {
@@ -154,6 +158,6 @@ func getInterfaceSpeed(ioName string) int64 {
 
 func init() {
 	inputs.Add("net", func() telegraf.Input {
-		return &NetIOStats{ps: system.NewSystemPS()}
+		return &Net{ps: psutil.NewSystemPS()}
 	})
 }

@@ -21,14 +21,11 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-// defaultURL will set a default value that corresponds to the default value
-// used by RavenDB
-const defaultURL = "http://localhost:8080"
+const (
+	defaultURL     = "http://localhost:8080"
+	defaultTimeout = 5
+)
 
-const defaultTimeout = 5
-
-// RavenDB defines the configuration necessary for gathering metrics,
-// see the sample config for further details
 type RavenDB struct {
 	URL  string `toml:"url"`
 	Name string `toml:"name"`
@@ -36,9 +33,9 @@ type RavenDB struct {
 	Timeout config.Duration `toml:"timeout"`
 
 	StatsInclude       []string `toml:"stats_include"`
-	DbStatsDbs         []string `toml:"db_stats_dbs"`
-	IndexStatsDbs      []string `toml:"index_stats_dbs"`
-	CollectionStatsDbs []string `toml:"collection_stats_dbs"`
+	DBStatsDBs         []string `toml:"db_stats_dbs"`
+	IndexStatsDBs      []string `toml:"index_stats_dbs"`
+	CollectionStatsDBs []string `toml:"collection_stats_dbs"`
 
 	tls.ClientConfig
 
@@ -53,6 +50,30 @@ type RavenDB struct {
 
 func (*RavenDB) SampleConfig() string {
 	return sampleConfig
+}
+
+func (r *RavenDB) Init() error {
+	if r.URL == "" {
+		r.URL = defaultURL
+	}
+
+	r.requestURLServer = r.URL + "/admin/monitoring/v1/server"
+	r.requestURLDatabases = r.URL + "/admin/monitoring/v1/databases" + prepareDBNamesURLPart(r.DBStatsDBs)
+	r.requestURLIndexes = r.URL + "/admin/monitoring/v1/indexes" + prepareDBNamesURLPart(r.IndexStatsDBs)
+	r.requestURLCollection = r.URL + "/admin/monitoring/v1/collections" + prepareDBNamesURLPart(r.IndexStatsDBs)
+
+	err := choice.CheckSlice(r.StatsInclude, []string{"server", "databases", "indexes", "collections"})
+	if err != nil {
+		return err
+	}
+
+	err = r.ensureClient()
+	if nil != err {
+		r.Log.Errorf("Error with Client %s", err)
+		return err
+	}
+
+	return nil
 }
 
 func (r *RavenDB) Gather(acc telegraf.Accumulator) error {
@@ -284,10 +305,10 @@ func (r *RavenDB) gatherIndexes(acc telegraf.Accumulator) {
 		return
 	}
 
-	for _, perDbIndexResponse := range indexesResponse.Results {
-		for _, indexResponse := range perDbIndexResponse.Indexes {
+	for _, perDBIndexResponse := range indexesResponse.Results {
+		for _, indexResponse := range perDBIndexResponse.Indexes {
 			tags := map[string]string{
-				"database_name": perDbIndexResponse.DatabaseName,
+				"database_name": perDBIndexResponse.DatabaseName,
 				"index_name":    indexResponse.IndexName,
 				"node_tag":      indexesResponse.NodeTag,
 				"url":           r.URL,
@@ -325,11 +346,11 @@ func (r *RavenDB) gatherCollections(acc telegraf.Accumulator) {
 		return
 	}
 
-	for _, perDbCollectionMetrics := range collectionsResponse.Results {
-		for _, collectionMetrics := range perDbCollectionMetrics.Collections {
+	for _, perDBCollectionMetrics := range collectionsResponse.Results {
+		for _, collectionMetrics := range perDBCollectionMetrics.Collections {
 			tags := map[string]string{
 				"collection_name": collectionMetrics.CollectionName,
-				"database_name":   perDbCollectionMetrics.DatabaseName,
+				"database_name":   perDBCollectionMetrics.DatabaseName,
 				"node_tag":        collectionsResponse.NodeTag,
 				"url":             r.URL,
 			}
@@ -361,30 +382,6 @@ func prepareDBNamesURLPart(dbNames []string) string {
 	}
 
 	return result
-}
-
-func (r *RavenDB) Init() error {
-	if r.URL == "" {
-		r.URL = defaultURL
-	}
-
-	r.requestURLServer = r.URL + "/admin/monitoring/v1/server"
-	r.requestURLDatabases = r.URL + "/admin/monitoring/v1/databases" + prepareDBNamesURLPart(r.DbStatsDbs)
-	r.requestURLIndexes = r.URL + "/admin/monitoring/v1/indexes" + prepareDBNamesURLPart(r.IndexStatsDbs)
-	r.requestURLCollection = r.URL + "/admin/monitoring/v1/collections" + prepareDBNamesURLPart(r.IndexStatsDbs)
-
-	err := choice.CheckSlice(r.StatsInclude, []string{"server", "databases", "indexes", "collections"})
-	if err != nil {
-		return err
-	}
-
-	err = r.ensureClient()
-	if nil != err {
-		r.Log.Errorf("Error with Client %s", err)
-		return err
-	}
-
-	return nil
 }
 
 func init() {

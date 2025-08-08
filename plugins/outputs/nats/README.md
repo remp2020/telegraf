@@ -1,6 +1,14 @@
 # NATS Output Plugin
 
-This plugin writes to a (list of) specified NATS instance(s).
+This plugin writes metrics to subjects of a set of [NATS][nats] instances in
+one of the supported [data formats][data_formats].
+
+⭐ Telegraf v1.1.0
+🏷️ messaging
+💻 all
+
+[nats]: https://nats.io
+[data_formats]: /docs/DATA_FORMATS_OUTPUT.md
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -63,9 +71,16 @@ to use them.
   # [outputs.nats.jetstream]
     ## Name of the stream, required when using jetstream. Telegraf will
     ## use the union of the above subject and below the subjects array.
-    # name = "" 
+    # name = ""
     # subjects = []
-    
+
+    ## Use asynchronous publishing for higher throughput, but note that it does not guarantee order within batches.
+    # async_publish = false
+
+    ## Timeout for wating on acknowledgement on asynchronous publishing
+    ## String with valid units "ns", "us" (or "µs"), "ms", "s", "m", "h".
+    # async_ack_timeout = "5s"
+
     ## Full jetstream create stream config, refer: https://docs.nats.io/nats-concepts/jetstream/streams
     # retention = "limits"
     # max_consumers = -1

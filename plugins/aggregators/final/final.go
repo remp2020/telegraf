@@ -23,12 +23,6 @@ type Final struct {
 	metricCache map[uint64]telegraf.Metric
 }
 
-func NewFinal() *Final {
-	return &Final{
-		SeriesTimeout: config.Duration(5 * time.Minute),
-	}
-}
-
 func (*Final) SampleConfig() string {
 	return sampleConfig
 }
@@ -69,7 +63,7 @@ func (m *Final) Push(acc telegraf.Accumulator) {
 		if m.KeepOriginalFieldNames {
 			fields = metric.Fields()
 		} else {
-			fields = map[string]any{}
+			fields = make(map[string]any, len(metric.FieldList()))
 			for _, field := range metric.FieldList() {
 				fields[field.Key+"_final"] = field.Value
 			}
@@ -80,11 +74,17 @@ func (m *Final) Push(acc telegraf.Accumulator) {
 	}
 }
 
-func (m *Final) Reset() {
+func (*Final) Reset() {
+}
+
+func newFinal() *Final {
+	return &Final{
+		SeriesTimeout: config.Duration(5 * time.Minute),
+	}
 }
 
 func init() {
 	aggregators.Add("final", func() telegraf.Aggregator {
-		return NewFinal()
+		return newFinal()
 	})
 }

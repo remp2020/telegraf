@@ -34,6 +34,7 @@ var tests = []SnakeTest{
 	{"LinuxMOTD", "linux_motd"},
 	{"OMGWTFBBQ", "omgwtfbbq"},
 	{"omg_wtf_bbq", "omg_wtf_bbq"},
+	{"ConsumedLCUs", "consumed_lcus"},
 }
 
 func TestSnakeCase(t *testing.T) {
@@ -84,7 +85,7 @@ func TestRunTimeoutFastExit(t *testing.T) {
 
 	// Verify "process already finished" log doesn't occur.
 	time.Sleep(time.Millisecond * 75)
-	require.Equal(t, "", buf.String())
+	require.Empty(t, buf.String())
 }
 
 func TestCombinedOutputTimeout(t *testing.T) {
@@ -174,7 +175,7 @@ func TestRandomSleep(t *testing.T) {
 
 func TestCompressWithGzip(t *testing.T) {
 	testData := "the quick brown fox jumps over the lazy dog"
-	inputBuffer := bytes.NewBuffer([]byte(testData))
+	inputBuffer := bytes.NewBufferString(testData)
 
 	outputBuffer := CompressWithGzip(inputBuffer)
 	gzipReader, err := gzip.NewReader(outputBuffer)
@@ -234,7 +235,7 @@ func TestCompressWithGzipErrorPropagationCopy(t *testing.T) {
 
 		rc := CompressWithGzip(r)
 		n, err := io.Copy(io.Discard, rc)
-		require.Greater(t, n, int64(0))
+		require.Positive(t, n)
 		require.ErrorIs(t, err, expected)
 		require.NoError(t, rc.Close())
 	}

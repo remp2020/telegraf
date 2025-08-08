@@ -1,8 +1,14 @@
-# Tengine Input Plugin
+# Tengine Web Server Input Plugin
 
-The tengine plugin gathers metrics from the
-[Tengine Web Server](http://tengine.taobao.org/) via the
-[reqstat](http://tengine.taobao.org/document/http_reqstat.html) module.
+This plugin gathers metrics from the [Tengine Web Server][tengine] via the
+[reqstat][reqstat] module.
+
+⭐ Telegraf v1.8.0
+🏷️ server, web
+💻 all
+
+[tengine]: http://tengine.taobao.org
+[reqstat]: http://tengine.taobao.org/document/http_reqstat.html
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -66,7 +72,8 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
     - http_503 (integer, total number of 503 requests)
     - http_504 (integer, total number of 504 requests)
     - http_508 (integer, total number of 508 requests)
-    - http_other_detail_status (integer, total number of requests of other status codes*http_ups_4xx total number of requests of upstream 4xx)
+    - http_other_detail_status (integer, total number of requests of other
+      status codes*http_ups_4xx total number of requests of upstream 4xx)
     - http_ups_5xx (integer, total number of requests of upstream 5xx)
 
 ## Example Output

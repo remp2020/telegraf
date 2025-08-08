@@ -92,7 +92,7 @@ func Test_readMaxOutputLen(t *testing.T) {
 func Test_connect(t *testing.T) {
 	t.Run("should pass if PathToSocket points to socket", func(t *testing.T) {
 		pathToSocket, socket := createSocketForTest(t, "")
-		dpdk := dpdk{
+		dpdk := Dpdk{
 			SocketPath: pathToSocket,
 			connectors: []*dpdkConnector{newDpdkConnector(pathToSocket, 0)},
 		}
@@ -117,7 +117,7 @@ func Test_getCommandResponse(t *testing.T) {
 			buf, err := connector.getCommandResponse(command)
 
 			require.NoError(t, err)
-			require.Equal(t, len(response), len(buf))
+			require.Len(t, buf, len(response))
 			require.Equal(t, response, string(buf))
 		}
 	})

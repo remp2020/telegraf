@@ -9,85 +9,112 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/api/types/system"
-	dockerClient "github.com/docker/docker/client"
+	"github.com/docker/docker/client"
 )
 
 var (
 	defaultHeaders = map[string]string{"User-Agent": "engine-api-cli-1.0"}
 )
 
-type Client interface {
+type dockerClient interface {
+	// Info retrieves system-wide information about the Docker server.
 	Info(ctx context.Context) (system.Info, error)
-	ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error)
-	ContainerStats(ctx context.Context, containerID string, stream bool) (types.ContainerStats, error)
-	ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error)
-	ServiceList(ctx context.Context, options types.ServiceListOptions) ([]swarm.Service, error)
-	TaskList(ctx context.Context, options types.TaskListOptions) ([]swarm.Task, error)
-	NodeList(ctx context.Context, options types.NodeListOptions) ([]swarm.Node, error)
+	// ContainerList retrieves a list of containers based on the specified options.
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	// ContainerStats retrieves real-time statistics for a specific container.
+	ContainerStats(ctx context.Context, containerID string, stream bool) (container.StatsResponseReader, error)
+	// ContainerInspect retrieves detailed information about a specific container.
+	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
+	// ServiceList retrieves a list of services based on the specified options.
+	ServiceList(ctx context.Context, options swarm.ServiceListOptions) ([]swarm.Service, error)
+	// TaskList retrieves a list of tasks based on the specified options.
+	TaskList(ctx context.Context, options swarm.TaskListOptions) ([]swarm.Task, error)
+	// NodeList retrieves a list of nodes based on the specified options.
+	NodeList(ctx context.Context, options swarm.NodeListOptions) ([]swarm.Node, error)
+	// DiskUsage retrieves disk usage information.
 	DiskUsage(ctx context.Context, options types.DiskUsageOptions) (types.DiskUsage, error)
+	// ClientVersion retrieves the version of the Docker client.
 	ClientVersion() string
+	// Close releases any resources held by the client.
 	Close() error
 }
 
-func NewEnvClient() (Client, error) {
-	client, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv)
+func newEnvClient() (dockerClient, error) {
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}
-	return &SocketClient{client}, nil
+	return &socketClient{dockerClient}, nil
 }
 
-func NewClient(host string, tlsConfig *tls.Config) (Client, error) {
+func newClient(host string, tlsConfig *tls.Config) (dockerClient, error) {
 	transport := &http.Transport{
 		TLSClientConfig: tlsConfig,
 	}
 	httpClient := &http.Client{Transport: transport}
 
-	client, err := dockerClient.NewClientWithOpts(
-		dockerClient.WithHTTPHeaders(defaultHeaders),
-		dockerClient.WithHTTPClient(httpClient),
-		dockerClient.WithAPIVersionNegotiation(),
-		dockerClient.WithHost(host))
+	dockerClient, err := client.NewClientWithOpts(
+		client.WithHTTPHeaders(defaultHeaders),
+		client.WithHTTPClient(httpClient),
+		client.WithAPIVersionNegotiation(),
+		client.WithHost(host))
 	if err != nil {
 		return nil, err
 	}
 
-	return &SocketClient{client}, nil
+	return &socketClient{dockerClient}, nil
 }
 
-type SocketClient struct {
-	client *dockerClient.Client
+type socketClient struct {
+	client *client.Client
 }
 
-func (c *SocketClient) Info(ctx context.Context) (system.Info, error) {
+// Info retrieves system-wide information about the Docker server.
+func (c *socketClient) Info(ctx context.Context) (system.Info, error) {
 	return c.client.Info(ctx)
 }
-func (c *SocketClient) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
+
+// ContainerList retrieves a list of containers based on the specified options.
+func (c *socketClient) ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 	return c.client.ContainerList(ctx, options)
 }
-func (c *SocketClient) ContainerStats(ctx context.Context, containerID string, stream bool) (types.ContainerStats, error) {
+
+// ContainerStats retrieves real-time statistics for a specific container.
+func (c *socketClient) ContainerStats(ctx context.Context, containerID string, stream bool) (container.StatsResponseReader, error) {
 	return c.client.ContainerStats(ctx, containerID, stream)
 }
-func (c *SocketClient) ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error) {
+
+// ContainerInspect retrieves detailed information about a specific container.
+func (c *socketClient) ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error) {
 	return c.client.ContainerInspect(ctx, containerID)
 }
-func (c *SocketClient) ServiceList(ctx context.Context, options types.ServiceListOptions) ([]swarm.Service, error) {
+
+// ServiceList retrieves a list of services based on the specified options.
+func (c *socketClient) ServiceList(ctx context.Context, options swarm.ServiceListOptions) ([]swarm.Service, error) {
 	return c.client.ServiceList(ctx, options)
 }
-func (c *SocketClient) TaskList(ctx context.Context, options types.TaskListOptions) ([]swarm.Task, error) {
+
+// TaskList retrieves a list of tasks based on the specified options.
+func (c *socketClient) TaskList(ctx context.Context, options swarm.TaskListOptions) ([]swarm.Task, error) {
 	return c.client.TaskList(ctx, options)
 }
-func (c *SocketClient) NodeList(ctx context.Context, options types.NodeListOptions) ([]swarm.Node, error) {
+
+// NodeList retrieves a list of nodes based on the specified options.
+func (c *socketClient) NodeList(ctx context.Context, options swarm.NodeListOptions) ([]swarm.Node, error) {
 	return c.client.NodeList(ctx, options)
 }
-func (c *SocketClient) DiskUsage(ctx context.Context, options types.DiskUsageOptions) (types.DiskUsage, error) {
+
+// DiskUsage retrieves disk usage information.
+func (c *socketClient) DiskUsage(ctx context.Context, options types.DiskUsageOptions) (types.DiskUsage, error) {
 	return c.client.DiskUsage(ctx, options)
 }
 
-func (c *SocketClient) ClientVersion() string {
+// ClientVersion retrieves the version of the Docker client.
+func (c *socketClient) ClientVersion() string {
 	return c.client.ClientVersion()
 }
 
-func (c *SocketClient) Close() error {
+// Close releases any resources held by the client.
+func (c *socketClient) Close() error {
 	return c.client.Close()
 }

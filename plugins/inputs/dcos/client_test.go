@@ -1,7 +1,6 @@
 package dcos
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,11 +37,11 @@ func TestLogin(t *testing.T) {
 			name:         "Unauthorized Error",
 			responseCode: http.StatusUnauthorized,
 			responseBody: `{"title": "x", "description": "y"}`,
-			expectedError: &APIError{
-				URL:         ts.URL + "/acs/api/v1/auth/login",
-				StatusCode:  http.StatusUnauthorized,
-				Title:       "x",
-				Description: "y",
+			expectedError: &apiError{
+				url:         ts.URL + "/acs/api/v1/auth/login",
+				statusCode:  http.StatusUnauthorized,
+				title:       "x",
+				description: "y",
 			},
 			expectedToken: "",
 		},
@@ -61,13 +60,12 @@ func TestLogin(t *testing.T) {
 			u, err := url.Parse(ts.URL)
 			require.NoError(t, err)
 
-			ctx := context.Background()
-			sa := &ServiceAccount{
-				AccountID:  "telegraf",
-				PrivateKey: key,
+			sa := &serviceAccount{
+				accountID:  "telegraf",
+				privateKey: key,
 			}
-			client := NewClusterClient(u, defaultResponseTimeout, 1, nil)
-			auth, err := client.Login(ctx, sa)
+			client := newClusterClient(u, defaultResponseTimeout, 1, nil)
+			auth, err := client.login(t.Context(), sa)
 
 			require.Equal(t, tt.expectedError, err)
 
@@ -88,14 +86,14 @@ func TestGetSummary(t *testing.T) {
 		name          string
 		responseCode  int
 		responseBody  string
-		expectedValue *Summary
+		expectedValue *summary
 		expectedError error
 	}{
 		{
 			name:          "No nodes",
 			responseCode:  http.StatusOK,
 			responseBody:  `{"cluster": "a", "slaves": []}`,
-			expectedValue: &Summary{Cluster: "a", Slaves: []Slave{}},
+			expectedValue: &summary{Cluster: "a", Slaves: make([]slave, 0)},
 			expectedError: nil,
 		},
 		{
@@ -103,19 +101,19 @@ func TestGetSummary(t *testing.T) {
 			responseCode:  http.StatusUnauthorized,
 			responseBody:  `<html></html>`,
 			expectedValue: nil,
-			expectedError: &APIError{
-				URL:        ts.URL + "/mesos/master/state-summary",
-				StatusCode: http.StatusUnauthorized,
-				Title:      "401 Unauthorized",
+			expectedError: &apiError{
+				url:        ts.URL + "/mesos/master/state-summary",
+				statusCode: http.StatusUnauthorized,
+				title:      "401 Unauthorized",
 			},
 		},
 		{
 			name:         "Has nodes",
 			responseCode: http.StatusOK,
 			responseBody: `{"cluster": "a", "slaves": [{"id": "a"}, {"id": "b"}]}`,
-			expectedValue: &Summary{
+			expectedValue: &summary{
 				Cluster: "a",
-				Slaves: []Slave{
+				Slaves: []slave{
 					{ID: "a"},
 					{ID: "b"},
 				},
@@ -135,9 +133,8 @@ func TestGetSummary(t *testing.T) {
 			u, err := url.Parse(ts.URL)
 			require.NoError(t, err)
 
-			ctx := context.Background()
-			client := NewClusterClient(u, defaultResponseTimeout, 1, nil)
-			summary, err := client.GetSummary(ctx)
+			client := newClusterClient(u, defaultResponseTimeout, 1, nil)
+			summary, err := client.getSummary(t.Context())
 
 			require.Equal(t, tt.expectedError, err)
 			require.Equal(t, tt.expectedValue, summary)
@@ -153,14 +150,14 @@ func TestGetNodeMetrics(t *testing.T) {
 		name          string
 		responseCode  int
 		responseBody  string
-		expectedValue *Metrics
+		expectedValue *metrics
 		expectedError error
 	}{
 		{
 			name:          "Empty Body",
 			responseCode:  http.StatusOK,
 			responseBody:  `{}`,
-			expectedValue: &Metrics{},
+			expectedValue: &metrics{},
 			expectedError: nil,
 		},
 	}
@@ -176,9 +173,8 @@ func TestGetNodeMetrics(t *testing.T) {
 			u, err := url.Parse(ts.URL)
 			require.NoError(t, err)
 
-			ctx := context.Background()
-			client := NewClusterClient(u, defaultResponseTimeout, 1, nil)
-			m, err := client.GetNodeMetrics(ctx, "foo")
+			client := newClusterClient(u, defaultResponseTimeout, 1, nil)
+			m, err := client.getNodeMetrics(t.Context(), "foo")
 
 			require.Equal(t, tt.expectedError, err)
 			require.Equal(t, tt.expectedValue, m)
@@ -194,14 +190,14 @@ func TestGetContainerMetrics(t *testing.T) {
 		name          string
 		responseCode  int
 		responseBody  string
-		expectedValue *Metrics
+		expectedValue *metrics
 		expectedError error
 	}{
 		{
 			name:          "204 No Content",
 			responseCode:  http.StatusNoContent,
 			responseBody:  ``,
-			expectedValue: &Metrics{},
+			expectedValue: &metrics{},
 			expectedError: nil,
 		},
 	}
@@ -217,9 +213,8 @@ func TestGetContainerMetrics(t *testing.T) {
 			u, err := url.Parse(ts.URL)
 			require.NoError(t, err)
 
-			ctx := context.Background()
-			client := NewClusterClient(u, defaultResponseTimeout, 1, nil)
-			m, err := client.GetContainerMetrics(ctx, "foo", "bar")
+			client := newClusterClient(u, defaultResponseTimeout, 1, nil)
+			m, err := client.getContainerMetrics(t.Context(), "foo", "bar")
 
 			require.Equal(t, tt.expectedError, err)
 			require.Equal(t, tt.expectedValue, m)

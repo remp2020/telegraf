@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-type Query struct {
+type query struct {
 	Size         int                `json:"size"`
-	Aggregations AggregationRequest `json:"aggregations"`
+	Aggregations aggregationRequest `json:"aggregations"`
 	Query        interface{}        `json:"query,omitempty"`
 }
 
-type BoolQuery struct {
+type boolQuery struct {
 	FilterQueryString string
 	TimestampField    string
 	TimeRangeFrom     time.Time
@@ -19,7 +19,8 @@ type BoolQuery struct {
 	DateFieldFormat   string
 }
 
-func (b *BoolQuery) MarshalJSON() ([]byte, error) {
+// MarshalJSON customizes the JSON marshaling for boolQuery.
+func (b *boolQuery) MarshalJSON() ([]byte, error) {
 	// Construct range
 	dateTimeRange := map[string]interface{}{
 		"from":          b.TimeRangeFrom,

@@ -8,8 +8,10 @@ import (
 	"strconv"
 )
 
-type ConversionFunc func(value sql.RawBytes) (interface{}, error)
+type conversionFunc func(value sql.RawBytes) (interface{}, error)
 
+// ParseInt parses the given sql.RawBytes value into an int64.
+// It returns the parsed value and an error if the parsing fails.
 func ParseInt(value sql.RawBytes) (interface{}, error) {
 	v, err := strconv.ParseInt(string(value), 10, 64)
 
@@ -23,14 +25,20 @@ func ParseInt(value sql.RawBytes) (interface{}, error) {
 	return v, err
 }
 
+// ParseUint parses the given sql.RawBytes value into an uint64.
+// It returns the parsed value and an error if the parsing fails.
 func ParseUint(value sql.RawBytes) (interface{}, error) {
 	return strconv.ParseUint(string(value), 10, 64)
 }
 
+// ParseFloat parses the given sql.RawBytes value into a float64.
+// It returns the parsed value and an error if the parsing fails.
 func ParseFloat(value sql.RawBytes) (interface{}, error) {
 	return strconv.ParseFloat(string(value), 64)
 }
 
+// ParseBoolAsInteger parses the given sql.RawBytes value into an int64
+// representing a boolean value. It returns 1 for "YES" or "ON" and 0 otherwise.
 func ParseBoolAsInteger(value sql.RawBytes) (interface{}, error) {
 	if bytes.EqualFold(value, []byte("YES")) || bytes.EqualFold(value, []byte("ON")) {
 		return int64(1), nil
@@ -39,10 +47,14 @@ func ParseBoolAsInteger(value sql.RawBytes) (interface{}, error) {
 	return int64(0), nil
 }
 
+// ParseString parses the given sql.RawBytes value into a string.
+// It returns the parsed value and an error if the parsing fails.
 func ParseString(value sql.RawBytes) (interface{}, error) {
 	return string(value), nil
 }
 
+// ParseGTIDMode parses the given sql.RawBytes value into an int64
+// representing the GTID mode. It returns an error if the value is unrecognized.
 func ParseGTIDMode(value sql.RawBytes) (interface{}, error) {
 	// https://dev.mysql.com/doc/refman/8.0/en/replication-mode-change-online-concepts.html
 	v := string(value)
@@ -60,6 +72,8 @@ func ParseGTIDMode(value sql.RawBytes) (interface{}, error) {
 	}
 }
 
+// ParseValue attempts to parse the given sql.RawBytes value into an appropriate type.
+// It returns the parsed value and an error if the parsing fails.
 func ParseValue(value sql.RawBytes) (interface{}, error) {
 	if bytes.EqualFold(value, []byte("YES")) || bytes.Equal(value, []byte("ON")) {
 		return int64(1), nil
@@ -86,7 +100,7 @@ func ParseValue(value sql.RawBytes) (interface{}, error) {
 	return nil, fmt.Errorf("unconvertible value: %q", string(value))
 }
 
-var GlobalStatusConversions = map[string]ConversionFunc{
+var globalStatusConversions = map[string]conversionFunc{
 	"innodb_available_undo_logs":    ParseUint,
 	"innodb_buffer_pool_pages_misc": ParseUint,
 	"innodb_data_pending_fsyncs":    ParseUint,
@@ -94,11 +108,21 @@ var GlobalStatusConversions = map[string]ConversionFunc{
 	"ssl_verify_depth":              ParseUint,
 
 	// see https://galeracluster.com/library/documentation/galera-status-variables.html
+	"wsrep_apply_oooe":           ParseFloat,
+	"wsrep_apply_oool":           ParseFloat,
+	"wsrep_apply_window":         ParseFloat,
+	"wsrep_cert_deps_distance":   ParseFloat,
+	"wsrep_cert_interval":        ParseFloat,
+	"wsrep_commit_oooe":          ParseFloat,
+	"wsrep_commit_oool":          ParseFloat,
+	"wsrep_commit_window":        ParseFloat,
+	"wsrep_flow_control_paused":  ParseFloat,
 	"wsrep_local_index":          ParseUint,
+	"wsrep_local_recv_queue_avg": ParseFloat,
 	"wsrep_local_send_queue_avg": ParseFloat,
 }
 
-var GlobalVariableConversions = map[string]ConversionFunc{
+var globalVariableConversions = map[string]conversionFunc{
 	// see https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html
 	"delay_key_write":                ParseString,        // ON, OFF, ALL
@@ -125,24 +149,28 @@ var GlobalVariableConversions = map[string]ConversionFunc{
 	"gtid_mode": ParseGTIDMode,
 }
 
+// ConvertGlobalStatus converts the given key and sql.RawBytes value into an appropriate type based on globalStatusConversions.
+// It returns the converted value and an error if the conversion fails.
 func ConvertGlobalStatus(key string, value sql.RawBytes) (interface{}, error) {
 	if bytes.Equal(value, []byte("")) {
 		return nil, nil
 	}
 
-	if conv, ok := GlobalStatusConversions[key]; ok {
+	if conv, ok := globalStatusConversions[key]; ok {
 		return conv(value)
 	}
 
 	return ParseValue(value)
 }
 
+// ConvertGlobalVariables converts the given key and sql.RawBytes value into an appropriate type based on globalVariableConversions.
+// It returns the converted value and an error if the conversion fails.
 func ConvertGlobalVariables(key string, value sql.RawBytes) (interface{}, error) {
 	if bytes.Equal(value, []byte("")) {
 		return nil, nil
 	}
 
-	if conv, ok := GlobalVariableConversions[key]; ok {
+	if conv, ok := globalVariableConversions[key]; ok {
 		return conv(value)
 	}
 

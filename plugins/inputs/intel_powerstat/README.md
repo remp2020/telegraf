@@ -1,16 +1,207 @@
 # Intel PowerStat Input Plugin
 
-This input plugin monitors power statistics on Intel-based platforms and
-assumes presence of Linux based OS.
+This plugin gathers power statistics on Intel-based platforms providing insights
+into power saving and workload migration. Those are beneficial for Monitoring
+and Analytics systems to take preventive or corrective actions based on platform
+busyness, CPU temperature, actual CPU utilization and power statistics.
 
-Not all CPUs are supported, please see the software and hardware dependencies
-sections below to ensure platform support.
+⭐ Telegraf v1.17.0
+🏷️ hardware, system
+💻 linux
 
-Main use cases are power saving and workload migration. Telemetry frameworks
-allow users to monitor critical platform level metrics. Key source of platform
-telemetry is power domain that is beneficial for MANO Monitoring&Analytics
-systems to take preventive/corrective actions based on platform busyness, CPU
-temperature, actual CPU utilization and power statistics.
+## Requirements
+
+### Kernel modules
+
+Plugin is mostly based on Linux Kernel modules that expose specific metrics over
+`sysfs` or `devfs` interfaces. The following dependencies are expected:
+
+- `intel-rapl` kernel module which exposes Intel Runtime Power Limiting metrics over
+  `sysfs` (`/sys/devices/virtual/powercap/intel-rapl`),
+- `msr` kernel module that provides access to processor model specific
+  registers over `devfs` (`/dev/cpu/cpu%d/msr`),
+- `cpufreq` kernel module - which exposes per-CPU Frequency over `sysfs`
+ (`/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq`),
+- `intel-uncore-frequency` kernel module exposes Intel uncore frequency metrics
+  over `sysfs` (`/sys/devices/system/cpu/intel_uncore_frequency`).
+
+Make sure the required kernel modules are loaded and running. Modules might have
+to be manually enabled by using `modprobe`. Depending on the kernel version,
+run the following commands:
+
+```sh
+# rapl modules:
+## kernel < 4.0
+sudo modprobe intel_rapl
+## kernel >= 4.0
+sudo modprobe rapl
+sudo modprobe intel_rapl_common
+sudo modprobe intel_rapl_msr
+
+# msr module:
+sudo modprobe msr
+
+# cpufreq module:
+### integrated in kernel
+
+# intel-uncore-frequency module:
+## only for kernel >= 5.6.0
+sudo modprobe intel-uncore-frequency
+```
+
+### Kernel's perf interface
+
+For perf-related metrics, when Telegraf is not running as root, the following
+capability should be added to the Telegraf executable:
+
+```sh
+sudo setcap cap_sys_admin+ep <path_to_telegraf_binary>
+```
+
+Alternatively, `/proc/sys/kernel/perf_event_paranoid` has to be set to value
+less than 1.
+
+Depending on environment and configuration (number of monitored CPUs and number
+of enabled metrics), it might be required to increase the limit on the number of
+open file descriptors allowed. This can be done for example by using `ulimit -n`
+command.
+
+### Root privileges
+
+> [!IMPORTANT]
+> Telegraf with Intel PowerStat plugin enabled may require root privileges to
+> read all the metrics (depending on OS type or configuration).
+
+Alternatively, the following capabilities can be added to the Telegraf
+executable:
+
+```sh
+#without perf-related metrics:
+sudo setcap cap_sys_rawio,cap_dac_read_search+ep <path_to_telegraf_binary>
+
+#with perf-related metrics:
+sudo setcap cap_sys_rawio,cap_dac_read_search,cap_sys_admin+ep <path_to_telegraf_binary>
+```
+
+### Supported hardware
+
+Specific metrics require certain processor features to be present, otherwise
+Intel PowerStat plugin won't be able to read them. The user can detect supported
+processor features by reading `/proc/cpuinfo` file.
+Plugin assumes crucial properties are the same for all CPU cores in the system.
+
+The following `processor` properties are examined in more detail
+in this section:
+
+- `vendor_id`
+- `cpu family`
+- `model`
+- `flags`
+
+The following processor properties are required by the plugin:
+
+- Processor `vendor_id` must be `GenuineIntel` and `cpu family` must be `6` -
+  since data used by the plugin are Intel-specific.
+- The following processor flags shall be present:
+  - `msr` shall be present for plugin to read platform data from processor
+    model specific registers and collect the following metrics:
+    - `cpu_c0_state_residency`
+    - `cpu_c1_state_residency`
+    - `cpu_c3_state_residency`
+    - `cpu_c6_state_residency`
+    - `cpu_c7_state_residency`
+    - `cpu_busy_cycles` (**DEPRECATED** - superseded by `cpu_c0_state_residency_percent`)
+    - `cpu_busy_frequency`
+    - `cpu_temperature`
+    - `cpu_base_frequency`
+    - `max_turbo_frequency`
+    - `uncore_frequency` (for kernel < 5.18)
+  - `aperfmperf` shall be present to collect the following metrics:
+    - `cpu_c0_state_residency`
+    - `cpu_c1_state_residency`
+    - `cpu_busy_cycles` (**DEPRECATED** - superseded by `cpu_c0_state_residency_percent`)
+    - `cpu_busy_frequency`
+  - `dts` shall be present to collect:
+    - `cpu_temperature`
+- supported CPU model. To see which metrics are supported by your `model`. The
+  following metrics exist:
+  - `cpu_c1_state_residency`
+  - `cpu_c3_state_residency`
+  - `cpu_c6_state_residency`
+  - `cpu_c7_state_residency`
+  - `cpu_temperature`
+  - `cpu_base_frequency`
+  - `uncore_frequency`
+
+### Supported CPU models
+
+| Model number | Processor name                  | `cpu_c1_state_residency`<br/>`cpu_c6_state_residency`<br/>`cpu_temperature`<br/>`cpu_base_frequency` | `cpu_c3_state_residency` | `cpu_c7_state_residency` | `uncore_frequency` |
+|--------------|---------------------------------|:----------------------------------------------------------------------------------------------------:|:------------------------:|:------------------------:|:------------------:|
+| 0x1E         | Intel Nehalem                   |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x1F         | Intel Nehalem-G                 |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x1A         | Intel Nehalem-EP                |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x2E         | Intel Nehalem-EX                |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x25         | Intel Westmere                  |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x2C         | Intel Westmere-EP               |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x2F         | Intel Westmere-EX               |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x2A         | Intel Sandybridge               |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x2D         | Intel Sandybridge-X             |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x3A         | Intel Ivybridge                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x3E         | Intel Ivybridge-X               |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x3C         | Intel Haswell                   |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x3F         | Intel Haswell-X                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x45         | Intel Haswell-L                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x46         | Intel Haswell-G                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x3D         | Intel Broadwell                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x47         | Intel Broadwell-G               |                                                  ✓                                                   |            ✓             |            ✓             |         ✓          |
+| 0x4F         | Intel Broadwell-X               |                                                  ✓                                                   |            ✓             |                          |         ✓          |
+| 0x56         | Intel Broadwell-D               |                                                  ✓                                                   |            ✓             |                          |         ✓          |
+| 0x4E         | Intel Skylake-L                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x5E         | Intel Skylake                   |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x55         | Intel Skylake-X                 |                                                  ✓                                                   |                          |                          |         ✓          |
+| 0x8E         | Intel KabyLake-L                |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x9E         | Intel KabyLake                  |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0xA5         | Intel CometLake                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0xA6         | Intel CometLake-L               |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x66         | Intel CannonLake-L              |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x6A         | Intel IceLake-X                 |                                                  ✓                                                   |                          |                          |         ✓          |
+| 0x6C         | Intel IceLake-D                 |                                                  ✓                                                   |                          |                          |         ✓          |
+| 0x7D         | Intel IceLake                   |                                                  ✓                                                   |                          |                          |                    |
+| 0x7E         | Intel IceLake-L                 |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x9D         | Intel IceLake-NNPI              |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0xA7         | Intel RocketLake                |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x8C         | Intel TigerLake-L               |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x8D         | Intel TigerLake                 |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x8F         | Intel Sapphire Rapids X         |                                                  ✓                                                   |                          |                          |         ✓          |
+| 0xCF         | Intel Emerald Rapids X          |                                                  ✓                                                   |                          |                          |         ✓          |
+| 0xAD         | Intel Granite Rapids X          |                                                  ✓                                                   |                          |                          |                    |
+| 0xAE         | Intel Granite Rapids D          |                                                  ✓                                                   |                          |                          |                    |
+| 0x8A         | Intel Lakefield                 |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x97         | Intel AlderLake                 |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0x9A         | Intel AlderLake-L               |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0xB7         | Intel RaptorLake                |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0xBA         | Intel RaptorLake-P              |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0xBF         | Intel RaptorLake-S              |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0xAC         | Intel MeteorLake                |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0xAA         | Intel MeteorLake-L              |                                                  ✓                                                   |                          |            ✓             |         ✓          |
+| 0xC6         | Intel ArrowLake                 |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0xBD         | Intel LunarLake                 |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x37         | Intel Atom® Bay Trail           |                                                  ✓                                                   |                          |                          |                    |
+| 0x4D         | Intel Atom® Avaton              |                                                  ✓                                                   |                          |                          |                    |
+| 0x4A         | Intel Atom® Merrifield          |                                                  ✓                                                   |                          |                          |                    |
+| 0x5A         | Intel Atom® Moorefield          |                                                  ✓                                                   |                          |                          |                    |
+| 0x4C         | Intel Atom® Airmont             |                                                  ✓                                                   |            ✓             |                          |                    |
+| 0x5C         | Intel Atom® Apollo Lake         |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x5F         | Intel Atom® Denverton           |                                                  ✓                                                   |                          |                          |                    |
+| 0x7A         | Intel Atom® Goldmont            |                                                  ✓                                                   |            ✓             |            ✓             |                    |
+| 0x86         | Intel Atom® Jacobsville         |                                                  ✓                                                   |                          |                          |                    |
+| 0x96         | Intel Atom® Elkhart Lake        |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0x9C         | Intel Atom® Jasper Lake         |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0xBE         | Intel AlderLake-N               |                                                  ✓                                                   |                          |            ✓             |                    |
+| 0xAF         | Intel Sierra Forest             |                                                  ✓                                                   |                          |                          |                    |
+| 0xB6         | Intel Grand Ridge               |                                                  ✓                                                   |                          |                          |                    |
+| 0x57         | Intel Xeon® PHI Knights Landing |                                                  ✓                                                   |                          |                          |                    |
+| 0x85         | Intel Xeon® PHI Knights Mill    |                                                  ✓                                                   |                          |                          |                    |
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -53,15 +244,13 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ##   "cpu_c0_substate_c02", "cpu_c0_substate_c0_wait"
   # cpu_metrics = []
 
-  ## Optionally the user can choose for which CPUs metrics configured in cpu_metrics array should be gathered.
-  ## Can't be combined with excluded_cpus.
-  ## Empty or missing array means CPU metrics are gathered for all CPUs.
+  ## CPUs metrics to include from those configured in cpu_metrics array
+  ## Can't be combined with excluded_cpus. Empty means all CPUs are gathered.
   ## e.g. ["0-3", "4,5,6"] or ["1-3,4"]
   # included_cpus = []
 
-  ## Optionally the user can choose which CPUs should be excluded from gathering metrics configured in cpu_metrics array.
-  ## Can't be combined with included_cpus.
-  ## Empty or missing array means CPU metrics are gathered for all CPUs.
+  ## CPUs metrics to exclude from those configured in cpu_metrics array
+  ## Can't be combined with included_cpus. Empty means all CPUs are gathered.
   ## e.g. ["0-3", "4,5,6"] or ["1-3,4"]
   # excluded_cpus = []
 
@@ -78,19 +267,51 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 ### Example: Configuration with no per-CPU telemetry
 This configuration allows getting global metrics (processor package specific), no per-CPU metrics are collected:
 
-### Configuration notes
+1. The configuration of `included_cpus` or `excluded_cpus` may affect the
+   ability to collect `package_metrics`. Some of them
+   (`max_turbo_frequency`, `cpu_base_frequency`, and `uncore_frequency`) need to
+   read data from exactly one processor for each package. If `included_cpus` or
+   `excluded_cpus` exclude all processors from the package, reading th
+   mentioned metrics for that package will not be possible.
+2. `event_definitions` JSON file for specific architecture can be found at
+   [perfmon][perfmon]. A script to download the event definition that is
+   appropriate for current environment (`event_download.py`) is available at
+   [pmu-tools][pmu_tools]. For perf-related metrics supported by this plugin,
+   an event definition JSON file with events for the `core` is required, e.g.
+   `sapphirerapids_core.json` or `GenuineIntel-6-8F-core.json`.
 
-1. The configuration of `included_cpus` or `excluded_cpus` may affect the ability to collect `package_metrics`.
-   Some of them (`max_turbo_frequency`, `cpu_base_frequency`, and `uncore_frequency`) need to read data
-   from exactly one processor for each package. If `included_cpus` or `excluded_cpus` exclude all processors
-   from the package, reading the mentioned metrics for that package will not be possible.
-2. `event_definitions` JSON file for specific architecture can be found at [perfmon](https://github.com/intel/perfmon).
-   A script to download the event definition that is appropriate for current environment (`event_download.py`) is
-   available at [pmu-tools](https://github.com/andikleen/pmu-tools).
-   For perf-related metrics supported by this plugin, an event definition JSON file
-   with events for the `core` is required.
+[perfmon]: https://github.com/intel/perfmon
+[pmu_tools]: https://github.com/andikleen/pmu-tools
 
-   For example: `sapphirerapids_core.json` or `GenuineIntel-6-8F-core.json`.
+### Dependencies of metrics on system configuration
+
+Details of these dependencies are discussed above:
+
+| Configuration option                                                     | Type              | Dependency        |
+|--------------------------------------------------------------------------|-------------------|-------------------|
+| `current_power_consumption`                                              | `package_metrics` | `rapl` module     |
+| `current_dram_power_consumption`                                         | `package_metrics` | `rapl` module     |
+| `thermal_design_power`                                                   | `package_metrics` | `rapl` module     |
+| `max_turbo_frequency`                                                    | `package_metrics` | `msr`  module     |
+| `uncore_frequency`                                                       | `package_metrics` | `intel-uncore-frequency` module* |
+| `cpu_base_frequency`                                                     | `package_metrics` | `msr`  module     |
+| `cpu_frequency`                                                          | `cpu_metrics`     | `cpufreq`  module |
+| `cpu_c0_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
+| `cpu_c1_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
+| `cpu_c3_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
+| `cpu_c6_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
+| `cpu_c7_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
+| `cpu_busy_cycles` (**DEPRECATED**, use `cpu_c0_state_residency_percent`) | `cpu_metrics`     | `msr`  module     |
+| `cpu_temperature`                                                        | `cpu_metrics`     | `msr`  module     |
+| `cpu_busy_frequency`                                                     | `cpu_metrics`     | `msr`  module     |
+| `cpu_c0_substate_c01`                                                    | `cpu_metrics`     | `perf` interface  |
+| `cpu_c0_substate_c02`                                                    | `cpu_metrics`     | `perf` interface  |
+| `cpu_c0_substate_c0_wait`                                                | `cpu_metrics`     | `perf` interface  |
+
+*for all metrics enabled by the configuration option `uncore_frequency`,
+starting from kernel version 5.18, only the `intel-uncore-frequency` module
+is required. For older kernel versions, the metric `uncore_frequency_mhz_cur`
+requires the `msr` module to be enabled.
 
 ### Example: Configuration with no per-CPU telemetry
 
@@ -441,7 +662,7 @@ All metrics collected by Intel PowerStat plugin are collected in fixed
 intervals. Metrics that reports processor C-state residency or power are
 calculated over elapsed intervals.
 
-**The following measurements are supported by Intel PowerStat plugin:**
+The following measurements are supported by Intel PowerStat plugin:
 
 - `powerstat_core`
   - The following tags are returned by plugin with
@@ -590,72 +811,3 @@ powerstat_core,core_id=0,cpu_id=0,host=ubuntu,package_id=0 cpu_c0_substate_c01_p
 powerstat_core,core_id=0,cpu_id=0,host=ubuntu,package_id=0 cpu_c0_substate_c02_percent=5.68 1606494744000000000
 powerstat_core,core_id=0,cpu_id=0,host=ubuntu,package_id=0 cpu_c0_substate_c0_wait_percent=43.74 1606494744000000000
 ```
-
-## Supported CPU models
-
-| Model number | Processor name                  | `cpu_c1_state_residency`<br/>`cpu_c6_state_residency`<br/>`cpu_temperature`<br/>`cpu_base_frequency` | `cpu_c3_state_residency` | `cpu_c7_state_residency` | `uncore_frequency` |
-|--------------|---------------------------------|:----------------------------------------------------------------------------------------------------:|:------------------------:|:------------------------:|:------------------:|
-| 0x1E         | Intel Nehalem                   |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x1F         | Intel Nehalem-G                 |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x1A         | Intel Nehalem-EP                |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x2E         | Intel Nehalem-EX                |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x25         | Intel Westmere                  |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x2C         | Intel Westmere-EP               |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x2F         | Intel Westmere-EX               |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x2A         | Intel Sandybridge               |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x2D         | Intel Sandybridge-X             |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x3A         | Intel Ivybridge                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x3E         | Intel Ivybridge-X               |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x3C         | Intel Haswell                   |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x3F         | Intel Haswell-X                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x45         | Intel Haswell-L                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x46         | Intel Haswell-G                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x3D         | Intel Broadwell                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x47         | Intel Broadwell-G               |                                                  ✓                                                   |            ✓             |            ✓             |         ✓          |
-| 0x4F         | Intel Broadwell-X               |                                                  ✓                                                   |            ✓             |                          |         ✓          |
-| 0x56         | Intel Broadwell-D               |                                                  ✓                                                   |            ✓             |                          |         ✓          |
-| 0x4E         | Intel Skylake-L                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x5E         | Intel Skylake                   |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x55         | Intel Skylake-X                 |                                                  ✓                                                   |                          |                          |         ✓          |
-| 0x8E         | Intel KabyLake-L                |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x9E         | Intel KabyLake                  |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0xA5         | Intel CometLake                 |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0xA6         | Intel CometLake-L               |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x66         | Intel CannonLake-L              |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x6A         | Intel IceLake-X                 |                                                  ✓                                                   |                          |                          |         ✓          |
-| 0x6C         | Intel IceLake-D                 |                                                  ✓                                                   |                          |                          |         ✓          |
-| 0x7D         | Intel IceLake                   |                                                  ✓                                                   |                          |                          |                    |
-| 0x7E         | Intel IceLake-L                 |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x9D         | Intel IceLake-NNPI              |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0xA7         | Intel RocketLake                |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x8C         | Intel TigerLake-L               |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x8D         | Intel TigerLake                 |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x8F         | Intel Sapphire Rapids X         |                                                  ✓                                                   |                          |                          |         ✓          |
-| 0xCF         | Intel Emerald Rapids X          |                                                  ✓                                                   |                          |                          |         ✓          |
-| 0xAD         | Intel Granite Rapids X          |                                                  ✓                                                   |                          |                          |                    |
-| 0x8A         | Intel Lakefield                 |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x97         | Intel AlderLake                 |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0x9A         | Intel AlderLake-L               |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0xB7         | Intel RaptorLake                |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0xBA         | Intel RaptorLake-P              |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0xBF         | Intel RaptorLake-S              |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0xAC         | Intel MeteorLake                |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0xAA         | Intel MeteorLake-L              |                                                  ✓                                                   |                          |            ✓             |         ✓          |
-| 0xC6         | Intel ArrowLake                 |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0xBD         | Intel LunarLake                 |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x37         | Intel Atom® Bay Trail           |                                                  ✓                                                   |                          |                          |                    |
-| 0x4D         | Intel Atom® Avaton              |                                                  ✓                                                   |                          |                          |                    |
-| 0x4A         | Intel Atom® Merrifield          |                                                  ✓                                                   |                          |                          |                    |
-| 0x5A         | Intel Atom® Moorefield          |                                                  ✓                                                   |                          |                          |                    |
-| 0x4C         | Intel Atom® Airmont             |                                                  ✓                                                   |            ✓             |                          |                    |
-| 0x5C         | Intel Atom® Apollo Lake         |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x5F         | Intel Atom® Denverton           |                                                  ✓                                                   |                          |                          |                    |
-| 0x7A         | Intel Atom® Goldmont            |                                                  ✓                                                   |            ✓             |            ✓             |                    |
-| 0x86         | Intel Atom® Jacobsville         |                                                  ✓                                                   |                          |                          |                    |
-| 0x96         | Intel Atom® Elkhart Lake        |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0x9C         | Intel Atom® Jasper Lake         |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0xBE         | Intel AlderLake-N               |                                                  ✓                                                   |                          |            ✓             |                    |
-| 0xAF         | Intel Sierra Forest             |                                                  ✓                                                   |                          |                          |                    |
-| 0xB6         | Intel Grand Ridge               |                                                  ✓                                                   |                          |                          |                    |
-| 0x57         | Intel Xeon® PHI Knights Landing |                                                  ✓                                                   |                          |                          |                    |
-| 0x85         | Intel Xeon® PHI Knights Mill    |                                                  ✓                                                   |                          |                          |                    |

@@ -57,15 +57,15 @@ func TestCases(t *testing.T) {
 			require.NotEmpty(t, output)
 			require.GreaterOrEqual(t, n, uint64(1))
 			actual := config.NewConfig()
-			require.NoError(t, actual.LoadConfigData(output))
+			require.NoError(t, actual.LoadConfigData(output, config.EmptySourcePath))
 
 			// Test the output
 			require.Len(t, actual.Outputs, len(expected.Outputs))
 			actualIDs := make([]string, 0, len(expected.Outputs))
 			expectedIDs := make([]string, 0, len(expected.Outputs))
-			for i := range actual.Inputs {
+			for i := range actual.Outputs {
 				actualIDs = append(actualIDs, actual.Outputs[i].ID())
-				expectedIDs = append(expectedIDs, expected.Inputs[i].ID())
+				expectedIDs = append(expectedIDs, expected.Outputs[i].ID())
 			}
 			require.ElementsMatch(t, expectedIDs, actualIDs, string(output))
 		})

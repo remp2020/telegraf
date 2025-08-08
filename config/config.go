@@ -53,12 +53,17 @@ var (
 	// environment variable replacement behavior
 	OldEnvVarReplacement = false
 
+	// PrintPluginConfigSource is a switch to enable printing of plugin sources
+	PrintPluginConfigSource = false
+
 	// Password specified via command-line
 	Password Secret
 
 	// telegrafVersion contains the parsed semantic Telegraf version
 	telegrafVersion *semver.Version = semver.New("0.0.0-unknown")
 )
+
+const EmptySourcePath string = ""
 
 // Config specifies the URL/user/password for the database that telegraf
 // will be logging to, as well as all the plugins that the user has
@@ -74,7 +79,8 @@ type Config struct {
 	OutputFilters      []string
 	SecretStoreFilters []string
 
-	SecretStores map[string]telegraf.SecretStore
+	SecretStores      map[string]telegraf.SecretStore
+	secretStoreSource map[string][]string
 
 	Agent       *AgentConfig
 	Inputs      []*models.RunningInput
@@ -115,7 +121,7 @@ func (op OrderedPlugins) Less(i, j int) bool { return op[i].Line < op[j].Line }
 // once the configuration is parsed.
 func NewConfig() *Config {
 	c := &Config{
-		UnusedFields:      map[string]bool{},
+		UnusedFields:      make(map[string]bool),
 		unusedFieldsMutex: &sync.Mutex{},
 
 		// Agent defaults:
@@ -123,7 +129,6 @@ func NewConfig() *Config {
 			Interval:                   Duration(10 * time.Second),
 			RoundInterval:              true,
 			FlushInterval:              Duration(10 * time.Second),
-			LogTarget:                  "file",
 			LogfileRotationMaxArchives: 5,
 		},
 
@@ -133,6 +138,7 @@ func NewConfig() *Config {
 		Processors:         make([]*models.RunningProcessor, 0),
 		AggProcessors:      make([]*models.RunningProcessor, 0),
 		SecretStores:       make(map[string]telegraf.SecretStore),
+		secretStoreSource:  make(map[string][]string),
 		fileProcessors:     make([]*OrderedPlugin, 0),
 		fileAggProcessors:  make([]*OrderedPlugin, 0),
 		InputFilters:       make([]string, 0),
@@ -226,13 +232,20 @@ type AgentConfig struct {
 	Quiet bool `toml:"quiet"`
 
 	// Log target controls the destination for logs and can be one of "file",
-	// "stderr" or, on Windows, "eventlog".  When set to "file", the output file
-	// is determined by the "logfile" setting.
-	LogTarget string `toml:"logtarget"`
+	// "stderr" or, on Windows, "eventlog". When set to "file", the output file
+	// is determined by the "logfile" setting
+	LogTarget string `toml:"logtarget" deprecated:"1.32.0;1.40.0;use 'logformat' and 'logfile' instead"`
 
-	// Name of the file to be logged to when using the "file" logtarget.  If set to
-	// the empty string then logs are written to stderr.
+	// Log format controls the way messages are logged and can be one of "text",
+	// "structured" or, on Windows, "eventlog".
+	LogFormat string `toml:"logformat"`
+
+	// Name of the file to be logged to or stderr if empty. Ignored for "eventlog" format.
 	Logfile string `toml:"logfile"`
+
+	// Message key for structured logs, to override the default of "msg".
+	// Ignored if "logformat" is not "structured".
+	StructuredLogMessageKey string `toml:"structured_log_message_key"`
 
 	// The file will be rotated after the time interval specified.  When set
 	// to 0 no time based rotation is performed.
@@ -273,11 +286,19 @@ type AgentConfig struct {
 	// Flag to skip running processors after aggregators
 	// By default, processors are run a second time after aggregators. Changing
 	// this setting to true will skip the second run of processors.
-	SkipProcessorsAfterAggregators bool `toml:"skip_processors_after_aggregators"`
+	SkipProcessorsAfterAggregators *bool `toml:"skip_processors_after_aggregators"`
 
 	// Number of attempts to obtain a remote configuration via a URL during
 	// startup. Set to -1 for unlimited attempts.
 	ConfigURLRetryAttempts int `toml:"config_url_retry_attempts"`
+
+	// BufferStrategy is the metric buffer type to use for a given output plugin.
+	// Supported types currently are "memory" and "disk_write_through" (alias: "disk").
+	BufferStrategy string `toml:"buffer_strategy"`
+
+	// BufferDirectory is the directory to store buffer files for serialized
+	// to disk metrics when using the "disk_write_through" buffer strategy.
+	BufferDirectory string `toml:"buffer_directory"`
 }
 
 // InputNames returns a list of strings of the configured inputs.
@@ -289,6 +310,18 @@ func (c *Config) InputNames() []string {
 	return PluginNameCounts(name)
 }
 
+// InputNamesWithSources returns a table representation of input names and their sources.
+func (c *Config) InputNamesWithSources() string {
+	plugins := make(pluginNames, 0, len(c.Inputs))
+	for _, input := range c.Inputs {
+		plugins = append(plugins, pluginPrinter{
+			name:   input.Config.Name,
+			source: input.Config.Source,
+		})
+	}
+	return getPluginSourcesTable(plugins)
+}
+
 // AggregatorNames returns a list of strings of the configured aggregators.
 func (c *Config) AggregatorNames() []string {
 	name := make([]string, 0, len(c.Aggregators))
@@ -296,6 +329,18 @@ func (c *Config) AggregatorNames() []string {
 		name = append(name, aggregator.Config.Name)
 	}
 	return PluginNameCounts(name)
+}
+
+// AggregatorNamesWithSources returns a table representation of aggregator names and their sources.
+func (c *Config) AggregatorNamesWithSources() string {
+	plugins := make(pluginNames, 0, len(c.Aggregators))
+	for _, aggregator := range c.Aggregators {
+		plugins = append(plugins, pluginPrinter{
+			name:   aggregator.Config.Name,
+			source: aggregator.Config.Source,
+		})
+	}
+	return getPluginSourcesTable(plugins)
 }
 
 // ProcessorNames returns a list of strings of the configured processors.
@@ -307,6 +352,18 @@ func (c *Config) ProcessorNames() []string {
 	return PluginNameCounts(name)
 }
 
+// ProcessorNamesWithSources returns a table representation of processor names and their sources.
+func (c *Config) ProcessorNamesWithSources() string {
+	plugins := make(pluginNames, 0, len(c.Processors))
+	for _, processor := range c.Processors {
+		plugins = append(plugins, pluginPrinter{
+			name:   processor.Config.Name,
+			source: processor.Config.Source,
+		})
+	}
+	return getPluginSourcesTable(plugins)
+}
+
 // OutputNames returns a list of strings of the configured outputs.
 func (c *Config) OutputNames() []string {
 	name := make([]string, 0, len(c.Outputs))
@@ -314,6 +371,18 @@ func (c *Config) OutputNames() []string {
 		name = append(name, output.Config.Name)
 	}
 	return PluginNameCounts(name)
+}
+
+// OutputNamesWithSources returns a table representation of output names and their sources.
+func (c *Config) OutputNamesWithSources() string {
+	plugins := make(pluginNames, 0, len(c.Outputs))
+	for _, output := range c.Outputs {
+		plugins = append(plugins, pluginPrinter{
+			name:   output.Config.Name,
+			source: output.Config.Source,
+		})
+	}
+	return getPluginSourcesTable(plugins)
 }
 
 // SecretstoreNames returns a list of strings of the configured secret-stores.
@@ -325,6 +394,21 @@ func (c *Config) SecretstoreNames() []string {
 	return PluginNameCounts(names)
 }
 
+// SecretstoreNamesWithSources returns a table representation of secret store names and their sources.
+func (c *Config) SecretstoreNamesWithSources() string {
+	plugins := make(pluginNames, 0, len(c.SecretStores))
+	for name, sources := range c.secretStoreSource {
+		for _, source := range sources {
+			plugins = append(plugins, pluginPrinter{
+				name:   name,
+				source: source,
+			})
+		}
+	}
+	return getPluginSourcesTable(plugins)
+}
+
+// PluginNameCounts returns a string of plugin names and their counts.
 // PluginNameCounts returns a list of sorted plugin names and their count
 func PluginNameCounts(plugins []string) []string {
 	names := make(map[string]int)
@@ -424,7 +508,7 @@ func GetDefaultConfigPath() ([]string, error) {
 
 	// At this point we need to check if the files under /etc/telegraf are
 	// populated and return them all.
-	confFiles := []string{}
+	confFiles := make([]string, 0)
 	if _, err := os.Stat(etcfile); err == nil {
 		confFiles = append(confFiles, etcfile)
 	}
@@ -458,11 +542,11 @@ func (c *Config) LoadConfig(path string) error {
 
 	data, _, err := LoadConfigFileWithRetries(path, c.Agent.ConfigURLRetryAttempts)
 	if err != nil {
-		return fmt.Errorf("error loading config file %s: %w", path, err)
+		return fmt.Errorf("loading config file %s failed: %w", path, err)
 	}
 
-	if err = c.LoadConfigData(data); err != nil {
-		return fmt.Errorf("error loading config file %s: %w", path, err)
+	if err = c.LoadConfigData(data, path); err != nil {
+		return fmt.Errorf("loading config file %s failed: %w", path, err)
 	}
 
 	return nil
@@ -497,8 +581,20 @@ func (c *Config) LoadAll(configFiles ...string) error {
 	return c.LinkSecrets()
 }
 
+type cfgDataOptions struct {
+	sourcePath string
+}
+
+type cfgDataOption func(*cfgDataOptions)
+
+func WithSourcePath(path string) cfgDataOption {
+	return func(o *cfgDataOptions) {
+		o.sourcePath = path
+	}
+}
+
 // LoadConfigData loads TOML-formatted config data
-func (c *Config) LoadConfigData(data []byte) error {
+func (c *Config) LoadConfigData(data []byte, path string) error {
 	tbl, err := parseConfig(data)
 	if err != nil {
 		return fmt.Errorf("error parsing data: %w", err)
@@ -557,7 +653,7 @@ func (c *Config) LoadConfigData(data []byte) error {
 		})
 	}
 
-	// Setup the persister if requested
+	// Set up the persister if requested
 	if c.Agent.Statefile != "" {
 		c.Persister = &persister.Persister{
 			Filename: c.Agent.Statefile,
@@ -566,8 +662,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 
 	if len(c.UnusedFields) > 0 {
 		return fmt.Errorf(
-			"line %d: configuration specified the fields %q, but they were not used. "+
-				"This is either a typo or this config option does not exist in this version.",
+			"line %d: configuration specified the fields %q, but they were not used; "+
+				"this is either a typo or this config option does not exist in this version",
 			tbl.Line, keys(c.UnusedFields))
 	}
 
@@ -589,12 +685,12 @@ func (c *Config) LoadConfigData(data []byte) error {
 				switch pluginSubTable := pluginVal.(type) {
 				// legacy [outputs.influxdb] support
 				case *ast.Table:
-					if err = c.addOutput(pluginName, pluginSubTable); err != nil {
+					if err = c.addOutput(pluginName, path, pluginSubTable); err != nil {
 						return fmt.Errorf("error parsing %s, %w", pluginName, err)
 					}
 				case []*ast.Table:
 					for _, t := range pluginSubTable {
-						if err = c.addOutput(pluginName, t); err != nil {
+						if err = c.addOutput(pluginName, path, t); err != nil {
 							return fmt.Errorf("error parsing %s array, %w", pluginName, err)
 						}
 					}
@@ -604,8 +700,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 				}
 				if len(c.UnusedFields) > 0 {
 					return fmt.Errorf(
-						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
-							"This is either a typo or this config option does not exist in this version.",
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used; "+
+							"this is either a typo or this config option does not exist in this version",
 						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -614,12 +710,12 @@ func (c *Config) LoadConfigData(data []byte) error {
 				switch pluginSubTable := pluginVal.(type) {
 				// legacy [inputs.cpu] support
 				case *ast.Table:
-					if err = c.addInput(pluginName, pluginSubTable); err != nil {
+					if err = c.addInput(pluginName, path, pluginSubTable); err != nil {
 						return fmt.Errorf("error parsing %s, %w", pluginName, err)
 					}
 				case []*ast.Table:
 					for _, t := range pluginSubTable {
-						if err = c.addInput(pluginName, t); err != nil {
+						if err = c.addInput(pluginName, path, t); err != nil {
 							return fmt.Errorf("error parsing %s, %w", pluginName, err)
 						}
 					}
@@ -629,8 +725,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 				}
 				if len(c.UnusedFields) > 0 {
 					return fmt.Errorf(
-						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
-							"This is either a typo or this config option does not exist in this version.",
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used; "+
+							"this is either a typo or this config option does not exist in this version",
 						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -639,7 +735,7 @@ func (c *Config) LoadConfigData(data []byte) error {
 				switch pluginSubTable := pluginVal.(type) {
 				case []*ast.Table:
 					for _, t := range pluginSubTable {
-						if err = c.addProcessor(pluginName, t); err != nil {
+						if err = c.addProcessor(pluginName, path, t); err != nil {
 							return fmt.Errorf("error parsing %s, %w", pluginName, err)
 						}
 					}
@@ -649,8 +745,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 				}
 				if len(c.UnusedFields) > 0 {
 					return fmt.Errorf(
-						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
-							"This is either a typo or this config option does not exist in this version.",
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used; "+
+							"this is either a typo or this config option does not exist in this version",
 						name,
 						pluginName,
 						subTable.Line,
@@ -663,7 +759,7 @@ func (c *Config) LoadConfigData(data []byte) error {
 				switch pluginSubTable := pluginVal.(type) {
 				case []*ast.Table:
 					for _, t := range pluginSubTable {
-						if err = c.addAggregator(pluginName, t); err != nil {
+						if err = c.addAggregator(pluginName, path, t); err != nil {
 							return fmt.Errorf("error parsing %s, %w", pluginName, err)
 						}
 					}
@@ -673,8 +769,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 				}
 				if len(c.UnusedFields) > 0 {
 					return fmt.Errorf(
-						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. "+
-							"This is either a typo or this config option does not exist in this version.",
+						"plugin %s.%s: line %d: configuration specified the fields %q, but they were not used; "+
+							"this is either a typo or this config option does not exist in this version",
 						name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -683,7 +779,7 @@ func (c *Config) LoadConfigData(data []byte) error {
 				switch pluginSubTable := pluginVal.(type) {
 				case []*ast.Table:
 					for _, t := range pluginSubTable {
-						if err = c.addSecretStore(pluginName, t); err != nil {
+						if err = c.addSecretStore(pluginName, path, t); err != nil {
 							return fmt.Errorf("error parsing %s, %w", pluginName, err)
 						}
 					}
@@ -691,8 +787,8 @@ func (c *Config) LoadConfigData(data []byte) error {
 					return fmt.Errorf("unsupported config format: %s", pluginName)
 				}
 				if len(c.UnusedFields) > 0 {
-					msg := "plugin %s.%s: line %d: configuration specified the fields %q, but they were not used. " +
-						"This is either a typo or this config option does not exist in this version."
+					msg := "plugin %s.%s: line %d: configuration specified the fields %q, but they were not used; " +
+						"this is either a typo or this config option does not exist in this version"
 					return fmt.Errorf(msg, name, pluginName, subTable.Line, keys(c.UnusedFields))
 				}
 			}
@@ -700,7 +796,7 @@ func (c *Config) LoadConfigData(data []byte) error {
 		// Assume it's an input for legacy config file support if no other
 		// identifiers are present
 		default:
-			if err = c.addInput(name, subTable); err != nil {
+			if err = c.addInput(name, path, subTable); err != nil {
 				return fmt.Errorf("error parsing %s, %w", name, err)
 			}
 		}
@@ -842,7 +938,7 @@ func parseConfig(contents []byte) (*ast.Table, error) {
 	return toml.Parse(outputBytes)
 }
 
-func (c *Config) addAggregator(name string, table *ast.Table) error {
+func (c *Config) addAggregator(name, source string, table *ast.Table) error {
 	creator, ok := aggregators.Aggregators[name]
 	if !ok {
 		// Handle removed, deprecated plugins
@@ -854,7 +950,7 @@ func (c *Config) addAggregator(name string, table *ast.Table) error {
 	}
 	aggregator := creator()
 
-	conf, err := c.buildAggregator(name, table)
+	conf, err := c.buildAggregator(name, source, table)
 	if err != nil {
 		return err
 	}
@@ -871,18 +967,17 @@ func (c *Config) addAggregator(name string, table *ast.Table) error {
 	return nil
 }
 
-func (c *Config) addSecretStore(name string, table *ast.Table) error {
+func (c *Config) addSecretStore(name, source string, table *ast.Table) error {
 	if len(c.SecretStoreFilters) > 0 && !sliceContains(name, c.SecretStoreFilters) {
 		return nil
 	}
 
-	var storeid string
-	c.getFieldString(table, "id", &storeid)
-	if storeid == "" {
+	storeID := c.getFieldString(table, "id")
+	if storeID == "" {
 		return fmt.Errorf("%q secret-store without ID", name)
 	}
-	if !secretStorePattern.MatchString(storeid) {
-		return fmt.Errorf("invalid secret-store ID %q, must only contain letters, numbers or underscore", storeid)
+	if !secretStorePattern.MatchString(storeID) {
+		return fmt.Errorf("invalid secret-store ID %q, must only contain letters, numbers or underscore", storeID)
 	}
 
 	creator, ok := secretstores.SecretStores[name]
@@ -894,7 +989,7 @@ func (c *Config) addSecretStore(name string, table *ast.Table) error {
 		}
 		return fmt.Errorf("undefined but requested secretstores: %s", name)
 	}
-	store := creator(storeid)
+	store := creator(storeID)
 
 	if err := c.toml.UnmarshalTable(table, store); err != nil {
 		return err
@@ -904,17 +999,21 @@ func (c *Config) addSecretStore(name string, table *ast.Table) error {
 		return err
 	}
 
-	logger := logging.NewLogger("secretstores", name, "")
+	logger := logging.New("secretstores", name, "")
 	models.SetLoggerOnPlugin(store, logger)
 
 	if err := store.Init(); err != nil {
-		return fmt.Errorf("error initializing secret-store %q: %w", storeid, err)
+		return fmt.Errorf("error initializing secret-store %q: %w", storeID, err)
 	}
 
-	if _, found := c.SecretStores[storeid]; found {
-		return fmt.Errorf("duplicate ID %q for secretstore %q", storeid, name)
+	if _, found := c.SecretStores[storeID]; found {
+		return fmt.Errorf("duplicate ID %q for secretstore %q", storeID, name)
 	}
-	c.SecretStores[storeid] = store
+	c.SecretStores[storeID] = store
+	if _, found := c.secretStoreSource[name]; !found {
+		c.secretStoreSource[name] = make([]string, 0)
+	}
+	c.secretStoreSource[name] = append(c.secretStoreSource[name], source)
 	return nil
 }
 
@@ -923,8 +1022,8 @@ func (c *Config) LinkSecrets() error {
 		resolvers := make(map[string]telegraf.ResolveFunc)
 		for _, ref := range s.GetUnlinked() {
 			// Split the reference and lookup the resolver
-			storeid, key := splitLink(ref)
-			store, found := c.SecretStores[storeid]
+			storeID, key := splitLink(ref)
+			store, found := c.SecretStores[storeID]
 			if !found {
 				return fmt.Errorf("unknown secret-store for %q", ref)
 			}
@@ -942,14 +1041,13 @@ func (c *Config) LinkSecrets() error {
 	return nil
 }
 
-func (c *Config) probeParser(parentcategory string, parentname string, table *ast.Table) bool {
-	var dataformat string
-	c.getFieldString(table, "data_format", &dataformat)
-	if dataformat == "" {
-		dataformat = setDefaultParser(parentcategory, parentname)
+func (c *Config) probeParser(parentCategory, parentName string, table *ast.Table) bool {
+	dataFormat := c.getFieldString(table, "data_format")
+	if dataFormat == "" {
+		dataFormat = setDefaultParser(parentCategory, parentName)
 	}
 
-	creator, ok := parsers.Parsers[dataformat]
+	creator, ok := parsers.Parsers[dataFormat]
 	if !ok {
 		return false
 	}
@@ -963,26 +1061,29 @@ func (c *Config) probeParser(parentcategory string, parentname string, table *as
 }
 
 func (c *Config) addParser(parentcategory, parentname string, table *ast.Table) (*models.RunningParser, error) {
-	var dataformat string
-	c.getFieldString(table, "data_format", &dataformat)
-	if dataformat == "" {
-		dataformat = setDefaultParser(parentcategory, parentname)
+	conf := &models.ParserConfig{
+		Parent: parentname,
 	}
 
-	var influxParserType string
-	c.getFieldString(table, "influx_parser_type", &influxParserType)
-	if dataformat == "influx" && influxParserType == "upstream" {
-		dataformat = "influx_upstream"
+	conf.DataFormat = c.getFieldString(table, "data_format")
+	if conf.DataFormat == "" {
+		conf.DataFormat = setDefaultParser(parentcategory, parentname)
+	} else if conf.DataFormat == "influx" {
+		influxParserType := c.getFieldString(table, "influx_parser_type")
+		if influxParserType == "upstream" {
+			conf.DataFormat = "influx_upstream"
+		}
 	}
+	conf.LogLevel = c.getFieldString(table, "log_level")
 
-	creator, ok := parsers.Parsers[dataformat]
+	creator, ok := parsers.Parsers[conf.DataFormat]
 	if !ok {
-		return nil, fmt.Errorf("undefined but requested parser: %s", dataformat)
+		return nil, fmt.Errorf("undefined but requested parser: %s", conf.DataFormat)
 	}
 	parser := creator(parentname)
 
 	// Handle reset-mode of CSV parsers to stay backward compatible (see issue #12022)
-	if dataformat == "csv" && parentcategory == "inputs" {
+	if conf.DataFormat == "csv" && parentcategory == "inputs" {
 		if parentname == "exec" {
 			csvParser := parser.(*csv.Parser)
 			csvParser.ResetMode = "always"
@@ -993,25 +1094,43 @@ func (c *Config) addParser(parentcategory, parentname string, table *ast.Table) 
 		return nil, err
 	}
 
-	conf := &models.ParserConfig{
-		Parent:     parentname,
-		DataFormat: dataformat,
-	}
 	running := models.NewRunningParser(parser, conf)
 	err := running.Init()
 	return running, err
 }
 
-func (c *Config) addSerializer(parentname string, table *ast.Table) (*models.RunningSerializer, error) {
-	var dataformat string
-	c.getFieldString(table, "data_format", &dataformat)
-	if dataformat == "" {
-		dataformat = "influx"
+func (c *Config) probeSerializer(table *ast.Table) bool {
+	dataFormat := c.getFieldString(table, "data_format")
+	if dataFormat == "" {
+		dataFormat = "influx"
 	}
 
-	creator, ok := serializers.Serializers[dataformat]
+	creator, ok := serializers.Serializers[dataFormat]
 	if !ok {
-		return nil, fmt.Errorf("undefined but requested serializer: %s", dataformat)
+		return false
+	}
+
+	// Try to parse the options to detect if any of them is misspelled
+	serializer := creator()
+	//nolint:errcheck // We don't actually use the parser, so no need to check the error.
+	c.toml.UnmarshalTable(table, serializer)
+
+	return true
+}
+
+func (c *Config) addSerializer(parentname string, table *ast.Table) (*models.RunningSerializer, error) {
+	conf := &models.SerializerConfig{
+		Parent: parentname,
+	}
+	conf.DataFormat = c.getFieldString(table, "data_format")
+	if conf.DataFormat == "" {
+		conf.DataFormat = "influx"
+	}
+	conf.LogLevel = c.getFieldString(table, "log_level")
+
+	creator, ok := serializers.Serializers[conf.DataFormat]
+	if !ok {
+		return nil, fmt.Errorf("undefined but requested serializer: %s", conf.DataFormat)
 	}
 	serializer := creator()
 
@@ -1019,16 +1138,12 @@ func (c *Config) addSerializer(parentname string, table *ast.Table) (*models.Run
 		return nil, err
 	}
 
-	conf := &models.SerializerConfig{
-		Parent:     parentname,
-		DataFormat: dataformat,
-	}
 	running := models.NewRunningSerializer(serializer, conf)
 	err := running.Init()
 	return running, err
 }
 
-func (c *Config) addProcessor(name string, table *ast.Table) error {
+func (c *Config) addProcessor(name, source string, table *ast.Table) error {
 	creator, ok := processors.Processors[name]
 	if !ok {
 		// Handle removed, deprecated plugins
@@ -1050,8 +1165,8 @@ func (c *Config) addProcessor(name string, table *ast.Table) error {
 	c.setLocalMissingTomlFieldTracker(missCount)
 	defer c.resetMissingTomlFieldTracker()
 
-	// Setup the processor running before the aggregators
-	processorBeforeConfig, err := c.buildProcessor("processors", name, table)
+	// Set up the processor running before the aggregators
+	processorBeforeConfig, err := c.buildProcessor("processors", name, source, table)
 	if err != nil {
 		return err
 	}
@@ -1063,7 +1178,7 @@ func (c *Config) addProcessor(name string, table *ast.Table) error {
 	c.fileProcessors = append(c.fileProcessors, &OrderedPlugin{table.Line, rf})
 
 	// Setup another (new) processor instance running after the aggregator
-	processorAfterConfig, err := c.buildProcessor("aggprocessors", name, table)
+	processorAfterConfig, err := c.buildProcessor("aggprocessors", name, source, table)
 	if err != nil {
 		return err
 	}
@@ -1133,6 +1248,15 @@ func (c *Config) setupProcessor(name string, creator processors.StreamingCreator
 		t.SetSerializer(serializer)
 		optionTestCount++
 	}
+	if t, ok := processor.(telegraf.SerializerFuncPlugin); ok {
+		if !c.probeSerializer(table) {
+			return nil, 0, errors.New("serializer not found")
+		}
+		t.SetSerializerFunc(func() (telegraf.Serializer, error) {
+			return c.addSerializer(name, table)
+		})
+		optionTestCount++
+	}
 
 	if err := c.toml.UnmarshalTable(table, processor); err != nil {
 		return nil, 0, fmt.Errorf("unmarshalling failed: %w", err)
@@ -1142,13 +1266,13 @@ func (c *Config) setupProcessor(name string, creator processors.StreamingCreator
 	return streamingProcessor, optionTestCount, err
 }
 
-func (c *Config) addOutput(name string, table *ast.Table) error {
+func (c *Config) addOutput(name, source string, table *ast.Table) error {
 	if len(c.OutputFilters) > 0 && !sliceContains(name, c.OutputFilters) {
 		return nil
 	}
 
-	// For inputs with parsers we need to compute the set of
-	// options that is not covered by both, the parser and the input.
+	// For outputs with serializers we need to compute the set of
+	// options that is not covered by both, the serializer and the input.
 	// We achieve this by keeping a local book of missing entries
 	// that counts the number of misses. In case we have a parser
 	// for the input both need to miss the entry. We count the
@@ -1178,18 +1302,19 @@ func (c *Config) addOutput(name string, table *ast.Table) error {
 			return err
 		}
 		t.SetSerializer(serializer)
-	} else if t, ok := output.(serializers.SerializerOutput); ok {
-		// Keep the old interface for backward compatibility
-		// DEPRECATED: Please switch your plugin to telegraf.Serializers
-		missThreshold = 1
-		serializer, err := c.addSerializer(name, table)
-		if err != nil {
-			return err
-		}
-		t.SetSerializer(serializer)
 	}
 
-	outputConfig, err := c.buildOutput(name, table)
+	if t, ok := output.(telegraf.SerializerFuncPlugin); ok {
+		missThreshold = 1
+		if !c.probeSerializer(table) {
+			return errors.New("serializer not found")
+		}
+		t.SetSerializerFunc(func() (telegraf.Serializer, error) {
+			return c.addSerializer(name, table)
+		})
+	}
+
+	outputConfig, err := c.buildOutput(name, source, table)
 	if err != nil {
 		return err
 	}
@@ -1224,7 +1349,7 @@ func (c *Config) addOutput(name string, table *ast.Table) error {
 	return nil
 }
 
-func (c *Config) addInput(name string, table *ast.Table) error {
+func (c *Config) addInput(name, source string, table *ast.Table) error {
 	if len(c.InputFilters) > 0 && !sliceContains(name, c.InputFilters) {
 		return nil
 	}
@@ -1273,7 +1398,7 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 		})
 	}
 
-	pluginConfig, err := c.buildInput(name, table)
+	pluginConfig, err := c.buildInput(name, source, table)
 	if err != nil {
 		return err
 	}
@@ -1312,22 +1437,31 @@ func (c *Config) addInput(name string, table *ast.Table) error {
 // buildAggregator parses Aggregator specific items from the ast.Table,
 // builds the filter and returns a
 // models.AggregatorConfig to be inserted into models.RunningAggregator
-func (c *Config) buildAggregator(name string, tbl *ast.Table) (*models.AggregatorConfig, error) {
+func (c *Config) buildAggregator(name, source string, tbl *ast.Table) (*models.AggregatorConfig, error) {
 	conf := &models.AggregatorConfig{
 		Name:   name,
+		Source: source,
 		Delay:  time.Millisecond * 100,
 		Period: time.Second * 30,
 		Grace:  time.Second * 0,
 	}
 
-	c.getFieldDuration(tbl, "period", &conf.Period)
-	c.getFieldDuration(tbl, "delay", &conf.Delay)
-	c.getFieldDuration(tbl, "grace", &conf.Grace)
-	c.getFieldBool(tbl, "drop_original", &conf.DropOriginal)
-	c.getFieldString(tbl, "name_prefix", &conf.MeasurementPrefix)
-	c.getFieldString(tbl, "name_suffix", &conf.MeasurementSuffix)
-	c.getFieldString(tbl, "name_override", &conf.NameOverride)
-	c.getFieldString(tbl, "alias", &conf.Alias)
+	if period, found := c.getFieldDuration(tbl, "period"); found {
+		conf.Period = period
+	}
+	if delay, found := c.getFieldDuration(tbl, "delay"); found {
+		conf.Delay = delay
+	}
+	if grace, found := c.getFieldDuration(tbl, "grace"); found {
+		conf.Grace = grace
+	}
+
+	conf.DropOriginal = c.getFieldBool(tbl, "drop_original")
+	conf.MeasurementPrefix = c.getFieldString(tbl, "name_prefix")
+	conf.MeasurementSuffix = c.getFieldString(tbl, "name_suffix")
+	conf.NameOverride = c.getFieldString(tbl, "name_override")
+	conf.Alias = c.getFieldString(tbl, "alias")
+	conf.LogLevel = c.getFieldString(tbl, "log_level")
 
 	conf.Tags = make(map[string]string)
 	if node, ok := tbl.Fields["tags"]; ok {
@@ -1356,11 +1490,15 @@ func (c *Config) buildAggregator(name string, tbl *ast.Table) (*models.Aggregato
 // buildProcessor parses Processor specific items from the ast.Table,
 // builds the filter and returns a
 // models.ProcessorConfig to be inserted into models.RunningProcessor
-func (c *Config) buildProcessor(category, name string, tbl *ast.Table) (*models.ProcessorConfig, error) {
-	conf := &models.ProcessorConfig{Name: name}
+func (c *Config) buildProcessor(category, name, source string, tbl *ast.Table) (*models.ProcessorConfig, error) {
+	conf := &models.ProcessorConfig{
+		Name:   name,
+		Source: source,
+	}
 
-	c.getFieldInt64(tbl, "order", &conf.Order)
-	c.getFieldString(tbl, "alias", &conf.Alias)
+	conf.Order = c.getFieldInt64(tbl, "order")
+	conf.Alias = c.getFieldString(tbl, "alias")
+	conf.LogLevel = c.getFieldString(tbl, "log_level")
 
 	if c.hasErrs() {
 		return nil, c.firstErr()
@@ -1384,13 +1522,12 @@ func (c *Config) buildProcessor(category, name string, tbl *ast.Table) (*models.
 func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, error) {
 	f := models.Filter{}
 
-	c.getFieldStringSlice(tbl, "namepass", &f.NamePass)
-	c.getFieldString(tbl, "namepass_separator", &f.NamePassSeparators)
-	c.getFieldStringSlice(tbl, "namedrop", &f.NameDrop)
-	c.getFieldString(tbl, "namedrop_separator", &f.NameDropSeparators)
+	f.NamePass = c.getFieldStringSlice(tbl, "namepass")
+	f.NamePassSeparators = c.getFieldString(tbl, "namepass_separator")
+	f.NameDrop = c.getFieldStringSlice(tbl, "namedrop")
+	f.NameDropSeparators = c.getFieldString(tbl, "namedrop_separator")
 
-	var oldPass []string
-	c.getFieldStringSlice(tbl, "pass", &oldPass)
+	oldPass := c.getFieldStringSlice(tbl, "pass")
 	if len(oldPass) > 0 {
 		PrintOptionDeprecationNotice(plugin, "pass", telegraf.DeprecationInfo{
 			Since:     "0.10.4",
@@ -1399,8 +1536,8 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 		})
 		f.FieldInclude = append(f.FieldInclude, oldPass...)
 	}
-	var oldFieldPass []string
-	c.getFieldStringSlice(tbl, "fieldpass", &oldFieldPass)
+
+	oldFieldPass := c.getFieldStringSlice(tbl, "fieldpass")
 	if len(oldFieldPass) > 0 {
 		PrintOptionDeprecationNotice(plugin, "fieldpass", telegraf.DeprecationInfo{
 			Since:     "1.29.0",
@@ -1409,10 +1546,13 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 		})
 		f.FieldInclude = append(f.FieldInclude, oldFieldPass...)
 	}
-	c.getFieldStringSlice(tbl, "fieldinclude", &f.FieldInclude)
 
-	var oldDrop []string
-	c.getFieldStringSlice(tbl, "drop", &oldDrop)
+	fieldInclude := c.getFieldStringSlice(tbl, "fieldinclude")
+	if len(fieldInclude) > 0 {
+		f.FieldInclude = append(f.FieldInclude, fieldInclude...)
+	}
+
+	oldDrop := c.getFieldStringSlice(tbl, "drop")
 	if len(oldDrop) > 0 {
 		PrintOptionDeprecationNotice(plugin, "drop", telegraf.DeprecationInfo{
 			Since:     "0.10.4",
@@ -1421,8 +1561,8 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 		})
 		f.FieldExclude = append(f.FieldExclude, oldDrop...)
 	}
-	var oldFieldDrop []string
-	c.getFieldStringSlice(tbl, "fielddrop", &oldFieldDrop)
+
+	oldFieldDrop := c.getFieldStringSlice(tbl, "fielddrop")
 	if len(oldFieldDrop) > 0 {
 		PrintOptionDeprecationNotice(plugin, "fielddrop", telegraf.DeprecationInfo{
 			Since:     "1.29.0",
@@ -1431,15 +1571,19 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 		})
 		f.FieldExclude = append(f.FieldExclude, oldFieldDrop...)
 	}
-	c.getFieldStringSlice(tbl, "fieldexclude", &f.FieldExclude)
 
-	c.getFieldTagFilter(tbl, "tagpass", &f.TagPassFilters)
-	c.getFieldTagFilter(tbl, "tagdrop", &f.TagDropFilters)
+	fieldExclude := c.getFieldStringSlice(tbl, "fieldexclude")
+	if len(fieldExclude) > 0 {
+		f.FieldExclude = append(f.FieldExclude, fieldExclude...)
+	}
 
-	c.getFieldStringSlice(tbl, "tagexclude", &f.TagExclude)
-	c.getFieldStringSlice(tbl, "taginclude", &f.TagInclude)
+	f.TagPassFilters = c.getFieldTagFilter(tbl, "tagpass")
+	f.TagDropFilters = c.getFieldTagFilter(tbl, "tagdrop")
 
-	c.getFieldString(tbl, "metricpass", &f.MetricPass)
+	f.TagExclude = c.getFieldStringSlice(tbl, "tagexclude")
+	f.TagInclude = c.getFieldStringSlice(tbl, "taginclude")
+
+	f.MetricPass = c.getFieldString(tbl, "metricpass")
 
 	if c.hasErrs() {
 		return f, c.firstErr()
@@ -1455,21 +1599,25 @@ func (c *Config) buildFilter(plugin string, tbl *ast.Table) (models.Filter, erro
 // buildInput parses input specific items from the ast.Table,
 // builds the filter and returns a
 // models.InputConfig to be inserted into models.RunningInput
-func (c *Config) buildInput(name string, tbl *ast.Table) (*models.InputConfig, error) {
+func (c *Config) buildInput(name, source string, tbl *ast.Table) (*models.InputConfig, error) {
 	cp := &models.InputConfig{
 		Name:                    name,
+		Source:                  source,
 		AlwaysIncludeLocalTags:  c.Agent.AlwaysIncludeLocalTags,
 		AlwaysIncludeGlobalTags: c.Agent.AlwaysIncludeGlobalTags,
 	}
-	c.getFieldDuration(tbl, "interval", &cp.Interval)
-	c.getFieldDuration(tbl, "precision", &cp.Precision)
-	c.getFieldDuration(tbl, "collection_jitter", &cp.CollectionJitter)
-	c.getFieldDuration(tbl, "collection_offset", &cp.CollectionOffset)
-	c.getFieldString(tbl, "startup_error_behavior", &cp.StartupErrorBehavior)
-	c.getFieldString(tbl, "name_prefix", &cp.MeasurementPrefix)
-	c.getFieldString(tbl, "name_suffix", &cp.MeasurementSuffix)
-	c.getFieldString(tbl, "name_override", &cp.NameOverride)
-	c.getFieldString(tbl, "alias", &cp.Alias)
+	cp.Interval, _ = c.getFieldDuration(tbl, "interval")
+	cp.Precision, _ = c.getFieldDuration(tbl, "precision")
+	cp.CollectionJitter, _ = c.getFieldDuration(tbl, "collection_jitter")
+	cp.CollectionOffset, _ = c.getFieldDuration(tbl, "collection_offset")
+	cp.StartupErrorBehavior = c.getFieldString(tbl, "startup_error_behavior")
+	cp.TimeSource = c.getFieldString(tbl, "time_source")
+
+	cp.MeasurementPrefix = c.getFieldString(tbl, "name_prefix")
+	cp.MeasurementSuffix = c.getFieldString(tbl, "name_suffix")
+	cp.NameOverride = c.getFieldString(tbl, "name_override")
+	cp.Alias = c.getFieldString(tbl, "alias")
+	cp.LogLevel = c.getFieldString(tbl, "log_level")
 
 	cp.Tags = make(map[string]string)
 	if node, ok := tbl.Fields["tags"]; ok {
@@ -1499,31 +1647,43 @@ func (c *Config) buildInput(name string, tbl *ast.Table) (*models.InputConfig, e
 // builds the filter and returns a
 // models.OutputConfig to be inserted into models.RunningInput
 // Note: error exists in the return for future calls that might require error
-func (c *Config) buildOutput(name string, tbl *ast.Table) (*models.OutputConfig, error) {
+func (c *Config) buildOutput(name, source string, tbl *ast.Table) (*models.OutputConfig, error) {
 	filter, err := c.buildFilter("outputs."+name, tbl)
 	if err != nil {
 		return nil, err
 	}
+
+	bufferStrategy := c.Agent.BufferStrategy
+	if bufferStrategy == "disk" {
+		bufferStrategy = "disk_write_through"
+	}
 	oc := &models.OutputConfig{
-		Name:   name,
-		Filter: filter,
+		Name:            name,
+		Source:          source,
+		Filter:          filter,
+		BufferStrategy:  bufferStrategy,
+		BufferDirectory: c.Agent.BufferDirectory,
 	}
 
 	// TODO: support FieldPass/FieldDrop on outputs
 
-	c.getFieldDuration(tbl, "flush_interval", &oc.FlushInterval)
-	c.getFieldDuration(tbl, "flush_jitter", &oc.FlushJitter)
-
-	c.getFieldInt(tbl, "metric_buffer_limit", &oc.MetricBufferLimit)
-	c.getFieldInt(tbl, "metric_batch_size", &oc.MetricBatchSize)
-	c.getFieldString(tbl, "alias", &oc.Alias)
-	c.getFieldString(tbl, "name_override", &oc.NameOverride)
-	c.getFieldString(tbl, "name_suffix", &oc.NameSuffix)
-	c.getFieldString(tbl, "name_prefix", &oc.NamePrefix)
-	c.getFieldString(tbl, "startup_error_behavior", &oc.StartupErrorBehavior)
+	oc.FlushInterval, _ = c.getFieldDuration(tbl, "flush_interval")
+	oc.FlushJitter, _ = c.getFieldDuration(tbl, "flush_jitter")
+	oc.MetricBufferLimit = c.getFieldInt(tbl, "metric_buffer_limit")
+	oc.MetricBatchSize = c.getFieldInt(tbl, "metric_batch_size")
+	oc.Alias = c.getFieldString(tbl, "alias")
+	oc.NameOverride = c.getFieldString(tbl, "name_override")
+	oc.NameSuffix = c.getFieldString(tbl, "name_suffix")
+	oc.NamePrefix = c.getFieldString(tbl, "name_prefix")
+	oc.StartupErrorBehavior = c.getFieldString(tbl, "startup_error_behavior")
+	oc.LogLevel = c.getFieldString(tbl, "log_level")
 
 	if c.hasErrs() {
 		return nil, c.firstErr()
+	}
+
+	if oc.BufferStrategy == "disk_write_through" {
+		log.Printf("W! Using disk-write-through buffer strategy for plugin outputs.%s, this is an experimental feature", name)
 	}
 
 	// Generate an ID for the plugin
@@ -1535,12 +1695,13 @@ func (c *Config) missingTomlField(_ reflect.Type, key string) error {
 	switch key {
 	// General options to ignore
 	case "alias", "always_include_local_tags",
+		"buffer_strategy", "buffer_directory",
 		"collection_jitter", "collection_offset",
 		"data_format", "delay", "drop", "drop_original",
 		"fielddrop", "fieldexclude", "fieldinclude", "fieldpass", "flush_interval", "flush_jitter",
 		"grace",
 		"interval",
-		"lvm", // What is this used for?
+		"log_level", "lvm", // What is this used for?
 		"metric_batch_size", "metric_buffer_limit", "metricpass",
 		"name_override", "name_prefix", "name_suffix", "namedrop", "namedrop_separator", "namepass", "namepass_separator",
 		"order",
@@ -1568,7 +1729,7 @@ func (c *Config) setLocalMissingTomlFieldTracker(counter map[string]int) {
 		// All other elements are subtables of their respective plugin and
 		// should just be hit once anyway. Therefore, we mark them with a
 		// high number to handle them correctly later.
-		pt := reflect.PtrTo(t)
+		pt := reflect.PointerTo(t)
 		root := pt.Implements(reflect.TypeOf((*telegraf.Input)(nil)).Elem())
 		root = root || pt.Implements(reflect.TypeOf((*telegraf.ServiceInput)(nil)).Elem())
 		root = root || pt.Implements(reflect.TypeOf((*telegraf.Output)(nil)).Elem())
@@ -1595,115 +1756,129 @@ func (c *Config) resetMissingTomlFieldTracker() {
 	c.toml.MissingField = c.missingTomlField
 }
 
-func (c *Config) getFieldString(tbl *ast.Table, fieldName string, target *string) {
+func (*Config) getFieldString(tbl *ast.Table, fieldName string) string {
 	if node, ok := tbl.Fields[fieldName]; ok {
 		if kv, ok := node.(*ast.KeyValue); ok {
 			if str, ok := kv.Value.(*ast.String); ok {
-				*target = str.Value
+				return str.Value
 			}
 		}
 	}
+
+	return ""
 }
 
-func (c *Config) getFieldDuration(tbl *ast.Table, fieldName string, target interface{}) {
+func (c *Config) getFieldDuration(tbl *ast.Table, fieldName string) (time.Duration, bool) {
 	if node, ok := tbl.Fields[fieldName]; ok {
 		if kv, ok := node.(*ast.KeyValue); ok {
 			if str, ok := kv.Value.(*ast.String); ok {
 				d, err := time.ParseDuration(str.Value)
 				if err != nil {
 					c.addError(tbl, fmt.Errorf("error parsing duration: %w", err))
-					return
+					return 0, false
 				}
-				targetVal := reflect.ValueOf(target).Elem()
-				targetVal.Set(reflect.ValueOf(d))
+				return d, true
 			}
 		}
 	}
+
+	return 0, false
 }
 
-func (c *Config) getFieldBool(tbl *ast.Table, fieldName string, target *bool) {
-	var err error
+func (c *Config) getFieldBool(tbl *ast.Table, fieldName string) bool {
 	if node, ok := tbl.Fields[fieldName]; ok {
 		if kv, ok := node.(*ast.KeyValue); ok {
 			switch t := kv.Value.(type) {
 			case *ast.Boolean:
-				*target, err = t.Boolean()
+				target, err := t.Boolean()
 				if err != nil {
 					c.addError(tbl, fmt.Errorf("unknown boolean value type %q, expecting boolean", kv.Value))
-					return
+					return false
 				}
+				return target
 			case *ast.String:
-				*target, err = strconv.ParseBool(t.Value)
+				target, err := strconv.ParseBool(t.Value)
 				if err != nil {
 					c.addError(tbl, fmt.Errorf("unknown boolean value type %q, expecting boolean", kv.Value))
-					return
+					return false
 				}
+				return target
 			default:
 				c.addError(tbl, fmt.Errorf("unknown boolean value type %q, expecting boolean", kv.Value.Source()))
-				return
+				return false
 			}
 		}
 	}
+
+	return false
 }
 
-func (c *Config) getFieldInt(tbl *ast.Table, fieldName string, target *int) {
+func (c *Config) getFieldInt(tbl *ast.Table, fieldName string) int {
 	if node, ok := tbl.Fields[fieldName]; ok {
 		if kv, ok := node.(*ast.KeyValue); ok {
 			if iAst, ok := kv.Value.(*ast.Integer); ok {
 				i, err := iAst.Int()
 				if err != nil {
 					c.addError(tbl, fmt.Errorf("unexpected int type %q, expecting int", iAst.Value))
-					return
+					return 0
 				}
-				*target = int(i)
+				return int(i)
 			}
 		}
 	}
+
+	return 0
 }
 
-func (c *Config) getFieldInt64(tbl *ast.Table, fieldName string, target *int64) {
+func (c *Config) getFieldInt64(tbl *ast.Table, fieldName string) int64 {
 	if node, ok := tbl.Fields[fieldName]; ok {
 		if kv, ok := node.(*ast.KeyValue); ok {
 			if iAst, ok := kv.Value.(*ast.Integer); ok {
 				i, err := iAst.Int()
 				if err != nil {
 					c.addError(tbl, fmt.Errorf("unexpected int type %q, expecting int", iAst.Value))
-					return
+					return 0
 				}
-				*target = i
-			} else {
-				c.addError(tbl, fmt.Errorf("found unexpected format while parsing %q, expecting int", fieldName))
+				return i
 			}
+			c.addError(tbl, fmt.Errorf("found unexpected format while parsing %q, expecting int", fieldName))
+			return 0
 		}
 	}
+
+	return 0
 }
 
-func (c *Config) getFieldStringSlice(tbl *ast.Table, fieldName string, target *[]string) {
+func (c *Config) getFieldStringSlice(tbl *ast.Table, fieldName string) []string {
+	var target []string
 	if node, ok := tbl.Fields[fieldName]; ok {
 		if kv, ok := node.(*ast.KeyValue); ok {
 			ary, ok := kv.Value.(*ast.Array)
 			if !ok {
 				c.addError(tbl, fmt.Errorf("found unexpected format while parsing %q, expecting string array/slice format", fieldName))
-				return
+				return target
 			}
 			for _, elem := range ary.Value {
 				if str, ok := elem.(*ast.String); ok {
-					*target = append(*target, str.Value)
+					target = append(target, str.Value)
 				}
 			}
 		}
 	}
+
+	return target
 }
 
-func (c *Config) getFieldTagFilter(tbl *ast.Table, fieldName string, target *[]models.TagFilter) {
+func (c *Config) getFieldTagFilter(tbl *ast.Table, fieldName string) []models.TagFilter {
+	var target []models.TagFilter
 	if node, ok := tbl.Fields[fieldName]; ok {
-		if subtbl, ok := node.(*ast.Table); ok {
-			for name, val := range subtbl.Fields {
+		if subTbl, ok := node.(*ast.Table); ok {
+			for name, val := range subTbl.Fields {
 				if kv, ok := val.(*ast.KeyValue); ok {
 					ary, ok := kv.Value.(*ast.Array)
 					if !ok {
 						c.addError(tbl, fmt.Errorf("found unexpected format while parsing %q, expecting string array/slice format on each entry", fieldName))
-						return
+						return nil
 					}
 
 					tagFilter := models.TagFilter{Name: name}
@@ -1712,22 +1887,24 @@ func (c *Config) getFieldTagFilter(tbl *ast.Table, fieldName string, target *[]m
 							tagFilter.Values = append(tagFilter.Values, str.Value)
 						}
 					}
-					*target = append(*target, tagFilter)
+					target = append(target, tagFilter)
 				}
 			}
 		}
 	}
+
+	return target
 }
 
 func keys(m map[string]bool) []string {
-	result := []string{}
+	result := make([]string, 0, len(m))
 	for k := range m {
 		result = append(result, k)
 	}
 	return result
 }
 
-func setDefaultParser(category string, name string) string {
+func setDefaultParser(category, name string) string {
 	// Legacy support, exec plugin originally parsed JSON by default.
 	if category == "inputs" && name == "exec" {
 		return "json"

@@ -15,7 +15,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -24,7 +24,6 @@ var sampleConfig string
 
 var zookeeperFormatRE = regexp.MustCompile(`^zk_(\w[\w\.\-]*)\s+([\w\.\-]+)`)
 
-// Zookeeper is a zookeeper plugin
 type Zookeeper struct {
 	Servers     []string        `toml:"servers"`
 	Timeout     config.Duration `toml:"timeout"`
@@ -32,31 +31,16 @@ type Zookeeper struct {
 
 	EnableTLS bool `toml:"enable_tls"`
 	EnableSSL bool `toml:"enable_ssl" deprecated:"1.7.0;1.35.0;use 'enable_tls' instead"`
-	tlsint.ClientConfig
+	common_tls.ClientConfig
 
 	initialized bool
 	tlsConfig   *tls.Config
-}
-
-var defaultTimeout = 5 * time.Second
-
-func (z *Zookeeper) dial(ctx context.Context, addr string) (net.Conn, error) {
-	var dialer net.Dialer
-	if z.EnableTLS || z.EnableSSL {
-		deadline, ok := ctx.Deadline()
-		if ok {
-			dialer.Deadline = deadline
-		}
-		return tls.DialWithDialer(&dialer, "tcp", addr, z.tlsConfig)
-	}
-	return dialer.DialContext(ctx, "tcp", addr)
 }
 
 func (*Zookeeper) SampleConfig() string {
 	return sampleConfig
 }
 
-// Gather reads stats from all configured servers accumulates stats
 func (z *Zookeeper) Gather(acc telegraf.Accumulator) error {
 	ctx := context.Background()
 
@@ -70,7 +54,7 @@ func (z *Zookeeper) Gather(acc telegraf.Accumulator) error {
 	}
 
 	if z.Timeout < config.Duration(1*time.Second) {
-		z.Timeout = config.Duration(defaultTimeout)
+		z.Timeout = config.Duration(5 * time.Second)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(z.Timeout))
@@ -168,6 +152,18 @@ func (z *Zookeeper) gatherServer(ctx context.Context, address string, acc telegr
 	acc.AddFields("zookeeper", fields, tags)
 
 	return nil
+}
+
+func (z *Zookeeper) dial(ctx context.Context, addr string) (net.Conn, error) {
+	var dialer net.Dialer
+	if z.EnableTLS || z.EnableSSL {
+		deadline, ok := ctx.Deadline()
+		if ok {
+			dialer.Deadline = deadline
+		}
+		return tls.DialWithDialer(&dialer, "tcp", addr, z.tlsConfig)
+	}
+	return dialer.DialContext(ctx, "tcp", addr)
 }
 
 func init() {

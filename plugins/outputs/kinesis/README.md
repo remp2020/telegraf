@@ -1,15 +1,17 @@
 # Amazon Kinesis Output Plugin
 
-This is an experimental plugin that is still in the early stages of
-development. It will batch up all of the Points in one Put request to
-Kinesis. This should save the number of API requests by a considerable level.
+This plugin writes metrics to a [Amazon Kinesis][kinesis] endpoint. It will
+batch all Points in one request to reduce the number of API requests.
 
-## About Kinesis
+Please consult [Amazon's official documentation][docs] for more details on the
+Kinesis architecture and concepts.
 
-This is not the place to document all of the various Kinesis terms however it
-maybe useful for users to review Amazons official documentation which is
-available
-[here](http://docs.aws.amazon.com/kinesis/latest/dev/key-concepts.html).
+⭐ Telegraf v0.2.5
+🏷️ cloud, messaging
+💻 all
+
+[kinesis]: https://aws.amazon.com/kinesis
+[docs]: http://docs.aws.amazon.com/kinesis/latest/dev/key-concepts.html
 
 ## Amazon Authentication
 
@@ -137,20 +139,6 @@ The streamname is used by the plugin to ensure that data is sent to the correct
 Kinesis stream. It is important to note that the stream *MUST* be pre-configured
 for this plugin to function correctly. If the stream does not exist the plugin
 will result in telegraf exiting with an exit code of 1.
-
-### partitionkey [DEPRECATED]
-
-This is used to group data within a stream. Currently this plugin only supports
-a single partitionkey.  Manually configuring different hosts, or groups of hosts
-with manually selected partitionkeys might be a workable solution to scale out.
-
-### use_random_partitionkey [DEPRECATED]
-
-When true a random UUID will be generated and used as the partitionkey when
-sending data to Kinesis. This allows data to evenly spread across multiple
-shards in the stream. Due to using a random partitionKey there can be no
-guarantee of ordering when consuming the data off the shards.  If true then the
-partitionkey option will be ignored.
 
 ### partition
 

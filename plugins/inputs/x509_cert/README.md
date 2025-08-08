@@ -1,10 +1,18 @@
 # x509 Certificate Input Plugin
 
-This plugin provides information about X509 certificate accessible via local
-file, tcp, udp, https or smtp protocol.
+This plugin provides information about [X.509][x509] certificates accessible
+e.g. via local file, tcp, udp, https or smtp protocols.
 
-When using a UDP address as a certificate source, the server must support
-[DTLS](https://en.wikipedia.org/wiki/Datagram_Transport_Layer_Security).
+> [!NOTE]
+> When using a UDP address as a certificate source, the server must support
+> [DTLS][dtls].
+
+⭐ Telegraf v1.8.0
+🏷️ network
+💻 all
+
+[x509]: https://en.wikipedia.org/wiki/X.509
+[dtls]: https://en.wikipedia.org/wiki/Datagram_Transport_Layer_Security
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -25,7 +33,9 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   sources = ["tcp://example.org:443", "https://influxdata.com:443",
             "smtp://mail.localhost:25", "udp://127.0.0.1:4433",
             "/etc/ssl/certs/ssl-cert-snakeoil.pem",
-            "/etc/mycerts/*.mydomain.org.pem", "file:///path/to/*.pem"]
+            "/etc/mycerts/*.mydomain.org.pem", "file:///path/to/*.pem",
+            "jks:///etc/mycerts/keystore.jks",
+            "pkcs12:///etc/mycerts/keystore.p12"]
 
   ## Timeout for SSL connection
   # timeout = "5s"
@@ -38,6 +48,12 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
   ## Only output the leaf certificates and omit the root ones.
   # exclude_root_certs = false
+
+  ## Pad certificate serial number with zeroes to 128-bits.
+  # pad_serial_with_zeroes = false
+
+  ## Password to be used with PKCS#12 or JKS files
+  # password = ""
 
   ## Optional TLS Config
   # tls_ca = "/etc/telegraf/ca.pem"
@@ -74,7 +90,8 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   - fields:
     - verification_code (int)
     - verification_error (string)
-    - expiry (int, seconds) - Time when the certificate will expire, in seconds since the Unix epoch. `SELECT (expiry / 60 / 60 / 24) as "expiry_in_days"`
+    - expiry (int, seconds) - Time when the certificate will expire, in seconds
+      since the Unix epoch. `SELECT (expiry / 60 / 60 / 24) as "expiry_in_days"`
     - age (int, seconds)
     - startdate (int, seconds)
     - enddate (int, seconds)

@@ -8,10 +8,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/plugins/processors"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/processors"
 )
 
 //go:embed sample.conf
@@ -35,24 +36,40 @@ type Strings struct {
 	init       bool
 }
 
-type ConvertFunc func(s string) string
+type convertFunc func(s string) string
 
 type converter struct {
-	Field       string
-	FieldKey    string
-	Tag         string
-	TagKey      string
-	Measurement string
-	Dest        string
-	Cutset      string
-	Suffix      string
-	Prefix      string
-	Old         string
-	New         string
-	Width       int
-	Replacement string
+	Field       string `toml:"field"`
+	FieldKey    string `toml:"field_key"`
+	Tag         string `toml:"tag"`
+	TagKey      string `toml:"tag_key"`
+	Measurement string `toml:"measurement"`
+	Dest        string `toml:"dest"`
+	Cutset      string `toml:"cutset"`
+	Suffix      string `toml:"suffix"`
+	Prefix      string `toml:"prefix"`
+	Old         string `toml:"old"`
+	New         string `toml:"new"`
+	Width       int    `toml:"width"`
+	Replacement string `toml:"replacement"`
 
-	fn ConvertFunc
+	fn convertFunc
+}
+
+func (*Strings) SampleConfig() string {
+	return sampleConfig
+}
+
+func (s *Strings) Apply(in ...telegraf.Metric) []telegraf.Metric {
+	s.initOnce()
+
+	for _, metric := range in {
+		for _, converter := range s.converters {
+			converter.convert(metric)
+		}
+	}
+
+	return in
 }
 
 func (c *converter) convertTag(metric telegraf.Metric) {
@@ -68,8 +85,7 @@ func (c *converter) convertTag(metric telegraf.Metric) {
 		tags[c.Tag] = tv
 	}
 
-	for key, value := range tags {
-		dest := key
+	for dest, value := range tags {
 		if c.Tag != "*" && c.Dest != "" {
 			dest = c.Dest
 		}
@@ -111,8 +127,7 @@ func (c *converter) convertField(metric telegraf.Metric) {
 		fields[c.Field] = fv
 	}
 
-	for key, value := range fields {
-		dest := key
+	for dest, value := range fields {
 		if c.Field != "*" && c.Dest != "" {
 			dest = c.Dest
 		}
@@ -194,7 +209,6 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.Trim {
-		c := c
 		if c.Cutset != "" {
 			c.fn = func(s string) string { return strings.Trim(s, c.Cutset) }
 		} else {
@@ -203,7 +217,6 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimLeft {
-		c := c
 		if c.Cutset != "" {
 			c.fn = func(s string) string { return strings.TrimLeft(s, c.Cutset) }
 		} else {
@@ -212,7 +225,6 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimRight {
-		c := c
 		if c.Cutset != "" {
 			c.fn = func(s string) string { return strings.TrimRight(s, c.Cutset) }
 		} else {
@@ -221,17 +233,14 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimPrefix {
-		c := c
 		c.fn = func(s string) string { return strings.TrimPrefix(s, c.Prefix) }
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.TrimSuffix {
-		c := c
 		c.fn = func(s string) string { return strings.TrimSuffix(s, c.Suffix) }
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.Replace {
-		c := c
 		c.fn = func(s string) string {
 			newString := strings.ReplaceAll(s, c.Old, c.New)
 			if newString == "" {
@@ -243,7 +252,6 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.Left {
-		c := c
 		c.fn = func(s string) string {
 			if len(s) < c.Width {
 				return s
@@ -254,7 +262,6 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.Base64Decode {
-		c := c
 		c.fn = func(s string) string {
 			data, err := base64.StdEncoding.DecodeString(s)
 			if err != nil {
@@ -268,28 +275,11 @@ func (s *Strings) initOnce() {
 		s.converters = append(s.converters, c)
 	}
 	for _, c := range s.ValidUTF8 {
-		c := c
 		c.fn = func(s string) string { return strings.ToValidUTF8(s, c.Replacement) }
 		s.converters = append(s.converters, c)
 	}
 
 	s.init = true
-}
-
-func (*Strings) SampleConfig() string {
-	return sampleConfig
-}
-
-func (s *Strings) Apply(in ...telegraf.Metric) []telegraf.Metric {
-	s.initOnce()
-
-	for _, metric := range in {
-		for _, converter := range s.converters {
-			converter.convert(metric)
-		}
-	}
-
-	return in
 }
 
 func init() {

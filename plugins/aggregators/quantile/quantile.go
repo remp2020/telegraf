@@ -13,16 +13,15 @@ import (
 var sampleConfig string
 
 type Quantile struct {
-	Quantiles     []float64 `toml:"quantiles"`
-	Compression   float64   `toml:"compression"`
-	AlgorithmType string    `toml:"algorithm"`
+	Quantiles     []float64       `toml:"quantiles"`
+	Compression   float64         `toml:"compression"`
+	AlgorithmType string          `toml:"algorithm"`
+	Log           telegraf.Logger `toml:"-"`
 
 	newAlgorithm newAlgorithmFunc
+	cache        map[uint64]aggregate
 
-	cache    map[uint64]aggregate
 	suffixes []string
-
-	Log telegraf.Logger `toml:"-"`
 }
 
 type aggregate struct {
@@ -35,72 +34,6 @@ type newAlgorithmFunc func(compression float64) (algorithm, error)
 
 func (*Quantile) SampleConfig() string {
 	return sampleConfig
-}
-
-func (q *Quantile) Add(in telegraf.Metric) {
-	id := in.HashID()
-	if cached, ok := q.cache[id]; ok {
-		fields := in.Fields()
-		for k, algo := range cached.fields {
-			if field, ok := fields[k]; ok {
-				if v, isconvertible := convert(field); isconvertible {
-					err := algo.Add(v)
-					if err != nil {
-						q.Log.Errorf("adding cached field %s: %v", k, err)
-					}
-				}
-			}
-		}
-		return
-	}
-
-	// New metric, setup cache and init algorithm
-	a := aggregate{
-		name:   in.Name(),
-		tags:   in.Tags(),
-		fields: make(map[string]algorithm),
-	}
-	for k, field := range in.Fields() {
-		if v, isconvertible := convert(field); isconvertible {
-			// This should never error out as we tested it in Init()
-			algo, _ := q.newAlgorithm(q.Compression)
-			err := algo.Add(v)
-			if err != nil {
-				q.Log.Errorf("adding field %s: %v", k, err)
-			}
-			a.fields[k] = algo
-		}
-	}
-	q.cache[id] = a
-}
-
-func (q *Quantile) Push(acc telegraf.Accumulator) {
-	for _, aggregate := range q.cache {
-		fields := map[string]interface{}{}
-		for k, algo := range aggregate.fields {
-			for i, qtl := range q.Quantiles {
-				fields[k+q.suffixes[i]] = algo.Quantile(qtl)
-			}
-		}
-		acc.AddFields(aggregate.name, fields, aggregate.tags)
-	}
-}
-
-func (q *Quantile) Reset() {
-	q.cache = make(map[uint64]aggregate)
-}
-
-func convert(in interface{}) (float64, bool) {
-	switch v := in.(type) {
-	case float64:
-		return v, true
-	case int64:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	default:
-		return 0, false
-	}
 }
 
 func (q *Quantile) Init() error {
@@ -138,6 +71,74 @@ func (q *Quantile) Init() error {
 	q.Reset()
 
 	return nil
+}
+
+func (q *Quantile) Add(in telegraf.Metric) {
+	id := in.HashID()
+	if cached, ok := q.cache[id]; ok {
+		fields := in.Fields()
+		for k, algo := range cached.fields {
+			if field, ok := fields[k]; ok {
+				if v, isconvertible := convert(field); isconvertible {
+					err := algo.Add(v)
+					if err != nil {
+						q.Log.Errorf("adding cached field %s: %v", k, err)
+					}
+				}
+			}
+		}
+		return
+	}
+
+	// New metric, setup cache and init algorithm
+	a := aggregate{
+		name:   in.Name(),
+		tags:   in.Tags(),
+		fields: make(map[string]algorithm),
+	}
+	for k, field := range in.Fields() {
+		if v, isconvertible := convert(field); isconvertible {
+			algo, err := q.newAlgorithm(q.Compression)
+			if err != nil {
+				q.Log.Errorf("generating algorithm %s: %v", k, err)
+			}
+			err = algo.Add(v)
+			if err != nil {
+				q.Log.Errorf("adding field %s: %v", k, err)
+			}
+			a.fields[k] = algo
+		}
+	}
+	q.cache[id] = a
+}
+
+func (q *Quantile) Push(acc telegraf.Accumulator) {
+	for _, aggregate := range q.cache {
+		fields := make(map[string]interface{}, len(aggregate.fields)*len(q.Quantiles))
+		for k, algo := range aggregate.fields {
+			for i, qtl := range q.Quantiles {
+				fields[k+q.suffixes[i]] = algo.Quantile(qtl)
+			}
+		}
+		acc.AddFields(aggregate.name, fields, aggregate.tags)
+	}
+}
+
+func (q *Quantile) Reset() {
+	q.cache = make(map[uint64]aggregate)
+}
+
+func convert(in interface{}) (float64, bool) {
+	switch v := in.(type) {
+	case float64:
+		return v, true
+	case int64:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
 }
 
 func init() {

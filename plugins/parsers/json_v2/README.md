@@ -7,6 +7,9 @@ this playground to test out your GJSON path here:
 [gjson.dev/](https://gjson.dev). You can find multiple examples under the
 [`testdata`][] folder.
 
+> [!WARNING]
+> In the current state of the implementation, the json_v2 parser should be avoided in favor of the [XPath Parser](../xpath), especially when working with arrays.
+
 ## Configuration
 
 ```toml
@@ -18,7 +21,7 @@ this playground to test out your GJSON path here:
         measurement_name_path = "" # A string with valid GJSON path syntax, will override measurement_name
         timestamp_path = "" # A string with valid GJSON path syntax to a valid timestamp (single value)
         timestamp_format = "" # A string with a valid timestamp format (see below for possible values)
-        timestamp_timezone = "" # A string with with a valid timezone (see below for possible values)
+        timestamp_timezone = "" # A string with a valid timezone (see below for possible values)
         [[inputs.file.json_v2.tag]]
             path = "" # A string with valid GJSON path syntax to a non-array/non-object value
             rename = "new name" # A string with a new name for the tag key
@@ -39,7 +42,7 @@ this playground to test out your GJSON path here:
             ## Configuration to define what JSON keys should be used as timestamps ##
             timestamp_key = "" # A JSON key (for a nested key, prepend the parent keys with underscores) to a valid timestamp
             timestamp_format = "" # A string with a valid timestamp format (see below for possible values)
-            timestamp_timezone = "" # A string with with a valid timezone (see below for possible values)
+            timestamp_timezone = "" # A string with a valid timezone (see below for possible values)
 
             ### Configuration to define what JSON keys should be included and how (field/tag) ###
             tags = [] # List of JSON keys (for a nested key, prepend the parent keys with underscores) to be a tag instead of a field, when adding a JSON key in this list you don't have to define it in the included_keys list

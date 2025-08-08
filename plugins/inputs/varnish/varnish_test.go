@@ -17,7 +17,7 @@ import (
 
 func fakeVarnishRunner(output string) func(string, bool, []string, config.Duration) (*bytes.Buffer, error) {
 	return func(string, bool, []string, config.Duration) (*bytes.Buffer, error) {
-		return bytes.NewBuffer([]byte(output)), nil
+		return bytes.NewBufferString(output), nil
 	}
 }
 
@@ -610,7 +610,7 @@ func TestJsonTypes(t *testing.T) {
 		MetricVersion:   2,
 	}
 	require.NoError(t, v.Gather(acc))
-	require.Equal(t, len(exp), len(acc.Metrics))
+	require.Len(t, acc.Metrics, len(exp))
 	for _, metric := range acc.Metrics {
 		require.Equal(t, "varnish", metric.Measurement)
 		for fieldName, value := range metric.Fields {

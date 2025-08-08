@@ -1,9 +1,15 @@
 # Elasticsearch Output Plugin
 
-This plugin writes to [Elasticsearch](https://www.elastic.co) via HTTP using
-Elastic (<http://olivere.github.io/elastic/).>
+This plugin writes metrics to [Elasticsearch][elasticsearch] via HTTP using the
+[Elastic client library][client_lib]. The plugin supports Elasticsearch
+releases from v5.x up to v7.x.
 
-It supports Elasticsearch releases from 5.x up to 7.x.
+⭐ Telegraf v0.1.5
+🏷️ datastore, logging
+💻 all
+
+[elasticsearch]: https://www.elastic.co
+[client_lib]: http://olivere.github.io/elastic/
 
 ## Elasticsearch indexes and templates
 
@@ -286,6 +292,10 @@ to use them.
   # default_tag_value = "none"
   index_name = "telegraf-%Y.%m.%d" # required.
 
+  ## Optional Index Config
+  ## Set to true if Telegraf should use the "create" OpType while indexing
+  # use_optype_create = false
+
   ## Optional TLS Config
   # tls_ca = "/etc/telegraf/ca.pem"
   # tls_cert = "/etc/telegraf/cert.pem"
@@ -328,6 +338,16 @@ to use them.
   # To pass custom HTTP headers please define it in a given below section
   # [outputs.elasticsearch.headers]
   #    "X-Custom-Header" = "custom-value"
+
+  ## Template Index Settings
+  ## Overrides the template settings.index section with any provided options.
+  ## Defaults provided here in the config
+  # template_index_settings = {
+  #   refresh_interval = "10s",
+  #   mapping.total_fields.limit = 5000,
+  #   auto_expand_replicas = "0-1",
+  #   codec = "best_compression"
+  # }
 ```
 
 ### Permissions
@@ -387,6 +407,9 @@ the `default_tag_value` will be used instead.
   `inf`s if `float_handling` is set to `replace`. Negative `inf` will be
   replaced by the negative value in this number to respect the sign of the
   field's original value.
+* `use_optype_create`: If set, the "create" operation type will be used when
+   indexing into Elasticsearch, which is needed when using the Elasticsearch
+   data streams feature.
 * `use_pipeline`: If set, the set value will be used as the pipeline to call
   when sending events to elasticsearch. Additionally, you can specify dynamic
   pipeline names by using tags with the notation ```{{tag_name}}```.  If the tag

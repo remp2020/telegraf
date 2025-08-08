@@ -3,9 +3,9 @@
 set -eux
 
 ARCH=$(uname -m)
-GO_VERSION="1.22.4"
-GO_VERSION_SHA_arm64="242b78dc4c8f3d5435d28a0d2cec9b4c1aa999b601fb8aa59fb4e5a1364bf827" # from https://golang.org/dl
-GO_VERSION_SHA_amd64="c95967f50aa4ace34af0c236cbdb49a9a3e80ee2ad09d85775cb4462a5c19ed3" # from https://golang.org/dl
+GO_VERSION="1.24.5"
+GO_VERSION_SHA_arm64="92d30a678f306c327c544758f2d2fa5515aa60abe9dba4ca35fbf9b8bfc53212" # from https://go.dev/dl
+GO_VERSION_SHA_amd64="2fe5f3866b8fbcd20625d531f81019e574376b8a840b0a096d8a2180308b1672" # from https://go.dev/dl
 
 if [ "$ARCH" = 'arm64' ]; then
     GO_ARCH="darwin-arm64"
@@ -23,7 +23,7 @@ sudo mkdir -p ${path}
 # it is slow to update and we can't pull specific minor versions.)
 setup_go () {
     echo "installing go"
-    curl -L "https://golang.org/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz" --output "go${GO_VERSION}.${GO_ARCH}.tar.gz"
+    curl -L "https://go.dev/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz" --output "go${GO_VERSION}.${GO_ARCH}.tar.gz"
     if ! echo "${GO_VERSION_SHA}  go${GO_VERSION}.${GO_ARCH}.tar.gz" | shasum --algorithm 256 --check -; then
         echo "Checksum failed" >&2
         exit 1

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/stretchr/testify/require"
@@ -18,33 +17,33 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 )
 
-type MockClient struct {
-	ContainerListF    func() ([]types.Container, error)
-	ContainerInspectF func() (types.ContainerJSON, error)
+type mockClient struct {
+	ContainerListF    func() ([]container.Summary, error)
+	ContainerInspectF func() (container.InspectResponse, error)
 	ContainerLogsF    func() (io.ReadCloser, error)
 }
 
-func (c *MockClient) ContainerList(context.Context, container.ListOptions) ([]types.Container, error) {
+func (c *mockClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
 	return c.ContainerListF()
 }
 
-func (c *MockClient) ContainerInspect(context.Context, string) (types.ContainerJSON, error) {
+func (c *mockClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
 	return c.ContainerInspectF()
 }
 
-func (c *MockClient) ContainerLogs(context.Context, string, container.LogsOptions) (io.ReadCloser, error) {
+func (c *mockClient) ContainerLogs(context.Context, string, container.LogsOptions) (io.ReadCloser, error) {
 	return c.ContainerLogsF()
 }
 
-type Response struct {
+type response struct {
 	io.Reader
 }
 
-func (r *Response) Close() error {
+func (*response) Close() error {
 	return nil
 }
 
-func MustParse(layout, value string) time.Time {
+func mustParse(layout, value string) time.Time {
 	tm, err := time.Parse(layout, value)
 	if err != nil {
 		panic(err)
@@ -55,22 +54,22 @@ func MustParse(layout, value string) time.Time {
 func Test(t *testing.T) {
 	tests := []struct {
 		name     string
-		client   *MockClient
+		client   *mockClient
 		expected []telegraf.Metric
 	}{
 		{
 			name: "no containers",
-			client: &MockClient{
-				ContainerListF: func() ([]types.Container, error) {
+			client: &mockClient{
+				ContainerListF: func() ([]container.Summary, error) {
 					return nil, nil
 				},
 			},
 		},
 		{
 			name: "one container tty",
-			client: &MockClient{
-				ContainerListF: func() ([]types.Container, error) {
-					return []types.Container{
+			client: &mockClient{
+				ContainerListF: func() ([]container.Summary, error) {
+					return []container.Summary{
 						{
 							ID:    "deadbeef",
 							Names: []string{"/telegraf"},
@@ -78,15 +77,15 @@ func Test(t *testing.T) {
 						},
 					}, nil
 				},
-				ContainerInspectF: func() (types.ContainerJSON, error) {
-					return types.ContainerJSON{
+				ContainerInspectF: func() (container.InspectResponse, error) {
+					return container.InspectResponse{
 						Config: &container.Config{
 							Tty: true,
 						},
 					}, nil
 				},
 				ContainerLogsF: func() (io.ReadCloser, error) {
-					return &Response{Reader: bytes.NewBuffer([]byte("2020-04-28T18:43:16.432691200Z hello\n"))}, nil
+					return &response{Reader: bytes.NewBufferString("2020-04-28T18:43:16.432691200Z hello\n")}, nil
 				},
 			},
 			expected: []telegraf.Metric{
@@ -103,15 +102,15 @@ func Test(t *testing.T) {
 						"container_id": "deadbeef",
 						"message":      "hello",
 					},
-					MustParse(time.RFC3339Nano, "2020-04-28T18:43:16.432691200Z"),
+					mustParse(time.RFC3339Nano, "2020-04-28T18:43:16.432691200Z"),
 				),
 			},
 		},
 		{
 			name: "one container multiplex",
-			client: &MockClient{
-				ContainerListF: func() ([]types.Container, error) {
-					return []types.Container{
+			client: &mockClient{
+				ContainerListF: func() ([]container.Summary, error) {
+					return []container.Summary{
 						{
 							ID:    "deadbeef",
 							Names: []string{"/telegraf"},
@@ -119,8 +118,8 @@ func Test(t *testing.T) {
 						},
 					}, nil
 				},
-				ContainerInspectF: func() (types.ContainerJSON, error) {
-					return types.ContainerJSON{
+				ContainerInspectF: func() (container.InspectResponse, error) {
+					return container.InspectResponse{
 						Config: &container.Config{
 							Tty: false,
 						},
@@ -130,7 +129,7 @@ func Test(t *testing.T) {
 					var buf bytes.Buffer
 					w := stdcopy.NewStdWriter(&buf, stdcopy.Stdout)
 					_, err := w.Write([]byte("2020-04-28T18:42:16.432691200Z hello from stdout"))
-					return &Response{Reader: &buf}, err
+					return &response{Reader: &buf}, err
 				},
 			},
 			expected: []telegraf.Metric{
@@ -147,7 +146,7 @@ func Test(t *testing.T) {
 						"container_id": "deadbeef",
 						"message":      "hello from stdout",
 					},
-					MustParse(time.RFC3339Nano, "2020-04-28T18:42:16.432691200Z"),
+					mustParse(time.RFC3339Nano, "2020-04-28T18:42:16.432691200Z"),
 				),
 			},
 		},
@@ -157,7 +156,7 @@ func Test(t *testing.T) {
 			var acc testutil.Accumulator
 			plugin := &DockerLogs{
 				Timeout:          config.Duration(time.Second * 5),
-				newClient:        func(string, *tls.Config) (Client, error) { return tt.client, nil },
+				newClient:        func(string, *tls.Config) (dockerClient, error) { return tt.client, nil },
 				containerList:    make(map[string]context.CancelFunc),
 				IncludeSourceTag: true,
 			}

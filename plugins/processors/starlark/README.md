@@ -1,18 +1,22 @@
 # Starlark Processor Plugin
 
-The `starlark` processor calls a Starlark function for each matched metric,
+This plugin calls the provided Starlark function for each matched metric,
 allowing for custom programmatic metric processing.
 
 The Starlark language is a dialect of Python, and will be familiar to those who
 have experience with the Python language. However, there are major
-[differences](#python-differences).  Existing Python code is unlikely to work
-unmodified.  The execution environment is sandboxed, and it is not possible to
+[differences](#python-differences). Existing Python code is unlikely to work
+unmodified. The execution environment is sandboxed, and it is not possible to
 do I/O operations such as reading from files or sockets.
 
-The **[Starlark specification][]** has details about the syntax and available
-functions.
+The **[Starlark specification][spec]** has details about the syntax and
+available functions.
 
-Telegraf minimum version: Telegraf 1.15.0
+⭐ Telegraf v1.15.0
+🏷️ general purpose
+💻 all
+
+[spec]: https://github.com/google/starlark-go/blob/d1966c6b9fcd/doc/spec.md
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -61,7 +65,7 @@ def apply(metric):
 ```
 
 For a list of available types and functions that can be used in the code, see
-the [Starlark specification][].
+the [Starlark specification][spec].
 
 In addition to these, the following InfluxDB-specific
 types and functions are exposed to the script.
@@ -71,7 +75,7 @@ Create a new metric with the given measurement name.  The metric will have no
 tags or fields and defaults to the current time.
 
 - **name**:
-The name is a [string][] containing the metric measurement name.
+The name is a [string][string] containing the metric measurement name.
 
 - **tags**:
 A [dict-like][dict] object containing the metric's tags.
@@ -122,7 +126,7 @@ following libraries are available for loading:
 - json: `load("json.star", "json")` provides the following functions: `json.encode()`, `json.decode()`, `json.indent()`. See [json.star](testdata/json.star) for an example. For more details about the functions, please refer to [the documentation of this library](https://pkg.go.dev/go.starlark.net/lib/json).
 - log: `load("logging.star", "log")` provides the following functions: `log.debug()`, `log.info()`, `log.warn()`, `log.error()`. See [logging.star](testdata/logging.star) for an example.
 - math: `load("math.star", "math")` provides [the following functions and constants](https://pkg.go.dev/go.starlark.net/lib/math). See [math.star](testdata/math.star) for an example.
-- time: `load("time.star", "time")` provides the following functions: `time.from_timestamp()`, `time.is_valid_timezone()`, `time.now()`, `time.parse_duration()`, `time.parseTime()`, `time.time()`. See [time_date.star](testdata/time_date.star), [time_duration.star](testdata/time_duration.star) and/or [time_timestamp.star](testdata/time_timestamp.star) for an example. For more details about the functions, please refer to [the documentation of this library](https://pkg.go.dev/go.starlark.net/lib/time).
+- time: `load("time.star", "time")` provides the following functions: `time.from_timestamp()`, `time.is_valid_timezone()`, `time.now()`, `time.parse_duration()`, `time.parse_time()`, `time.time()`. See [time_date.star](testdata/time_date.star), [time_duration.star](testdata/time_duration.star) and/or [time_timestamp.star](testdata/time_timestamp.star) for an example. For more details about the functions, please refer to [the documentation of this library](https://pkg.go.dev/go.starlark.net/lib/time).
 
 If you would like to see support for something else here, please open an issue.
 
@@ -243,6 +247,20 @@ def apply(metric):
     return metric
 ```
 
+**What does `cannot represent integer ...` mean?**
+
+The error occurs if an integer value in starlark exceeds the signed 64 bit
+integer limit. This can occur if you are summing up large values in a starlark
+integer value or convert an unsigned 64 bit integer to starlark and then create
+a new metric field from it.
+
+This is due to the fact that integer values in starlark are *always* signed and
+can grow beyond the 64-bit size. Therefore converting the value back fails in
+the cases mentioned above.
+
+As a workaround you can either clip the field value at the signed 64-bit limit
+or return the value as a floating-point number.
+
 ### Examples
 
 - [drop string fields](testdata/drop_string_fields.star) - Drop fields containing string values.
@@ -272,6 +290,5 @@ def apply(metric):
 
 Open a Pull Request to add any other useful Starlark examples.
 
-[Starlark specification]: https://github.com/google/starlark-go/blob/d1966c6b9fcd/doc/spec.md
 [string]: https://github.com/google/starlark-go/blob/d1966c6b9fcd/doc/spec.md#strings
 [dict]: https://github.com/google/starlark-go/blob/d1966c6b9fcd/doc/spec.md#dictionaries

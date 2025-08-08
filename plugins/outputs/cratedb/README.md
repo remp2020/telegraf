@@ -1,7 +1,14 @@
 # CrateDB Output Plugin
 
-This plugin writes to [CrateDB](https://crate.io/) via its [PostgreSQL
-protocol](https://crate.io/docs/crate/reference/protocols/postgres.html).
+This plugin writes metrics to [CrateDB][cratedb] via its
+[PostgreSQL protocol][psql_protocol].
+
+⭐ Telegraf v1.5.0
+🏷️ cloud, datastore
+💻 all
+
+[cratedb]: https://crate.io/
+[psql_protocol]: https://crate.io/docs/crate/reference/protocols/postgres.html
 
 ## Table Schema
 
@@ -44,6 +51,9 @@ using the `startup_error_behavior` setting. Available values are:
 - `retry`:  Telegraf will try to startup the plugin in every gather or write
             cycle in case of startup errors. The plugin is disabled until
             the startup succeeds.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
+            in case probing fails. If the plugin does not support probing, Telegraf will
+            behave as if `ignore` was set instead.
 
 ## Configuration
 

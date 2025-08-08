@@ -18,28 +18,14 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-func init() {
-	inputs.Add("lanz", func() telegraf.Input {
-		return NewLanz()
-	})
-}
-
 type Lanz struct {
 	Servers []string `toml:"servers"`
 	clients []lanz.Client
 	wg      sync.WaitGroup
 }
 
-func NewLanz() *Lanz {
-	return &Lanz{}
-}
-
 func (*Lanz) SampleConfig() string {
 	return sampleConfig
-}
-
-func (l *Lanz) Gather(_ telegraf.Accumulator) error {
-	return nil
 }
 
 func (l *Lanz) Start(acc telegraf.Accumulator) error {
@@ -72,6 +58,10 @@ func (l *Lanz) Start(acc telegraf.Accumulator) error {
 	return nil
 }
 
+func (*Lanz) Gather(telegraf.Accumulator) error {
+	return nil
+}
+
 func (l *Lanz) Stop() {
 	for _, client := range l.clients {
 		client.Stop()
@@ -80,7 +70,7 @@ func (l *Lanz) Stop() {
 }
 
 func receive(acc telegraf.Accumulator, in <-chan *pb.LanzRecord, deviceURL *url.URL) {
-	//nolint:gosimple // for-select used on purpose
+	//nolint:staticcheck // for-select used on purpose
 	for {
 		select {
 		case msg, ok := <-in:
@@ -129,4 +119,10 @@ func msgToAccumulator(acc telegraf.Accumulator, msg *pb.LanzRecord, deviceURL *u
 		}
 		acc.AddFields("lanz_global_buffer_usage_record", vals, tags)
 	}
+}
+
+func init() {
+	inputs.Add("lanz", func() telegraf.Input {
+		return &Lanz{}
+	})
 }

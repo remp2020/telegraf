@@ -7,28 +7,28 @@ import (
 	"runtime"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-type MemStats struct {
-	ps       system.PS
+type Mem struct {
+	ps       psutil.PS
 	platform string
 }
 
-func (*MemStats) SampleConfig() string {
+func (*Mem) SampleConfig() string {
 	return sampleConfig
 }
 
-func (ms *MemStats) Init() error {
+func (ms *Mem) Init() error {
 	ms.platform = runtime.GOOS
 	return nil
 }
 
-func (ms *MemStats) Gather(acc telegraf.Accumulator) error {
+func (ms *Mem) Gather(acc telegraf.Accumulator) error {
 	vm, err := ms.ps.VMStat()
 	if err != nil {
 		return fmt.Errorf("error getting virtual memory info: %w", err)
@@ -100,8 +100,8 @@ func (ms *MemStats) Gather(acc telegraf.Accumulator) error {
 }
 
 func init() {
-	ps := system.NewSystemPS()
+	ps := psutil.NewSystemPS()
 	inputs.Add("mem", func() telegraf.Input {
-		return &MemStats{ps: ps}
+		return &Mem{ps: ps}
 	})
 }

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shirou/gopsutil/v3/net"
+	"github.com/shirou/gopsutil/v4/net"
 	"github.com/stretchr/testify/require"
 
-	"github.com/influxdata/telegraf/plugins/inputs/system"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -36,9 +36,7 @@ func TestNoFilesFound(t *testing.T) {
 
 func TestDefaultsUsed(t *testing.T) {
 	defer restoreDflts(dfltFiles, dfltDirs)
-	tmpdir, err := os.MkdirTemp("", "tmp1")
-	require.NoError(t, err)
-	defer os.Remove(tmpdir)
+	tmpdir := t.TempDir()
 
 	tmpFile, err := os.CreateTemp(tmpdir, "ip_conntrack_count")
 	require.NoError(t, err)
@@ -61,9 +59,7 @@ func TestDefaultsUsed(t *testing.T) {
 
 func TestConfigsUsed(t *testing.T) {
 	defer restoreDflts(dfltFiles, dfltDirs)
-	tmpdir, err := os.MkdirTemp("", "tmp1")
-	require.NoError(t, err)
-	defer os.Remove(tmpdir)
+	tmpdir := t.TempDir()
 
 	cntFile, err := os.CreateTemp(tmpdir, "nf_conntrack_count")
 	require.NoError(t, err)
@@ -78,9 +74,9 @@ func TestConfigsUsed(t *testing.T) {
 	dfltFiles = []string{cntFname, maxFname}
 
 	count := 1234321
-	max := 9999999
+	limit := 9999999
 	require.NoError(t, os.WriteFile(cntFile.Name(), []byte(strconv.Itoa(count)), 0640))
-	require.NoError(t, os.WriteFile(maxFile.Name(), []byte(strconv.Itoa(max)), 0640))
+	require.NoError(t, os.WriteFile(maxFile.Name(), []byte(strconv.Itoa(limit)), 0640))
 	c := &Conntrack{}
 	require.NoError(t, c.Init())
 	acc := &testutil.Accumulator{}
@@ -94,12 +90,12 @@ func TestConfigsUsed(t *testing.T) {
 	acc.AssertContainsFields(t, inputName,
 		map[string]interface{}{
 			fix(cntFname): float64(count),
-			fix(maxFname): float64(max),
+			fix(maxFname): float64(limit),
 		})
 }
 
 func TestCollectStats(t *testing.T) {
-	var mps system.MockPS
+	var mps psutil.MockPS
 	defer mps.AssertExpectations(t)
 	var acc testutil.Accumulator
 
@@ -167,7 +163,7 @@ func TestCollectStats(t *testing.T) {
 }
 
 func TestCollectStatsPerCpu(t *testing.T) {
-	var mps system.MockPS
+	var mps psutil.MockPS
 	defer mps.AssertExpectations(t)
 	var acc testutil.Accumulator
 
@@ -250,7 +246,7 @@ func TestCollectStatsPerCpu(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	//cpu0
+	// cpu0
 	expectedFields := map[string]interface{}{
 		"entries":        uint32(59),
 		"searched":       uint32(10),
@@ -276,7 +272,7 @@ func TestCollectStatsPerCpu(t *testing.T) {
 			"cpu": "cpu0",
 		})
 
-	//cpu1
+	// cpu1
 	expectedFields1 := map[string]interface{}{
 		"entries":        uint32(79),
 		"searched":       uint32(10),
@@ -333,7 +329,7 @@ func TestCollectStatsPerCpu(t *testing.T) {
 func TestCollectPsSystemInit(t *testing.T) {
 	var acc testutil.Accumulator
 	cs := &Conntrack{
-		ps:      system.NewSystemPS(),
+		ps:      psutil.NewSystemPS(),
 		Collect: []string{"all"},
 	}
 	require.NoError(t, cs.Init())
@@ -341,6 +337,6 @@ func TestCollectPsSystemInit(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), "Is the conntrack kernel module loaded?") {
 		t.Skip("Conntrack kernel module not loaded.")
 	}
-	//make sure Conntrack.ps gets initialized without mocking
+	// make sure Conntrack.ps gets initialized without mocking
 	require.NoError(t, err)
 }

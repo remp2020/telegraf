@@ -126,7 +126,6 @@ func TestValidateOPCTags(t *testing.T) {
 						TagsSlice:      [][]string{{"t1", "v1"}, {"t3", "v2"}},
 					},
 				},
-				Groups: []NodeGroupSettings{},
 			},
 			nil,
 		},
@@ -150,7 +149,6 @@ func TestValidateOPCTags(t *testing.T) {
 						TagsSlice:      [][]string{{"t1", "bar"}, {"t2", "v2"}},
 					},
 				},
-				Groups: []NodeGroupSettings{},
 			},
 			nil,
 		},
@@ -158,7 +156,6 @@ func TestValidateOPCTags(t *testing.T) {
 			"different metric names",
 			InputClientConfig{
 				MetricName: "mn",
-				RootNodes:  []NodeSettings{},
 				Groups: []NodeGroupSettings{
 					{
 						MetricName: "mn",
@@ -208,7 +205,6 @@ func TestValidateOPCTags(t *testing.T) {
 						TagsSlice:      [][]string{{"t1", "v1"}, {"t2", "v2"}},
 					},
 				},
-				Groups: []NodeGroupSettings{},
 			},
 			nil,
 		},
@@ -239,7 +235,6 @@ func TestNewNodeMetricMappingTags(t *testing.T) {
 				Namespace:      "2",
 				IdentifierType: "s",
 				Identifier:     "h",
-				TagsSlice:      [][]string{},
 			},
 			groupTags:    map[string]string{},
 			expectedTags: map[string]string{},
@@ -265,7 +260,6 @@ func TestNewNodeMetricMappingTags(t *testing.T) {
 				Namespace:      "2",
 				IdentifierType: "s",
 				Identifier:     "h",
-				TagsSlice:      [][]string{},
 			},
 			groupTags:    map[string]string{"t1": "v1"},
 			expectedTags: map[string]string{"t1": "v1"},
@@ -313,7 +307,6 @@ func TestNewNodeMetricMappingIdStrInstantiated(t *testing.T) {
 		Namespace:      "2",
 		IdentifierType: "s",
 		Identifier:     "h",
-		TagsSlice:      [][]string{},
 	}, map[string]string{})
 	require.NoError(t, err)
 	require.Equal(t, "ns=2;s=h", nmm.idStr)
@@ -330,13 +323,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "valid",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "2",
 					IdentifierType: "s",
 					Identifier:     "hf",
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: nil,
@@ -345,13 +338,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "empty field name not allowed",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "",
 					Namespace:      "2",
 					IdentifierType: "s",
 					Identifier:     "hf",
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: errors.New(`empty name in ""`),
@@ -360,13 +353,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "empty namespace not allowed",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "",
 					IdentifierType: "s",
 					Identifier:     "hf",
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: errors.New("empty node namespace not allowed"),
@@ -375,13 +368,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "empty identifier type not allowed",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "2",
 					IdentifierType: "",
 					Identifier:     "hf",
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: errors.New(`invalid identifier type "" in "f"`),
@@ -390,13 +383,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "invalid identifier type not allowed",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "2",
 					IdentifierType: "j",
 					Identifier:     "hf",
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: errors.New(`invalid identifier type "j" in "f"`),
@@ -407,13 +400,14 @@ func TestValidateNodeToAdd(t *testing.T) {
 				{metricName: "testmetric", fieldName: "f", tags: "t1=v1, t2=v2"}: {},
 			},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "2",
 					IdentifierType: "s",
 					Identifier:     "hf",
 					TagsSlice:      [][]string{{"t1", "v1"}, {"t2", "v2"}},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: errors.New(`name "f" is duplicated (metric name "testmetric", tags "t1=v1, t2=v2")`),
@@ -422,13 +416,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "identifier type mismatch",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "2",
 					IdentifierType: "i",
 					Identifier:     "hf",
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: errors.New(`identifier type "i" does not match the type of identifier "hf"`),
@@ -449,13 +443,13 @@ func TestValidateNodeToAdd(t *testing.T) {
 			name:     "identifier type " + idT + " allowed",
 			existing: map[metricParts]struct{}{},
 			nmm: func() *NodeMetricMapping {
-				nmm, _ := NewNodeMetricMapping("testmetric", NodeSettings{
+				nmm, err := NewNodeMetricMapping("testmetric", NodeSettings{
 					FieldName:      "f",
 					Namespace:      "2",
 					IdentifierType: idT,
 					Identifier:     idV,
-					TagsSlice:      [][]string{},
 				}, map[string]string{})
+				require.NoError(t, err)
 				return nmm
 			}(),
 			err: nil,
@@ -491,7 +485,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 						TagsSlice:      [][]string{{"t1", "v1"}},
 					},
 				},
-				Groups: []NodeGroupSettings{},
 			},
 			expected: []NodeMetricMapping{
 				{
@@ -535,7 +528,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 								TagsSlice:  [][]string{{"t2", "v2"}},
 							},
 						},
-						TagsSlice: [][]string{},
 					},
 				},
 			},
@@ -572,7 +564,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 			config: InputClientConfig{
 				MetricName: "testmetric",
 				Timestamp:  TimestampSourceTelegraf,
-				RootNodes:  []NodeSettings{},
 				Groups: []NodeGroupSettings{
 					{
 						MetricName:     "groupmetric",
@@ -585,7 +576,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 								TagsSlice:  [][]string{{"t2", "v2"}},
 							},
 						},
-						TagsSlice: [][]string{},
 					},
 				},
 			},
@@ -610,7 +600,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 			config: InputClientConfig{
 				MetricName: "testmetric",
 				Timestamp:  TimestampSourceTelegraf,
-				RootNodes:  []NodeSettings{},
 				Groups: []NodeGroupSettings{
 					{
 						MetricName:     "groupmetric",
@@ -624,7 +613,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 								DefaultTags: map[string]string{"t3": "v3"},
 							},
 						},
-						TagsSlice: [][]string{},
 					},
 				},
 			},
@@ -660,7 +648,6 @@ func TestInitNodeMetricMapping(t *testing.T) {
 						DefaultTags:    map[string]string{"t3": "v3"},
 					},
 				},
-				Groups: []NodeGroupSettings{},
 			},
 			expected: []NodeMetricMapping{
 				{
@@ -771,7 +758,8 @@ func TestUpdateNodeValue(t *testing.T) {
 		t.Run(tt.testname, func(t *testing.T) {
 			o.LastReceivedData = make([]NodeValue, 2)
 			for i, step := range tt.steps {
-				v, _ := ua.NewVariant(step.value)
+				v, err := ua.NewVariant(step.value)
+				require.NoError(t, err)
 				o.UpdateNodeValue(0, &ua.DataValue{
 					Value:             v,
 					Status:            step.status,
@@ -811,6 +799,8 @@ func TestMetricForNode(t *testing.T) {
 		testname string
 		nmm      []NodeMetricMapping
 		v        interface{}
+		isArray  bool
+		dataType ua.TypeID
 		time     time.Time
 		status   ua.StatusCode
 		expected telegraf.Metric
@@ -827,12 +817,58 @@ func TestMetricForNode(t *testing.T) {
 					MetricTags: map[string]string{"t1": "v1"},
 				},
 			},
-			v:      16,
-			time:   time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{}),
-			status: ua.StatusOK,
+			v:        16,
+			isArray:  false,
+			dataType: ua.TypeIDInt32,
+			time:     time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{}),
+			status:   ua.StatusOK,
 			expected: metric.New("testingmetric",
 				map[string]string{"t1": "v1", "id": "ns=3;s=hi"},
 				map[string]interface{}{"Quality": "The operation succeeded. StatusGood (0x0)", "fn": 16},
+				time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{})),
+		},
+		{
+			testname: "array-like metric build correctly",
+			nmm: []NodeMetricMapping{
+				{
+					Tag: NodeSettings{
+						FieldName: "fn",
+					},
+					idStr:      "ns=3;s=hi",
+					metricName: "testingmetric",
+					MetricTags: map[string]string{"t1": "v1"},
+				},
+			},
+			v:        []int32{16, 17},
+			isArray:  true,
+			dataType: ua.TypeIDInt32,
+			time:     time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{}),
+			status:   ua.StatusOK,
+			expected: metric.New("testingmetric",
+				map[string]string{"t1": "v1", "id": "ns=3;s=hi"},
+				map[string]interface{}{"Quality": "The operation succeeded. StatusGood (0x0)", "fn[0]": 16, "fn[1]": 17},
+				time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{})),
+		},
+		{
+			testname: "nil does not panic",
+			nmm: []NodeMetricMapping{
+				{
+					Tag: NodeSettings{
+						FieldName: "fn",
+					},
+					idStr:      "ns=3;s=hi",
+					metricName: "testingmetric",
+					MetricTags: map[string]string{"t1": "v1"},
+				},
+			},
+			v:        nil,
+			isArray:  false,
+			dataType: ua.TypeIDNull,
+			time:     time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{}),
+			status:   ua.StatusOK,
+			expected: metric.New("testingmetric",
+				map[string]string{"t1": "v1", "id": "ns=3;s=hi"},
+				map[string]interface{}{"Quality": "The operation succeeded. StatusGood (0x0)"},
 				time.Date(2022, 03, 17, 8, 55, 00, 00, &time.Location{})),
 		},
 	}
@@ -843,6 +879,8 @@ func TestMetricForNode(t *testing.T) {
 			o.LastReceivedData[0].SourceTime = tt.time
 			o.LastReceivedData[0].Quality = tt.status
 			o.LastReceivedData[0].Value = tt.v
+			o.LastReceivedData[0].DataType = tt.dataType
+			o.LastReceivedData[0].IsArray = tt.isArray
 			actual := o.MetricForNode(0)
 			require.Equal(t, tt.expected.Tags(), actual.Tags())
 			require.Equal(t, tt.expected.Fields(), actual.Fields())

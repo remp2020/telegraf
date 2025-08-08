@@ -12,9 +12,8 @@ import (
 	"github.com/gofrs/uuid/v5"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
+	common_aws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/outputs"
-	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
 //go:embed sample.conf
@@ -25,17 +24,15 @@ const maxRecordsPerRequest uint32 = 500
 
 type (
 	KinesisOutput struct {
-		StreamName         string     `toml:"streamname"`
-		PartitionKey       string     `toml:"partitionkey" deprecated:"1.5.0;1.35.0;use 'partition.key' instead"`
-		RandomPartitionKey bool       `toml:"use_random_partitionkey" deprecated:"1.5.0;1.35.0;use 'partition.method' instead"`
-		Partition          *Partition `toml:"partition"`
-		Debug              bool       `toml:"debug"`
+		StreamName string     `toml:"streamname"`
+		Partition  *Partition `toml:"partition"`
+		Debug      bool       `toml:"debug"`
 
 		Log        telegraf.Logger `toml:"-"`
-		serializer serializers.Serializer
+		serializer telegraf.Serializer
 		svc        kinesisClient
 
-		internalaws.CredentialConfig
+		common_aws.CredentialConfig
 	}
 
 	Partition struct {
@@ -69,6 +66,10 @@ func (k *KinesisOutput) Connect() error {
 		return err
 	}
 
+	if k.EndpointURL != "" {
+		cfg.BaseEndpoint = &k.EndpointURL
+	}
+
 	svc := kinesis.NewFromConfig(cfg)
 
 	_, err = svc.DescribeStreamSummary(context.Background(), &kinesis.DescribeStreamSummaryInput{
@@ -78,11 +79,11 @@ func (k *KinesisOutput) Connect() error {
 	return err
 }
 
-func (k *KinesisOutput) Close() error {
+func (*KinesisOutput) Close() error {
 	return nil
 }
 
-func (k *KinesisOutput) SetSerializer(serializer serializers.Serializer) {
+func (k *KinesisOutput) SetSerializer(serializer telegraf.Serializer) {
 	k.serializer = serializer
 }
 
@@ -112,38 +113,29 @@ func (k *KinesisOutput) writeKinesis(r []types.PutRecordsRequestEntry) time.Dura
 }
 
 func (k *KinesisOutput) getPartitionKey(metric telegraf.Metric) string {
-	if k.Partition != nil {
-		switch k.Partition.Method {
-		case "static":
-			return k.Partition.Key
-		case "random":
-			u, err := uuid.NewV4()
-			if err != nil {
-				return k.Partition.Default
-			}
-			return u.String()
-		case "measurement":
-			return metric.Name()
-		case "tag":
-			if t, ok := metric.GetTag(k.Partition.Key); ok {
-				return t
-			} else if len(k.Partition.Default) > 0 {
-				return k.Partition.Default
-			}
-			// Default partition name if default is not set
-			return "telegraf"
-		default:
-			k.Log.Errorf("You have configured a Partition method of %q which is not supported", k.Partition.Method)
-		}
-	}
-	if k.RandomPartitionKey {
+	switch k.Partition.Method {
+	case "static":
+		return k.Partition.Key
+	case "random":
 		u, err := uuid.NewV4()
 		if err != nil {
 			return k.Partition.Default
 		}
 		return u.String()
+	case "measurement":
+		return metric.Name()
+	case "tag":
+		if t, ok := metric.GetTag(k.Partition.Key); ok {
+			return t
+		} else if len(k.Partition.Default) > 0 {
+			return k.Partition.Default
+		}
+		// Default partition name if default is not set
+		return "telegraf"
+	default:
+		k.Log.Errorf("You have configured a Partition method of %q which is not supported", k.Partition.Method)
+		return ""
 	}
-	return k.PartitionKey
 }
 
 func (k *KinesisOutput) Write(metrics []telegraf.Metric) error {
@@ -153,8 +145,7 @@ func (k *KinesisOutput) Write(metrics []telegraf.Metric) error {
 		return nil
 	}
 
-	r := []types.PutRecordsRequestEntry{}
-
+	r := make([]types.PutRecordsRequestEntry, 0, len(metrics))
 	for _, metric := range metrics {
 		sz++
 
@@ -172,7 +163,6 @@ func (k *KinesisOutput) Write(metrics []telegraf.Metric) error {
 		}
 
 		r = append(r, d)
-
 		if sz == maxRecordsPerRequest {
 			elapsed := k.writeKinesis(r)
 			k.Log.Debugf("Wrote a %d point batch to Kinesis in %+v.", sz, elapsed)

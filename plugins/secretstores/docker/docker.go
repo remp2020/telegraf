@@ -25,7 +25,6 @@ func (*Docker) SampleConfig() string {
 	return sampleConfig
 }
 
-// Init initializes all internals of the secret-store
 func (d *Docker) Init() error {
 	if d.ID == "" {
 		return errors.New("id missing")
@@ -71,11 +70,10 @@ func (d *Docker) List() ([]string, error) {
 	return secrets, nil
 }
 
-func (d *Docker) Set(_, _ string) error {
+func (*Docker) Set(_, _ string) error {
 	return errors.New("secret-store does not support creating secrets")
 }
 
-// GetResolver returns a function to resolve the given key.
 func (d *Docker) GetResolver(key string) (telegraf.ResolveFunc, error) {
 	resolver := func() ([]byte, bool, error) {
 		s, err := d.Get(key)

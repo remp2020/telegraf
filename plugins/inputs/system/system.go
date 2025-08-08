@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/host"
-	"github.com/shirou/gopsutil/v3/load"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/load"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -21,15 +21,15 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-type SystemStats struct {
-	Log telegraf.Logger
+type System struct {
+	Log telegraf.Logger `toml:"-"`
 }
 
-func (*SystemStats) SampleConfig() string {
+func (*System) SampleConfig() string {
 	return sampleConfig
 }
 
-func (s *SystemStats) Gather(acc telegraf.Accumulator) error {
+func (s *System) Gather(acc telegraf.Accumulator) error {
 	loadavg, err := load.Avg()
 	if err != nil && !strings.Contains(err.Error(), "not implemented") {
 		return err
@@ -112,6 +112,6 @@ func formatUptime(uptime uint64) string {
 
 func init() {
 	inputs.Add("system", func() telegraf.Input {
-		return &SystemStats{}
+		return &System{}
 	})
 }

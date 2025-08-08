@@ -12,15 +12,14 @@ import (
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/outputs"
-	serializer "github.com/influxdata/telegraf/plugins/serializers/wavefront"
+	serializers_wavefront "github.com/influxdata/telegraf/plugins/serializers/wavefront"
 	"github.com/influxdata/telegraf/testutil"
 )
 
 // default config used by Tests
 func defaultWavefront() *Wavefront {
 	return &Wavefront{
-		Host:            "localhost",
-		Port:            2878,
+		URL:             "http://localhost:2878",
 		Prefix:          "testWF.",
 		SimpleFields:    false,
 		MetricSeparator: ".",
@@ -48,25 +47,25 @@ func TestBuildMetrics(t *testing.T) {
 
 	var metricTests = []struct {
 		metric       telegraf.Metric
-		metricPoints []serializer.MetricPoint
+		metricPoints []serializers_wavefront.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "testing.just-a-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testutil.TestMetric(float64(1), "testing_just/another,metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "testing.just-another-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testMetric1,
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "test.simple.metric", Value: 123, Timestamp: timestamp, Source: "testHost", Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
@@ -93,18 +92,18 @@ func TestBuildMetricsStrict(t *testing.T) {
 
 	var metricTests = []struct {
 		metric       telegraf.Metric
-		metricPoints []serializer.MetricPoint
+		metricPoints []serializers_wavefront.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "testing.just-a-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testutil.TestMetric(float64(1), "testing_just/another,metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{
 					Metric:    w.Prefix + "testing.just/another,metric-float",
 					Value:     1,
@@ -142,15 +141,15 @@ func TestBuildMetricsWithSimpleFields(t *testing.T) {
 
 	var metricTests = []struct {
 		metric      telegraf.Metric
-		metricLines []serializer.MetricPoint
+		metricLines []serializers_wavefront.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float"),
-			[]serializer.MetricPoint{{Metric: w.Prefix + "testing.just-a-metric-float.value", Value: 1}},
+			[]serializers_wavefront.MetricPoint{{Metric: w.Prefix + "testing.just-a-metric-float.value", Value: 1}},
 		},
 		{
 			testMetric1,
-			[]serializer.MetricPoint{{Metric: w.Prefix + "test.simple.metric.value", Value: 123}},
+			[]serializers_wavefront.MetricPoint{{Metric: w.Prefix + "test.simple.metric.value", Value: 123}},
 		},
 	}
 
@@ -299,36 +298,6 @@ func TestBuildValue(t *testing.T) {
 	}
 }
 
-func TestBuildValueString(t *testing.T) {
-	w := defaultWavefront()
-	w.StringToNumber = map[string][]map[string]float64{
-		"test1": {{"green": 1, "red": 10}},
-		"test2": {{"active": 1, "hidden": 2}},
-	}
-
-	var valuetests = []struct {
-		value interface{}
-		name  string
-		out   float64
-		isErr bool
-	}{
-		{value: int64(123), name: "", out: 123},
-		{value: "green", name: "test1", out: 1},
-		{value: "red", name: "test1", out: 10},
-		{value: "hidden", name: "test2", out: 2},
-		{value: "bad", name: "test1", out: 0, isErr: true},
-	}
-
-	for _, vt := range valuetests {
-		value, err := buildValue(vt.value, vt.name, w)
-		if vt.isErr && err == nil {
-			t.Errorf("\nexpected error with\t%+v\nreceived\t%+v\n", vt.out, value)
-		} else if value != vt.out {
-			t.Errorf("\nexpected\t%+v\nreceived\t%+v\n", vt.out, value)
-		}
-	}
-}
-
 func TestTagLimits(t *testing.T) {
 	w := defaultWavefront()
 	w.TruncateTags = true
@@ -386,9 +355,8 @@ func TestParseConnectionUrlReturnsAllowsTokensInUrl(t *testing.T) {
 
 func TestParseConnectionUrlUsesHostAndPortWhenUrlIsOmitted(t *testing.T) {
 	w := &Wavefront{
-		Host: "surf.wavefront.com",
-		Port: 8080,
-		Log:  testutil.Logger{},
+		URL: "http://surf.wavefront.com:8080",
+		Log: testutil.Logger{},
 	}
 
 	url, err := w.parseConnectionURL()
@@ -400,7 +368,7 @@ func TestDefaults(t *testing.T) {
 	defaultWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
 	require.Equal(t, 10000, defaultWavefront.HTTPMaximumBatchSize)
 	require.Equal(t, config.Duration(10*time.Second), defaultWavefront.Timeout)
-	require.Equal(t, "", defaultWavefront.TLSCA)
+	require.Empty(t, defaultWavefront.TLSCA)
 }
 
 func TestMakeAuthOptions(t *testing.T) {
@@ -459,6 +427,6 @@ func BenchmarkReplaceAllLiteralString(b *testing.B) {
 
 func BenchmarkReplacer(b *testing.B) {
 	for n := 0; n < b.N; n++ {
-		serializer.Sanitize(false, testString)
+		serializers_wavefront.Sanitize(false, testString)
 	}
 }

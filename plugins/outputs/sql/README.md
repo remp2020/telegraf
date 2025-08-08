@@ -1,18 +1,21 @@
 # SQL Output Plugin
 
-The SQL output plugin saves Telegraf metric data to an SQL database.
+This plugin writes metrics to a supported SQL database using a simple,
+hard-coded database schema. There is a table for each metric type with the
+table name corresponding to the metric name. There is a column per field
+and a column per tag with an optional column for the metric timestamp.
 
-The plugin uses a simple, hard-coded database schema. There is a table for each
-metric type and the table name is the metric name. There is a column per field
-and a column per tag. There is an optional column for the metric timestamp.
-
-A row is written for every input metric. This means multiple metrics are never
+A row is written for every metric. This means multiple metrics are never
 merged into a single row, even if they have the same metric name, tags, and
 timestamp.
 
 The plugin uses Golang's generic "database/sql" interface and third party
-drivers. See the driver-specific section below for a list of supported drivers
-and details. Additional drivers may be added in future Telegraf releases.
+drivers. See the driver-specific section for a list of supported drivers
+and details.
+
+⭐ Telegraf v1.19.0
+🏷️ datastore
+💻 all
 
 ## Getting started
 
@@ -37,8 +40,8 @@ driver selected.
 Through the nature of the inputs plugins, the amounts of columns inserted within
 rows for a given metric may differ. Since the tables are created based on the
 tags and fields available within an input metric, it's possible the created
-table won't contain all the necessary columns. You might need to initialize
-the schema yourself, to avoid this scenario.
+table won't contain all the necessary columns. If you wish to automate table
+updates, check out the [Schema updates](#schema-updates) section for more info.
 
 ## Advanced options
 
@@ -73,6 +76,14 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `data_source_name`
+option. See the [secret-store documentation][SECRETSTORE] for more details on
+how to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -81,14 +92,14 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## Database driver
   ## Valid options: mssql (Microsoft SQL Server), mysql (MySQL), pgx (Postgres),
   ##  sqlite (SQLite3), snowflake (snowflake.com) clickhouse (ClickHouse)
-  # driver = ""
+  driver = ""
 
   ## Data source name
   ## The format of the data source name is different for each database driver.
   ## See the plugin readme for details.
-  # data_source_name = ""
+  data_source_name = ""
 
-  ## Timestamp column name
+  ## Timestamp column name, set to empty to ignore the timestamp
   # timestamp_column = "timestamp"
 
   ## Table creation template
@@ -96,12 +107,25 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ##  {TABLE} - table name as a quoted identifier
   ##  {TABLELITERAL} - table name as a quoted string literal
   ##  {COLUMNS} - column definitions (list of quoted identifiers and types)
+  ##  {TAG_COLUMN_NAMES} - tag column definitions (list of quoted identifiers)
+  ##  {TIMESTAMP_COLUMN_NAME} - the name of the time stamp column, as configured above
   # table_template = "CREATE TABLE {TABLE}({COLUMNS})"
+  ## NOTE: For the clickhouse driver the default is:
+  # table_template = "CREATE TABLE {TABLE}({COLUMNS}) ORDER BY ({TAG_COLUMN_NAMES}, {TIMESTAMP_COLUMN_NAME})"
 
   ## Table existence check template
   ## Available template variables:
   ##  {TABLE} - tablename as a quoted identifier
   # table_exists_template = "SELECT 1 FROM {TABLE} LIMIT 1"
+
+  ## Table update template, available template variables:
+  ##  {TABLE} - table name as a quoted identifier
+  ##  {COLUMN} - column definition (quoted identifier and type)
+  ## NOTE: Ensure the user (you're using to write to the database) has necessary permissions
+  ##
+  ## Use the following setting for automatically adding columns:
+  ## table_update_template = "ALTER TABLE {TABLE} ADD COLUMN {COLUMN}"
+  # table_update_template = ""
 
   ## Initialization SQL
   # init_sql = ""
@@ -148,6 +172,26 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   #  # conversion_style = "unsigned_suffix"
 ```
 
+## Schema updates
+
+The default behavior of this plugin is to create a schema for the table,
+based on the current metric (for both fields and tags). However, writing
+subsequent metrics with additional fields or tags will result in errors.
+
+If you wish the plugin to sync the column-schema for every metric,
+specify the `table_update_template` setting in your config file.
+
+> [!NOTE] The following snippet contains a generic query that your
+> database may (or may not) support. Consult your database's
+> documentation for proper syntax and table / column options.
+
+```toml
+# Save metrics to an SQL Database
+[[outputs.sql]]
+  ## Table update template
+  table_update_template = "ALTER TABLE {TABLE} ADD COLUMN {COLUMN}"
+```
+
 ## Driver-specific information
 
 ### go-sql-driver/mysql
@@ -184,11 +228,16 @@ docs](https://modernc.org/sqlite) for details.
 
 #### DSN
 
-Currently, Telegraf's sql output plugin depends on
-[clickhouse-go v1.5.4](https://github.com/ClickHouse/clickhouse-go/tree/v1.5.4)
-which uses a [different DSN
-format](https://github.com/ClickHouse/clickhouse-go/tree/v1.5.4#dsn) than its
-newer `v2.*` version.
+Note that even when the DSN is specified as `https://` the `secure=true`
+parameter is still required.
+
+The plugin now uses clickhouse-go v2. If you're still using a DSN compatible
+with v1 it will try to convert the DSN to the new format but as both schemata
+are not fully equivalent some parameters might not work anymore. Please check
+for warnings in your log file and refer to the
+[v2 DSN documentation][v2-dsn-docs] for available options.
+
+[v2-dsn-docs]: https://github.com/ClickHouse/clickhouse-go/tree/v2.30.2?tab=readme-ov-file#dsn
 
 #### Metric type to SQL type conversion
 

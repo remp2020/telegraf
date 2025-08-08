@@ -24,6 +24,7 @@ const (
 // OutputConfig containing name and filter
 type OutputConfig struct {
 	Name                 string
+	Source               string
 	Alias                string
 	ID                   string
 	StartupErrorBehavior string
@@ -37,13 +38,19 @@ type OutputConfig struct {
 	NameOverride string
 	NamePrefix   string
 	NameSuffix   string
+
+	BufferStrategy  string
+	BufferDirectory string
+
+	LogLevel string
 }
 
 // RunningOutput contains the output configuration
 type RunningOutput struct {
 	// Must be 64-bit aligned
-	newMetricsCount int64
-	droppedMetrics  int64
+	droppedMetrics  atomic.Int64
+	writeInFlight   atomic.Bool
+	lastWriteFailed atomic.Bool
 
 	Output            telegraf.Output
 	Config            *OutputConfig
@@ -56,7 +63,7 @@ type RunningOutput struct {
 
 	BatchReady chan time.Time
 
-	buffer *Buffer
+	buffer Buffer
 	log    telegraf.Logger
 
 	started bool
@@ -65,22 +72,20 @@ type RunningOutput struct {
 	aggMutex sync.Mutex
 }
 
-func NewRunningOutput(
-	output telegraf.Output,
-	config *OutputConfig,
-	batchSize int,
-	bufferLimit int,
-) *RunningOutput {
+func NewRunningOutput(output telegraf.Output, config *OutputConfig, batchSize, bufferLimit int) *RunningOutput {
 	tags := map[string]string{"output": config.Name}
 	if config.Alias != "" {
 		tags["alias"] = config.Alias
 	}
 
 	writeErrorsRegister := selfstat.Register("write", "errors", tags)
-	logger := logging.NewLogger("outputs", config.Name, config.Alias)
+	logger := logging.New("outputs", config.Name, config.Alias)
 	logger.RegisterErrorCallback(func() {
 		writeErrorsRegister.Incr(1)
 	})
+	if err := logger.SetLogLevel(config.LogLevel); err != nil {
+		logger.Error(err)
+	}
 	SetLoggerOnPlugin(output, logger)
 
 	if config.MetricBufferLimit > 0 {
@@ -96,8 +101,13 @@ func NewRunningOutput(
 		batchSize = DefaultMetricBatchSize
 	}
 
+	b, err := NewBuffer(config.Name, config.ID, config.Alias, bufferLimit, config.BufferStrategy, config.BufferDirectory)
+	if err != nil {
+		panic(err)
+	}
+
 	ro := &RunningOutput{
-		buffer:            NewBuffer(config.Name, config.Alias, bufferLimit),
+		buffer:            b,
 		BatchReady:        make(chan time.Time, 1),
 		Output:            output,
 		Config:            config,
@@ -191,11 +201,29 @@ func (r *RunningOutput) Close() {
 	if err := r.Output.Close(); err != nil {
 		r.log.Errorf("Error closing output: %v", err)
 	}
+
+	if err := r.buffer.Close(); err != nil {
+		r.log.Errorf("Error closing output buffer: %v", err)
+	}
 }
 
 // AddMetric adds a metric to the output.
-// Takes ownership of metric
+// The given metric will be copied if the output selects the metric.
 func (r *RunningOutput) AddMetric(metric telegraf.Metric) {
+	ok, err := r.Config.Filter.Select(metric)
+	if err != nil {
+		r.log.Errorf("filtering failed: %v", err)
+	} else if !ok {
+		r.MetricsFiltered.Incr(1)
+		return
+	}
+
+	r.add(metric.Copy())
+}
+
+// AddMetricNoCopy adds a metric to the output.
+// Takes ownership of metric regardless of whether the output selects it for outputting.
+func (r *RunningOutput) AddMetricNoCopy(metric telegraf.Metric) {
 	ok, err := r.Config.Filter.Select(metric)
 	if err != nil {
 		r.log.Errorf("filtering failed: %v", err)
@@ -204,6 +232,10 @@ func (r *RunningOutput) AddMetric(metric telegraf.Metric) {
 		return
 	}
 
+	r.add(metric)
+}
+
+func (r *RunningOutput) add(metric telegraf.Metric) {
 	r.Config.Filter.Modify(metric)
 	if len(metric.FieldList()) == 0 {
 		r.metricFiltered(metric)
@@ -229,15 +261,25 @@ func (r *RunningOutput) AddMetric(metric telegraf.Metric) {
 		metric.AddSuffix(r.Config.NameSuffix)
 	}
 
-	dropped := r.buffer.Add(metric)
-	atomic.AddInt64(&r.droppedMetrics, int64(dropped))
+	r.droppedMetrics.Add(int64(r.buffer.Add(metric)))
 
-	count := atomic.AddInt64(&r.newMetricsCount, 1)
-	if count == int64(r.MetricBatchSize) {
-		atomic.StoreInt64(&r.newMetricsCount, 0)
-		select {
-		case r.BatchReady <- time.Now():
-		default:
+	r.triggerBatchCheck()
+}
+
+func (r *RunningOutput) triggerBatchCheck() {
+	// Make sure we trigger another batch-ready event in case we do have more
+	// metrics than the batch-size in the buffer. We guard this trigger to not
+	// be issued if a write is already ongoing to avoid event storms when adding
+	// new metrics during write.
+	if r.buffer.Len() >= r.MetricBatchSize && !r.lastWriteFailed.Load() {
+		// Please note: We cannot merge this if into the one above because then
+		// the compare-and-swap condition would always be evaluated and the
+		// swap happens unconditionally from the buffer fullness.
+		if r.writeInFlight.CompareAndSwap(false, true) {
+			select {
+			case r.BatchReady <- time.Now():
+			default:
+			}
 		}
 	}
 }
@@ -261,6 +303,14 @@ func (r *RunningOutput) Write() error {
 		}
 	}
 
+	// Make sure we check for triggering another write based on buffer fullness
+	// on exit. This is required to handle cases where a lot of metrics were
+	// added during the time we are writing.
+	defer func() {
+		r.writeInFlight.Store(false)
+		r.triggerBatchCheck()
+	}()
+
 	if output, ok := r.Output.(telegraf.AggregatingOutput); ok {
 		r.aggMutex.Lock()
 		metrics := output.Push()
@@ -269,24 +319,15 @@ func (r *RunningOutput) Write() error {
 		r.aggMutex.Unlock()
 	}
 
-	atomic.StoreInt64(&r.newMetricsCount, 0)
-
-	// Only process the metrics in the buffer now.  Metrics added while we are
-	// writing will be sent on the next call.
+	// Only process the metrics in the buffer now. Metrics added while we are
+	// writing will be sent on the next call. We can safely add one more write
+	// because 'doTransaction' will abort early for empty batches.
 	nBuffer := r.buffer.Len()
 	nBatches := nBuffer/r.MetricBatchSize + 1
 	for i := 0; i < nBatches; i++ {
-		batch := r.buffer.Batch(r.MetricBatchSize)
-		if len(batch) == 0 {
-			break
-		}
-
-		err := r.writeMetrics(batch)
-		if err != nil {
-			r.buffer.Reject(batch)
+		if err := r.doTransaction(); err != nil {
 			return err
 		}
-		r.buffer.Accept(batch)
 	}
 	return nil
 }
@@ -304,26 +345,33 @@ func (r *RunningOutput) WriteBatch() error {
 		r.log.Debugf("Successfully connected after %d attempts", r.retries)
 	}
 
-	batch := r.buffer.Batch(r.MetricBatchSize)
-	if len(batch) == 0 {
+	// Make sure we check for triggering another write based on buffer fullness
+	// on exit. This is required to handle cases where a lot of metrics were
+	// added during the time we are writing.
+	defer func() {
+		r.writeInFlight.Store(false)
+		r.triggerBatchCheck()
+	}()
+
+	return r.doTransaction()
+}
+
+func (r *RunningOutput) doTransaction() error {
+	tx := r.buffer.BeginTransaction(r.MetricBatchSize)
+	if len(tx.Batch) == 0 {
 		return nil
 	}
+	err := r.writeMetrics(tx.Batch)
+	r.updateTransaction(tx, err)
+	r.buffer.EndTransaction(tx)
 
-	err := r.writeMetrics(batch)
-	if err != nil {
-		r.buffer.Reject(batch)
-		return err
-	}
-	r.buffer.Accept(batch)
-
-	return nil
+	return err
 }
 
 func (r *RunningOutput) writeMetrics(metrics []telegraf.Metric) error {
-	dropped := atomic.LoadInt64(&r.droppedMetrics)
-	if dropped > 0 {
+	if dropped := r.droppedMetrics.Load(); dropped > 0 {
 		r.log.Warnf("Metric buffer overflow; %d metrics have been dropped", dropped)
-		atomic.StoreInt64(&r.droppedMetrics, 0)
+		r.droppedMetrics.Add(-dropped)
 	}
 
 	start := time.Now()
@@ -337,9 +385,36 @@ func (r *RunningOutput) writeMetrics(metrics []telegraf.Metric) error {
 	return err
 }
 
+func (r *RunningOutput) updateTransaction(tx *Transaction, err error) {
+	// No error indicates all metrics were written successfully
+	if err == nil {
+		r.lastWriteFailed.Store(false)
+		tx.AcceptAll()
+		return
+	}
+
+	// A non-partial-write-error indicated none of the metrics were written
+	// successfully and we should keep them for the next write cycle
+	var writeErr *internal.PartialWriteError
+	if !errors.As(err, &writeErr) {
+		r.lastWriteFailed.Store(true)
+		tx.KeepAll()
+		return
+	}
+
+	// Transfer the accepted and rejected indices based on the write error values
+	r.lastWriteFailed.Store(false)
+	tx.Accept = writeErr.MetricsAccept
+	tx.Reject = writeErr.MetricsReject
+}
+
 func (r *RunningOutput) LogBufferStatus() {
 	nBuffer := r.buffer.Len()
-	r.log.Debugf("Buffer fullness: %d / %d metrics", nBuffer, r.MetricBufferLimit)
+	if r.Config.BufferStrategy == "disk_write_through" {
+		r.log.Debugf("Buffer fullness: %d metrics", nBuffer)
+	} else {
+		r.log.Debugf("Buffer fullness: %d / %d metrics", nBuffer, r.MetricBufferLimit)
+	}
 }
 
 func (r *RunningOutput) Log() telegraf.Logger {

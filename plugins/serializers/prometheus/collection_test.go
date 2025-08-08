@@ -5,14 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/testutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/testutil"
 )
 
-type Input struct {
+type input struct {
 	metric  telegraf.Metric
 	addtime time.Time
 }
@@ -22,14 +23,14 @@ func TestCollectionExpire(t *testing.T) {
 		name     string
 		now      time.Time
 		age      time.Duration
-		input    []Input
+		input    []input
 		expected []*dto.MetricFamily
 	}{
 		{
 			name: "not expired",
 			now:  time.Unix(1, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"cpu",
@@ -49,7 +50,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_UNTYPED.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:   []*dto.LabelPair{},
+							Label:   make([]*dto.LabelPair, 0),
 							Untyped: &dto.Untyped{Value: proto.Float64(42.0)},
 						},
 					},
@@ -60,7 +61,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "update metric expiration",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"cpu",
@@ -91,7 +92,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_UNTYPED.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:   []*dto.LabelPair{},
+							Label:   make([]*dto.LabelPair, 0),
 							Untyped: &dto.Untyped{Value: proto.Float64(43.0)},
 						},
 					},
@@ -102,7 +103,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "update metric expiration descending order",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"cpu",
@@ -132,7 +133,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_UNTYPED.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:   []*dto.LabelPair{},
+							Label:   make([]*dto.LabelPair, 0),
 							Untyped: &dto.Untyped{Value: proto.Float64(42.0)},
 						},
 					},
@@ -143,7 +144,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "expired single metric in metric family",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"cpu",
@@ -156,13 +157,13 @@ func TestCollectionExpire(t *testing.T) {
 					addtime: time.Unix(0, 0),
 				},
 			},
-			expected: []*dto.MetricFamily{},
+			expected: make([]*dto.MetricFamily, 0),
 		},
 		{
 			name: "expired one metric in metric family",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"cpu",
@@ -192,7 +193,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_UNTYPED.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:   []*dto.LabelPair{},
+							Label:   make([]*dto.LabelPair, 0),
 							Untyped: &dto.Untyped{Value: proto.Float64(42.0)},
 						},
 					},
@@ -203,7 +204,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "histogram bucket updates",
 			now:  time.Unix(0, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -282,7 +283,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_HISTOGRAM.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label: []*dto.LabelPair{},
+							Label: make([]*dto.LabelPair, 0),
 							Histogram: &dto.Histogram{
 								SampleCount: proto.Uint64(4),
 								SampleSum:   proto.Float64(20.0),
@@ -306,7 +307,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "entire histogram expires",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -343,13 +344,13 @@ func TestCollectionExpire(t *testing.T) {
 					addtime: time.Unix(0, 0),
 				},
 			},
-			expected: []*dto.MetricFamily{},
+			expected: make([]*dto.MetricFamily, 0),
 		},
 		{
 			name: "histogram does not expire because of addtime from bucket",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -393,7 +394,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_HISTOGRAM.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label: []*dto.LabelPair{},
+							Label: make([]*dto.LabelPair, 0),
 							Histogram: &dto.Histogram{
 								SampleCount: proto.Uint64(2),
 								SampleSum:   proto.Float64(10.0),
@@ -417,7 +418,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "summary quantile updates",
 			now:  time.Unix(0, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -474,7 +475,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_SUMMARY.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label: []*dto.LabelPair{},
+							Label: make([]*dto.LabelPair, 0),
 							Summary: &dto.Summary{
 								SampleCount: proto.Uint64(2),
 								SampleSum:   proto.Float64(2.0),
@@ -494,7 +495,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "Entire summary expires",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -520,13 +521,13 @@ func TestCollectionExpire(t *testing.T) {
 					addtime: time.Unix(0, 0),
 				},
 			},
-			expected: []*dto.MetricFamily{},
+			expected: make([]*dto.MetricFamily, 0),
 		},
 		{
 			name: "summary does not expire because of quantile addtime",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -570,7 +571,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_SUMMARY.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label: []*dto.LabelPair{},
+							Label: make([]*dto.LabelPair, 0),
 							Summary: &dto.Summary{
 								SampleSum:   proto.Float64(1),
 								SampleCount: proto.Uint64(1),
@@ -594,7 +595,7 @@ func TestCollectionExpire(t *testing.T) {
 			name: "expire based on add time",
 			now:  time.Unix(20, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"cpu",
@@ -614,7 +615,7 @@ func TestCollectionExpire(t *testing.T) {
 					Type: dto.MetricType_UNTYPED.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:   []*dto.LabelPair{},
+							Label:   make([]*dto.LabelPair, 0),
 							Untyped: &dto.Untyped{Value: proto.Float64(42.0)},
 						},
 					},
@@ -642,14 +643,14 @@ func TestExportTimestamps(t *testing.T) {
 		name     string
 		now      time.Time
 		age      time.Duration
-		input    []Input
+		input    []input
 		expected []*dto.MetricFamily
 	}{
 		{
 			name: "histogram bucket updates",
 			now:  time.Unix(23, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -728,7 +729,7 @@ func TestExportTimestamps(t *testing.T) {
 					Type: dto.MetricType_HISTOGRAM.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:       []*dto.LabelPair{},
+							Label:       make([]*dto.LabelPair, 0),
 							TimestampMs: proto.Int64(time.Unix(20, 0).UnixNano() / int64(time.Millisecond)),
 							Histogram: &dto.Histogram{
 								SampleCount: proto.Uint64(4),
@@ -753,7 +754,7 @@ func TestExportTimestamps(t *testing.T) {
 			name: "summary quantile updates",
 			now:  time.Unix(23, 0),
 			age:  10 * time.Second,
-			input: []Input{
+			input: []input{
 				{
 					metric: testutil.MustMetric(
 						"prometheus",
@@ -810,7 +811,7 @@ func TestExportTimestamps(t *testing.T) {
 					Type: dto.MetricType_SUMMARY.Enum(),
 					Metric: []*dto.Metric{
 						{
-							Label:       []*dto.LabelPair{},
+							Label:       make([]*dto.LabelPair, 0),
 							TimestampMs: proto.Int64(time.Unix(20, 0).UnixNano() / int64(time.Millisecond)),
 							Summary: &dto.Summary{
 								SampleCount: proto.Uint64(2),

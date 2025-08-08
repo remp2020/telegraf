@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -27,16 +27,19 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
+const (
+	defaultServiceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+)
+
 // Kubernetes represents the config object for the plugin
 type Kubernetes struct {
-	URL               string          `toml:"url"`
-	BearerToken       string          `toml:"bearer_token"`
-	BearerTokenString string          `toml:"bearer_token_string" deprecated:"1.24.0;1.35.0;use 'BearerToken' with a file instead"`
-	NodeMetricName    string          `toml:"node_metric_name"`
-	LabelInclude      []string        `toml:"label_include"`
-	LabelExclude      []string        `toml:"label_exclude"`
-	ResponseTimeout   config.Duration `toml:"response_timeout"`
-	Log               telegraf.Logger `toml:"-"`
+	URL             string          `toml:"url"`
+	BearerToken     string          `toml:"bearer_token"`
+	NodeMetricName  string          `toml:"node_metric_name"`
+	LabelInclude    []string        `toml:"label_include"`
+	LabelExclude    []string        `toml:"label_exclude"`
+	ResponseTimeout config.Duration `toml:"response_timeout"`
+	Log             telegraf.Logger `toml:"-"`
 
 	tls.ClientConfig
 
@@ -44,26 +47,13 @@ type Kubernetes struct {
 	httpClient  *http.Client
 }
 
-const (
-	defaultServiceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-)
-
-func init() {
-	inputs.Add("kubernetes", func() telegraf.Input {
-		return &Kubernetes{
-			LabelInclude: []string{},
-			LabelExclude: []string{"*"},
-		}
-	})
-}
-
 func (*Kubernetes) SampleConfig() string {
 	return sampleConfig
 }
 
 func (k *Kubernetes) Init() error {
-	// If neither are provided, use the default service account.
-	if k.BearerToken == "" && k.BearerTokenString == "" {
+	// If bearer_token is not provided, use the default service account.
+	if k.BearerToken == "" {
 		k.BearerToken = defaultServiceAccountPath
 	}
 
@@ -84,7 +74,6 @@ func (k *Kubernetes) Init() error {
 	return nil
 }
 
-// Gather collects kubernetes metrics from a given URL
 func (k *Kubernetes) Gather(acc telegraf.Accumulator) error {
 	if k.URL != "" {
 		acc.AddError(k.gatherSummary(k.URL, acc))
@@ -156,8 +145,8 @@ func getNodeAddress(addresses []v1.NodeAddress) string {
 }
 
 func (k *Kubernetes) gatherSummary(baseURL string, acc telegraf.Accumulator) error {
-	summaryMetrics := &SummaryMetrics{}
-	err := k.LoadJSON(baseURL+"/stats/summary", summaryMetrics)
+	summaryMetrics := &summaryMetrics{}
+	err := k.loadJSON(baseURL+"/stats/summary", summaryMetrics)
 	if err != nil {
 		return err
 	}
@@ -172,7 +161,7 @@ func (k *Kubernetes) gatherSummary(baseURL string, acc telegraf.Accumulator) err
 	return nil
 }
 
-func buildSystemContainerMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Accumulator) {
+func buildSystemContainerMetrics(summaryMetrics *summaryMetrics, acc telegraf.Accumulator) {
 	for _, container := range summaryMetrics.Node.SystemContainers {
 		tags := map[string]string{
 			"node_name":      summaryMetrics.Node.NodeName,
@@ -194,7 +183,7 @@ func buildSystemContainerMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Ac
 	}
 }
 
-func buildNodeMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Accumulator, metricName string) {
+func buildNodeMetrics(summaryMetrics *summaryMetrics, acc telegraf.Accumulator, metricName string) {
 	tags := map[string]string{
 		"node_name": summaryMetrics.Node.NodeName,
 	}
@@ -220,18 +209,18 @@ func buildNodeMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Accumulator, 
 	acc.AddFields(metricName, fields, tags)
 }
 
-func (k *Kubernetes) gatherPodInfo(baseURL string) ([]Item, error) {
-	var podAPI Pods
-	err := k.LoadJSON(baseURL+"/pods", &podAPI)
+func (k *Kubernetes) gatherPodInfo(baseURL string) ([]item, error) {
+	var podAPI pods
+	err := k.loadJSON(baseURL+"/pods", &podAPI)
 	if err != nil {
 		return nil, err
 	}
-	podInfos := make([]Item, 0, len(podAPI.Items))
+	podInfos := make([]item, 0, len(podAPI.Items))
 	podInfos = append(podInfos, podAPI.Items...)
 	return podInfos, nil
 }
 
-func (k *Kubernetes) LoadJSON(url string, v interface{}) error {
+func (k *Kubernetes) loadJSON(url string, v interface{}) error {
 	var req, err = http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -257,14 +246,16 @@ func (k *Kubernetes) LoadJSON(url string, v interface{}) error {
 		}
 	}
 
+	// Read bearer token from file and use it for authorization
+	var bearerTokenString string
 	if k.BearerToken != "" {
 		token, err := os.ReadFile(k.BearerToken)
 		if err != nil {
 			return err
 		}
-		k.BearerTokenString = strings.TrimSpace(string(token))
+		bearerTokenString = strings.TrimSpace(string(token))
 	}
-	req.Header.Set("Authorization", "Bearer "+k.BearerTokenString)
+	req.Header.Set("Authorization", "Bearer "+bearerTokenString)
 	req.Header.Add("Accept", "application/json")
 	resp, err = k.httpClient.Do(req)
 	if err != nil {
@@ -283,7 +274,7 @@ func (k *Kubernetes) LoadJSON(url string, v interface{}) error {
 	return nil
 }
 
-func buildPodMetrics(summaryMetrics *SummaryMetrics, podInfo []Item, labelFilter filter.Filter, acc telegraf.Accumulator) {
+func buildPodMetrics(summaryMetrics *summaryMetrics, podInfo []item, labelFilter filter.Filter, acc telegraf.Accumulator) {
 	for _, pod := range summaryMetrics.Pods {
 		podLabels := make(map[string]string)
 		containerImages := make(map[string]string)
@@ -368,4 +359,12 @@ func buildPodMetrics(summaryMetrics *SummaryMetrics, podInfo []Item, labelFilter
 		fields["tx_errors"] = pod.Network.TXErrors
 		acc.AddFields("kubernetes_pod_network", fields, tags)
 	}
+}
+
+func init() {
+	inputs.Add("kubernetes", func() telegraf.Input {
+		return &Kubernetes{
+			LabelExclude: []string{"*"},
+		}
+	})
 }
