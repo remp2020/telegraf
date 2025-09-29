@@ -152,8 +152,8 @@ require (
 	github.com/miekg/dns v1.1.67
 	github.com/moby/ipvs v1.1.0
 	github.com/multiplay/go-ts3 v1.2.0
-	github.com/nats-io/nats-server/v2 v2.11.6
-	github.com/nats-io/nats.go v1.43.0
+	github.com/nats-io/nats-server/v2 v2.12.0
+	github.com/nats-io/nats.go v1.45.0
 	github.com/netsampler/goflow2/v2 v2.2.3
 	github.com/newrelic/newrelic-telemetry-sdk-go v0.8.1
 	github.com/nsqio/go-nsq v1.1.0
@@ -223,14 +223,14 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1
 	go.starlark.net v0.0.0-20250623223156-8bf495bf4e9a
 	go.step.sm/crypto v0.67.0
-	golang.org/x/crypto v0.40.0
-	golang.org/x/mod v0.26.0
-	golang.org/x/net v0.42.0
+	golang.org/x/crypto v0.42.0
+	golang.org/x/mod v0.27.0
+	golang.org/x/net v0.43.0
 	golang.org/x/oauth2 v0.30.0
-	golang.org/x/sync v0.16.0
-	golang.org/x/sys v0.34.0
-	golang.org/x/term v0.33.0
-	golang.org/x/text v0.27.0
+	golang.org/x/sync v0.17.0
+	golang.org/x/sys v0.36.0
+	golang.org/x/term v0.35.0
+	golang.org/x/text v0.29.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20211230205640-daad0b7ba671
 	gonum.org/v1/gonum v0.16.0
 	google.golang.org/api v0.241.0
@@ -247,6 +247,11 @@ require (
 	layeh.com/radius v0.0.0-20221205141417-e7fbddd11d68
 	modernc.org/sqlite v1.38.0
 	software.sslmate.com/src/go-pkcs12 v0.5.0
+)
+
+require (
+	github.com/antithesishq/antithesis-sdk-go v0.4.3-default-no-op // indirect
+	golang.org/x/tools/go/expect v0.1.1-deprecated // indirect
 )
 
 require (
@@ -455,7 +460,7 @@ require (
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/naoina/go-stringutil v0.1.0 // indirect
-	github.com/nats-io/jwt/v2 v2.7.4 // indirect
+	github.com/nats-io/jwt/v2 v2.8.0 // indirect
 	github.com/nats-io/nkeys v0.4.11 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
@@ -548,8 +553,8 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/time v0.12.0 // indirect
-	golang.org/x/tools v0.34.0 // indirect
+	golang.org/x/time v0.13.0 // indirect
+	golang.org/x/tools v0.36.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	golang.zx2c4.com/wireguard v0.0.0-20211209221555-9c9e7e272434 // indirect
 	google.golang.org/genproto v0.0.0-20250505200425-f936aa4a68b2 // indirect
