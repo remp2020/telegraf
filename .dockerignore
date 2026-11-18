@@ -1,0 +1,5 @@
+dist
+.git
+.idea
+.vscode
+**/*_test.go
